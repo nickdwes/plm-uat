@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bitwyse_hrms_backend"
+version = "0.1.0"
+description = "API-focused Frappe backend app for external HRMS UI clients."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "Bitwyse Engineering", email = "engineering@bitwyse.co.ke" }
+]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["bitwyse_hrms_backend*"]

@@ -1,0 +1,229 @@
+:root {
+  --surface: #fffdf8;
+  --surface-muted: #f7f2e6;
+  --ink: #1f2933;
+  --ink-soft: #52606d;
+  --accent: #00897b;
+  --accent-deep: #00695c;
+  --warm: #f59e0b;
+  --error: #b42318;
+  --line: #d9d1c2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Space Grotesk", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 18% 22%, rgb(245 158 11 / 20%), transparent 34%),
+    radial-gradient(circle at 86% 14%, rgb(0 137 123 / 22%), transparent 30%),
+    linear-gradient(165deg, #fff9ed 0%, #fff 44%, #f3fbf9 100%);
+}
+
+.app-shell {
+  width: min(1100px, 100% - 2rem);
+  margin: 1.25rem auto 2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.hero,
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: 0 14px 36px rgb(8 38 42 / 8%);
+}
+
+.hero {
+  padding: 1.25rem 1.5rem;
+}
+
+.tag {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-deep);
+}
+
+h1 {
+  margin: 0.2rem 0;
+  font-size: clamp(1.4rem, 3vw, 2rem);
+}
+
+.lead {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.panel {
+  padding: 1rem 1.2rem;
+}
+
+h2 {
+  margin: 0 0 0.8rem;
+  font-size: 1.1rem;
+}
+
+.grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.two-col {
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+input {
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid #cfc4b0;
+  border-radius: 10px;
+  font: inherit;
+  color: var(--ink);
+  background: #fff;
+}
+
+input:focus {
+  outline: 2px solid rgb(0 137 123 / 32%);
+  border-color: var(--accent);
+}
+
+.actions {
+  margin-top: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.actions.compact {
+  margin-top: 0;
+}
+
+button {
+  border: 0;
+  border-radius: 10px;
+  height: 2.4rem;
+  padding: 0 1rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.primary {
+  background: linear-gradient(130deg, var(--accent), #00a690);
+  color: #f7ffff;
+}
+
+.secondary {
+  background: linear-gradient(130deg, #ffcc73, var(--warm));
+  color: #462f00;
+}
+
+.ghost {
+  background: #fff;
+  border: 1px solid #c7b89d;
+  color: #5b4a28;
+}
+
+.error {
+  margin: 0.8rem 0 0;
+  color: var(--error);
+  font-weight: 600;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.7rem;
+}
+
+.metric-card {
+  padding: 0.85rem;
+  border: 1px solid #d9cfbe;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fff, var(--surface-muted));
+}
+
+.metric-label {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--ink-soft);
+}
+
+.metric-value {
+  margin: 0.45rem 0 0;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.table-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.68rem;
+  border-bottom: 1px solid #e8dece;
+}
+
+th {
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  color: #6e5c36;
+  text-transform: uppercase;
+}
+
+.empty {
+  text-align: center;
+  color: #7b6b4a;
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    width: min(100% - 1rem, 1100px);
+    margin-top: 0.75rem;
+  }
+
+  .hero,
+  .panel {
+    border-radius: 14px;
+  }
+
+  table {
+    min-width: 620px;
+  }
+}
