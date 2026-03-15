@@ -39,6 +39,14 @@ doc_events = {
         "on_submit": "bitwyse_hrms_backend.audit.on_payroll_entry_submit",
         "on_cancel": "bitwyse_hrms_backend.audit.on_payroll_entry_cancel",
     },
+    "Leave Application": {
+        "on_submit": "bitwyse_hrms_backend.audit.on_leave_application_submit",
+        "on_cancel": "bitwyse_hrms_backend.audit.on_leave_application_cancel",
+        "on_update_after_submit": "bitwyse_hrms_backend.audit.on_leave_application_status_change",
+    },
+    "Leave Allocation": {
+        "on_submit": "bitwyse_hrms_backend.audit.on_leave_allocation_submit",
+    },
 }
 
 # ---------------------------------------------------------------------------

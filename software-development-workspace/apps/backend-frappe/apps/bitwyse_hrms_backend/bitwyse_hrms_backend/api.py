@@ -99,6 +99,37 @@ from bitwyse_hrms_backend.payroll.reports import (  # noqa: F401
     shif_schedule,
 )
 
+# Phase D – leave management re-exports
+from bitwyse_hrms_backend.leave.policy import (  # noqa: F401
+    create_leave_allocation,
+    create_leave_policy,
+    get_leave_policy,
+    get_leave_type,
+    list_leave_allocations,
+    list_leave_policies,
+    list_leave_types,
+)
+from bitwyse_hrms_backend.leave.request import (  # noqa: F401
+    approve_leave_request,
+    cancel_leave_request,
+    escalate_leave_request,
+    get_leave_request,
+    list_leave_requests,
+    reject_leave_request,
+    submit_leave_request,
+)
+from bitwyse_hrms_backend.leave.ledger import (  # noqa: F401
+    get_leave_anomalies,
+    get_leave_balance,
+    get_leave_calendar,
+    list_leave_ledger_entries,
+)
+from bitwyse_hrms_backend.leave.dashboard import (  # noqa: F401
+    department_leave_summary,
+    pending_approvals,
+    team_coverage,
+)
+
 
 @frappe.whitelist(allow_guest=True)
 def health() -> dict[str, str]:

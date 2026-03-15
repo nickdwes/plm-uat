@@ -326,3 +326,131 @@ export interface P9Report {
   total_annual_paye: number;
   rows: P9Row[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase D – Leave Management types
+// ---------------------------------------------------------------------------
+
+export interface LeaveTypeRecord {
+  name: string;
+  max_days_allowed: number | null;
+  is_carry_forward: number;
+  is_paid_leave: number;
+  allow_negative: number;
+  include_holiday: number;
+}
+
+export interface LeaveTypeDetail extends LeaveTypeRecord {
+  is_lwp: number;
+  expire_carry_forwarded_leaves_after_days: number | null;
+}
+
+export interface LeavePolicyDetail {
+  leave_type: string;
+  annual_days: number;
+}
+
+export interface LeavePolicyRecord {
+  name: string;
+  leave_policy_name: string;
+}
+
+export interface LeavePolicyFull extends LeavePolicyRecord {
+  leave_type_details: LeavePolicyDetail[];
+}
+
+export interface LeaveAllocationRecord {
+  name: string;
+  employee: string;
+  employee_name: string;
+  company: string;
+  leave_type: string;
+  from_date: string;
+  to_date: string;
+  new_leaves_allocated: number;
+  carry_forwarded_leaves_count: number;
+  total_leaves_allocated: number;
+  status: string;
+}
+
+export interface LeaveRequestRecord {
+  name: string;
+  employee: string;
+  employee_name: string;
+  company: string;
+  leave_type: string;
+  from_date: string;
+  to_date: string;
+  total_leave_days: number;
+  status: string;
+  description: string | null;
+  leave_approver: string | null;
+}
+
+export interface LeaveRequestDetail extends LeaveRequestRecord {
+  posting_date: string | null;
+  half_day: number;
+  half_day_date: string | null;
+  follow_via_email: number;
+  docstatus: number;
+}
+
+export interface LeaveBalance {
+  leave_type: string;
+  allocated: number;
+  taken: number;
+  remaining: number;
+}
+
+export interface LeaveBalanceSummary {
+  employee: string;
+  as_of_date: string;
+  balances: LeaveBalance[];
+}
+
+export interface LeaveCalendarEvent {
+  name: string;
+  employee: string;
+  employee_name: string;
+  leave_type: string;
+  from_date: string;
+  to_date: string;
+  total_leave_days: number;
+  half_day: number;
+}
+
+export interface LeaveAnomaly {
+  type: "negative_balance" | "overlapping_requests";
+  employee: string;
+  employee_name: string;
+  leave_type: string;
+  details: string;
+}
+
+export interface LeaveLedgerEntry {
+  name: string;
+  employee: string;
+  leave_type: string;
+  from_date: string;
+  to_date: string;
+  leaves: number;
+  transaction_type: string;
+  transaction_name: string;
+  is_expired: number;
+  creation: string;
+}
+
+export interface TeamCoverageResult {
+  from_date: string;
+  to_date: string;
+  department: string | null;
+  headcount: number;
+  on_leave_count: number;
+  on_leave: LeaveCalendarEvent[];
+}
+
+export interface DepartmentLeaveSummaryRow {
+  department: string;
+  employee_count: number;
+  leave_days_taken: number;
+}

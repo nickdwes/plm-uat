@@ -249,3 +249,110 @@ def on_payroll_entry_cancel(doc, method=None) -> None:  # noqa: ANN001
         actor=frappe.session.user,
         payload={"company": doc.company},
     )
+
+
+# ---------------------------------------------------------------------------
+# Leave audit hooks
+# ---------------------------------------------------------------------------
+
+
+def on_leave_application_submit(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Leave Application is submitted (approved).
+
+    Args:
+        doc: The Leave Application document that was submitted.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="leave_application.submitted",
+        doctype="Leave Application",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "employee_name": doc.employee_name,
+            "leave_type": doc.leave_type,
+            "from_date": str(getattr(doc, "from_date", "")),
+            "to_date": str(getattr(doc, "to_date", "")),
+            "total_leave_days": getattr(doc, "total_leave_days", None),
+            "status": doc.status,
+        },
+    )
+
+
+def on_leave_application_cancel(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Leave Application is cancelled.
+
+    Args:
+        doc: The Leave Application document that was cancelled.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="leave_application.cancelled",
+        doctype="Leave Application",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "leave_type": doc.leave_type,
+            "from_date": str(getattr(doc, "from_date", "")),
+            "to_date": str(getattr(doc, "to_date", "")),
+        },
+    )
+
+
+def on_leave_application_status_change(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a submitted Leave Application status changes.
+
+    Captures approve/reject transitions that happen after submission.
+
+    Args:
+        doc: The Leave Application document that was updated.
+        method: Frappe event method name (unused).
+    """
+    changed_fields: dict = {}
+    if doc.get_doc_before_save():
+        before = doc.get_doc_before_save()
+        if getattr(before, "status", None) != doc.status:
+            changed_fields["status"] = {
+                "before": getattr(before, "status", None),
+                "after": doc.status,
+            }
+
+    if not changed_fields:
+        return
+
+    _write_audit_event(
+        event="leave_application.status_changed",
+        doctype="Leave Application",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "leave_type": doc.leave_type,
+            "changed": changed_fields,
+        },
+    )
+
+
+def on_leave_allocation_submit(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Leave Allocation is submitted.
+
+    Args:
+        doc: The Leave Allocation document that was submitted.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="leave_allocation.submitted",
+        doctype="Leave Allocation",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "leave_type": doc.leave_type,
+            "new_leaves_allocated": getattr(doc, "new_leaves_allocated", None),
+            "total_leaves_allocated": getattr(doc, "total_leaves_allocated", None),
+            "from_date": str(getattr(doc, "from_date", "")),
+            "to_date": str(getattr(doc, "to_date", "")),
+        },
+    )
