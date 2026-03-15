@@ -1,0 +1,100 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "format:AUDITLOG-{YYYY}-{MM}-{######}",
+  "creation": "2026-03-15 00:00:00.000000",
+  "doctype": "DocType",
+  "editable_grid": 0,
+  "engine": "InnoDB",
+  "field_order": [
+    "event",
+    "reference_doctype",
+    "reference_name",
+    "actor",
+    "auth_method",
+    "ip_address",
+    "request_id",
+    "payload"
+  ],
+  "fields": [
+    {
+      "fieldname": "event",
+      "fieldtype": "Data",
+      "label": "Event",
+      "reqd": 1,
+      "in_list_view": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "reference_doctype",
+      "fieldtype": "Link",
+      "options": "DocType",
+      "label": "Reference DocType",
+      "in_list_view": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "reference_name",
+      "fieldtype": "Dynamic Link",
+      "options": "reference_doctype",
+      "label": "Reference Name",
+      "in_list_view": 1
+    },
+    {
+      "fieldname": "actor",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Actor",
+      "reqd": 1,
+      "in_list_view": 1,
+      "search_index": 1
+    },
+    {
+      "fieldname": "auth_method",
+      "fieldtype": "Select",
+      "options": "session\napi_key",
+      "label": "Auth Method",
+      "default": "session"
+    },
+    {
+      "fieldname": "ip_address",
+      "fieldtype": "Data",
+      "label": "IP Address"
+    },
+    {
+      "fieldname": "request_id",
+      "fieldtype": "Data",
+      "label": "Request ID",
+      "search_index": 1
+    },
+    {
+      "fieldname": "payload",
+      "fieldtype": "Long Text",
+      "label": "Payload (JSON)"
+    }
+  ],
+  "in_create": 1,
+  "is_submittable": 0,
+  "modified": "2026-03-15 00:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "Bitwyse Hrms Backend",
+  "name": "HRMS Audit Log",
+  "naming_rule": "Expression",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "role": "HRMS Global HR",
+      "read": 1,
+      "export": 1
+    },
+    {
+      "role": "HRMS Company HR",
+      "read": 1
+    }
+  ],
+  "read_only": 1,
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "track_changes": 0,
+  "track_views": 0
+}

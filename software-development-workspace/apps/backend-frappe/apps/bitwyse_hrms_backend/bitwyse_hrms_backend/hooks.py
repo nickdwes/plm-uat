@@ -47,12 +47,24 @@ doc_events = {
     "Leave Allocation": {
         "on_submit": "bitwyse_hrms_backend.audit.on_leave_allocation_submit",
     },
+    "HRMS Audit Log": {
+        # Prevent any direct mutations to audit log records after creation.
+        "before_save": "bitwyse_hrms_backend.audit_log.writer._block_audit_log_mutation",
+    },
 }
+
+# ---------------------------------------------------------------------------
+# Observability hooks
+# ---------------------------------------------------------------------------
+# on_request fires at the start of every HTTP request.
+# on_exception fires on any unhandled exception.
+
+on_request = "bitwyse_hrms_backend.observability.on_request"
+on_exception = "bitwyse_hrms_backend.observability.on_exception"
 
 # ---------------------------------------------------------------------------
 # Scheduled tasks
 # ---------------------------------------------------------------------------
-# Placeholder schedule — payroll and leave jobs will be added in Phase C/D.
 
 scheduler_events = {
     "daily": [],
