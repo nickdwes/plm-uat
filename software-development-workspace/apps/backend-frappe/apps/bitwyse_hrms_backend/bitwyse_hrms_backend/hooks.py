@@ -27,6 +27,10 @@ doc_events = {
         "on_update": "bitwyse_hrms_backend.audit.on_employee_update",
         "after_insert": "bitwyse_hrms_backend.audit.on_employee_insert",
     },
+    "Department": {
+        "on_update": "bitwyse_hrms_backend.audit.on_department_update",
+        "after_insert": "bitwyse_hrms_backend.audit.on_department_insert",
+    },
 }
 
 # ---------------------------------------------------------------------------

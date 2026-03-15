@@ -109,3 +109,57 @@ def on_employee_update(doc, method=None) -> None:  # noqa: ANN001
         actor=frappe.session.user,
         payload={"changed": changed_fields},
     )
+
+
+# ---------------------------------------------------------------------------
+# Department audit hooks
+# ---------------------------------------------------------------------------
+
+
+def on_department_insert(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires after a new Department document is created.
+
+    Args:
+        doc: The Department document that was inserted.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="department.created",
+        doctype="Department",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "department_name": doc.department_name,
+            "company": getattr(doc, "company", None),
+            "parent_department": getattr(doc, "parent_department", None),
+        },
+    )
+
+
+def on_department_update(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires after an existing Department document is saved.
+
+    Args:
+        doc: The Department document that was updated.
+        method: Frappe event method name (unused).
+    """
+    changed_fields: dict = {}
+    if doc.get_doc_before_save():
+        before = doc.get_doc_before_save()
+        tracked = ["department_name", "company", "parent_department"]
+        for field in tracked:
+            old_val = getattr(before, field, None)
+            new_val = getattr(doc, field, None)
+            if old_val != new_val:
+                changed_fields[field] = {"before": old_val, "after": new_val}
+
+    if not changed_fields:
+        return
+
+    _write_audit_event(
+        event="department.updated",
+        doctype="Department",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={"changed": changed_fields},
+    )

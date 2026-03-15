@@ -9,6 +9,16 @@ Endpoint contract:
   - All list endpoints include ``meta.pagination`` with total count.
   - Guest access is denied everywhere except ``health``.
   - Company scope is derived from the caller's TenantContext.
+
+Phase B re-exports:
+  - Org hierarchy: list_companies, list_departments, get_department,
+    list_branches, create_department, update_department
+  - Employee: list_employees (replaces top-level), get_employee,
+    create_employee, update_employee
+  - Roles: list_designations, create_designation, list_grades, get_grade,
+    create_grade, list_employment_types
+  - Lifecycle: transfer_employee, promote_employee, exit_employee,
+    archive_employee
 """
 
 from __future__ import annotations
@@ -26,6 +36,37 @@ from bitwyse_hrms_backend.response import (
 from bitwyse_hrms_backend.tenant_context import (
     company_scope_filters,
     resolve_tenant_context,
+)
+
+# Phase B – re-export domain endpoints so Frappe can discover them at the
+# ``bitwyse_hrms_backend.api.*`` path used by the external UI.
+from bitwyse_hrms_backend.hr.org import (  # noqa: F401
+    create_department,
+    get_department,
+    list_branches,
+    list_companies,
+    list_departments,
+    update_department,
+)
+from bitwyse_hrms_backend.hr.employee import (  # noqa: F401
+    create_employee,
+    get_employee,
+    update_employee,
+    list_employees as _hr_list_employees,
+)
+from bitwyse_hrms_backend.hr.roles import (  # noqa: F401
+    create_designation,
+    create_grade,
+    get_grade,
+    list_designations,
+    list_employment_types,
+    list_grades,
+)
+from bitwyse_hrms_backend.hr.lifecycle import (  # noqa: F401
+    archive_employee,
+    exit_employee,
+    promote_employee,
+    transfer_employee,
 )
 
 
@@ -95,69 +136,35 @@ def hrms_dashboard_summary(company: str | None = None) -> dict[str, Any]:
 def list_employees(
     search: str | None = None,
     company: str | None = None,
+    department: str | None = None,
+    status: str | None = None,
     limit_start: int = 0,
     limit_page_length: int = 20,
 ) -> dict[str, Any]:
-    """Return a paginated, company-scoped employee list.
+    """Return a paginated, role-scoped employee list.
+
+    Delegates to ``hr.employee.list_employees`` which applies manager-based
+    visibility on top of company scoping.
 
     Args:
-        search: Optional search phrase matched against employee name,
-            employee ID, and company fields.
-        company: Optional company filter. Validated against the caller's
-            TenantContext allowed companies.
-        limit_start: Pagination start offset (default 0).
-        limit_page_length: Records per page (default 20, max 100).
+        search: Optional search phrase.
+        company: Optional company filter.
+        department: Optional department filter.
+        status: Optional status filter (``Active``, ``Left``, etc.).
+        limit_start: Pagination start offset.
+        limit_page_length: Records per page (max 100).
 
     Returns:
-        dict[str, Any]: Envelope with ``data.items`` list and ``meta``
-            pagination block.
+        dict[str, Any]: Envelope with ``data.items`` and ``meta`` pagination.
 
     Raises:
-        frappe.PermissionError: If called by guest or unauthorised users,
-            or if ``company`` is outside the caller's allowed scope.
+        frappe.PermissionError: If called by guest or outside company scope.
     """
-    require_authenticated_user()
-    check_rate_limit()
-
-    ctx = resolve_tenant_context()
-    scope = company_scope_filters(ctx, company)
-
-    page_start, page_size = coerce_pagination(limit_start, limit_page_length)
-
-    fields = [
-        "name",
-        "employee_name",
-        "company",
-        "status",
-        "department",
-        "designation",
-        "date_of_joining",
-    ]
-
-    filters: dict[str, Any] = dict(scope)
-    or_filters = None
-
-    if search and search.strip():
-        term = f"%{search.strip()}%"
-        or_filters = [
-            ["Employee", "employee_name", "like", term],
-            ["Employee", "name", "like", term],
-            ["Employee", "company", "like", term],
-        ]
-
-    items = frappe.get_list(
-        "Employee",
-        fields=fields,
-        filters=filters or None,
-        or_filters=or_filters,
-        order_by="modified desc",
-        limit_start=page_start,
-        limit_page_length=page_size,
-    )
-
-    total: int = frappe.db.count("Employee", filters=filters or None)
-
-    return success_response(
-        data={"items": items},
-        meta=pagination_meta(page_start, page_size, total),
+    return _hr_list_employees(
+        search=search,
+        company=company,
+        department=department,
+        status=status,
+        limit_start=limit_start,
+        limit_page_length=limit_page_length,
     )

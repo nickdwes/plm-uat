@@ -51,3 +51,107 @@ export interface EmployeeRecord {
 export interface EmployeeListData {
   items: EmployeeRecord[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase B – Org hierarchy types
+// ---------------------------------------------------------------------------
+
+export interface CompanyRecord {
+  name: string;
+  company_name: string;
+  country: string | null;
+  default_currency: string | null;
+}
+
+export interface DepartmentRecord {
+  name: string;
+  department_name: string;
+  company: string;
+  parent_department: string | null;
+}
+
+export interface DepartmentDetail extends DepartmentRecord {
+  children: Pick<DepartmentRecord, "name" | "department_name">[];
+}
+
+export interface BranchRecord {
+  name: string;
+  branch: string;
+}
+
+// ---------------------------------------------------------------------------
+// Phase B – Employee detail types
+// ---------------------------------------------------------------------------
+
+export interface EmployeeDetail extends EmployeeRecord {
+  first_name: string | null;
+  last_name: string | null;
+  middle_name: string | null;
+  gender: string | null;
+  date_of_birth: string | null;
+  personal_email: string | null;
+  company_email: string | null;
+  cell_number: string | null;
+  reports_to: string | null;
+  grade: string | null;
+  notice_period: number | null;
+  relieving_date: string | null;
+  held_on: string | null;
+  user_id: string | null;
+  employment_type: string | null;
+  branch: string | null;
+  documents: EmployeeDocument[];
+  onboarding_status: OnboardingStatus;
+}
+
+export interface EmployeeDocument {
+  name: string;
+  file_name: string;
+  file_url: string;
+  creation: string;
+}
+
+export interface OnboardingStatus {
+  has_onboarding: boolean;
+  status: string | null;
+  onboarding_name: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase B – Role / grade / designation types
+// ---------------------------------------------------------------------------
+
+export interface DesignationRecord {
+  name: string;
+  designation_name: string;
+}
+
+export interface GradeRecord {
+  name: string;
+  grade_name: string;
+  default_leave_policy: string | null;
+}
+
+export interface GradeDetail extends GradeRecord {
+  salary_ranges: SalaryRange[];
+}
+
+export interface SalaryRange {
+  from_amount: number;
+  to_amount: number;
+  currency: string;
+}
+
+export interface EmploymentTypeRecord {
+  name: string;
+  employee_type_name: string;
+}
+
+// ---------------------------------------------------------------------------
+// Phase B – Lifecycle event response
+// ---------------------------------------------------------------------------
+
+export interface LifecycleEventResult {
+  name: string;
+  event: "transfer" | "promotion" | "exit" | "archive";
+}
