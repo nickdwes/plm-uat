@@ -163,3 +163,89 @@ def on_department_update(doc, method=None) -> None:  # noqa: ANN001
         actor=frappe.session.user,
         payload={"changed": changed_fields},
     )
+
+
+# ---------------------------------------------------------------------------
+# Payroll audit hooks
+# ---------------------------------------------------------------------------
+
+
+def on_salary_slip_submit(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Salary Slip is submitted.
+
+    Args:
+        doc: The Salary Slip document that was submitted.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="salary_slip.submitted",
+        doctype="Salary Slip",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "employee_name": doc.employee_name,
+            "company": doc.company,
+            "gross_pay": getattr(doc, "gross_pay", None),
+            "net_pay": getattr(doc, "net_pay", None),
+            "start_date": str(getattr(doc, "start_date", "")),
+            "end_date": str(getattr(doc, "end_date", "")),
+        },
+    )
+
+
+def on_salary_slip_cancel(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Salary Slip is cancelled.
+
+    Args:
+        doc: The Salary Slip document that was cancelled.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="salary_slip.cancelled",
+        doctype="Salary Slip",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "employee_name": doc.employee_name,
+            "company": doc.company,
+        },
+    )
+
+
+def on_payroll_entry_submit(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Payroll Entry is submitted.
+
+    Args:
+        doc: The Payroll Entry document that was submitted.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="payroll_entry.submitted",
+        doctype="Payroll Entry",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "company": doc.company,
+            "start_date": str(getattr(doc, "start_date", "")),
+            "end_date": str(getattr(doc, "end_date", "")),
+            "payroll_frequency": getattr(doc, "payroll_frequency", None),
+        },
+    )
+
+
+def on_payroll_entry_cancel(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a Payroll Entry is cancelled.
+
+    Args:
+        doc: The Payroll Entry document that was cancelled.
+        method: Frappe event method name (unused).
+    """
+    _write_audit_event(
+        event="payroll_entry.cancelled",
+        doctype="Payroll Entry",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={"company": doc.company},
+    )

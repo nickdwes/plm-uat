@@ -31,6 +31,14 @@ doc_events = {
         "on_update": "bitwyse_hrms_backend.audit.on_department_update",
         "after_insert": "bitwyse_hrms_backend.audit.on_department_insert",
     },
+    "Salary Slip": {
+        "on_submit": "bitwyse_hrms_backend.audit.on_salary_slip_submit",
+        "on_cancel": "bitwyse_hrms_backend.audit.on_salary_slip_cancel",
+    },
+    "Payroll Entry": {
+        "on_submit": "bitwyse_hrms_backend.audit.on_payroll_entry_submit",
+        "on_cancel": "bitwyse_hrms_backend.audit.on_payroll_entry_cancel",
+    },
 }
 
 # ---------------------------------------------------------------------------

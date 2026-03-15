@@ -69,6 +69,36 @@ from bitwyse_hrms_backend.hr.lifecycle import (  # noqa: F401
     transfer_employee,
 )
 
+# Phase C – payroll re-exports
+from bitwyse_hrms_backend.payroll.period import (  # noqa: F401
+    create_payroll_period,
+    get_payroll_period,
+    list_payroll_periods,
+    lock_payroll_period,
+)
+from bitwyse_hrms_backend.payroll.run import (  # noqa: F401
+    cancel_payroll_run,
+    create_payroll_run,
+    get_payroll_run,
+    list_payroll_runs,
+    list_run_exceptions,
+    submit_payroll_run,
+)
+from bitwyse_hrms_backend.payroll.payslip import (  # noqa: F401
+    compute_statutory_preview,
+    get_payslip,
+    get_statutory_rates,
+    list_payslips,
+)
+from bitwyse_hrms_backend.payroll.reports import (  # noqa: F401
+    ahl_schedule,
+    nssf_schedule,
+    paye_p10_report,
+    paye_p9_report,
+    payroll_summary_report,
+    shif_schedule,
+)
+
 
 @frappe.whitelist(allow_guest=True)
 def health() -> dict[str, str]:
