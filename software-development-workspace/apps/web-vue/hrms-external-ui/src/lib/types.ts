@@ -449,6 +449,20 @@ export interface TeamCoverageResult {
   on_leave: LeaveCalendarEvent[];
 }
 
+export interface PendingApprovalItem {
+  name: string;
+  employee: string;
+  employee_name: string;
+  company: string;
+  leave_type: string;
+  from_date: string;
+  to_date: string;
+  total_leave_days: number;
+  status: string;
+  leave_approver: string | null;
+  posting_date: string | null;
+}
+
 export interface DepartmentLeaveSummaryRow {
   department: string;
   employee_count: number;
