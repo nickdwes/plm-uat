@@ -83,7 +83,10 @@ onMounted(load);
       <CompanySelector @change="load" />
     </div>
 
-    <p v-if="loading" class="status">Loading…</p>
+    <div v-if="loading" class="org-loading">
+      <span class="org-loading-spinner"></span>
+      <span>Loading…</span>
+    </div>
     <p v-if="error" class="error-banner">{{ error }}</p>
 
     <div class="org-grid">
@@ -102,11 +105,18 @@ onMounted(load);
             <div class="org-item-dot"></div>
             <div class="org-item-body">
               <span class="org-item-name">{{ dept.department_name }}</span>
-              <span v-if="dept.parent_department" class="org-item-parent">↳ {{ dept.parent_department }}</span>
+              <span
+                v-if="dept.parent_department && dept.parent_department !== 'All Departments'"
+                class="org-item-parent"
+              >↳ {{ dept.parent_department }}</span>
             </div>
           </li>
         </ul>
-        <div v-else class="org-empty">No departments found.</div>
+        <div v-else class="org-empty">
+          <div class="org-empty-icon">🏢</div>
+          <p>No departments found.</p>
+          <p class="org-empty-hint">Departments will appear here once added.</p>
+        </div>
 
         <div class="org-add-section">
           <h4 class="org-add-title">Add Department</h4>
