@@ -542,3 +542,216 @@ button.small, .btn-sm {
   font-size: 13px;
   margin-bottom: 16px;
 }
+
+/* ── Employee detail dashboard ──────────────────────────── */
+.emp-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.emp-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 24px 28px;
+  margin-bottom: 20px;
+}
+
+.emp-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: var(--blue);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  letter-spacing: 1px;
+}
+
+.emp-hero-body { flex: 1; min-width: 0; }
+
+.emp-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 4px;
+}
+
+.emp-subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+
+.emp-sep {
+  margin: 0 6px;
+  opacity: 0.4;
+}
+
+.emp-id {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 0;
+}
+
+/* Metric tiles row */
+.emp-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+@media (max-width: 900px) {
+  .emp-metrics { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 540px) {
+  .emp-metrics { grid-template-columns: 1fr; }
+}
+
+.emp-metric-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 20px;
+}
+
+.emp-metric-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 0 0 6px;
+}
+
+.emp-metric-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.emp-metric-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Info panels grid */
+.emp-panels {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (max-width: 900px) {
+  .emp-panels { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 600px) {
+  .emp-panels { grid-template-columns: 1fr; }
+}
+
+.emp-panel {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.emp-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fafc;
+}
+
+.emp-panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.emp-panel-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.emp-icon-blue  { background: var(--blue-light); }
+.emp-icon-purple { background: #f3e8ff; }
+.emp-icon-green  { background: #dcfce7; }
+
+.emp-fields {
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.emp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.emp-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.emp-field-value {
+  font-size: 13.5px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Onboarding progress bar */
+.emp-progress-bar {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.emp-progress-fill {
+  height: 100%;
+  background: var(--blue);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+/* Table sections below panels */
+.emp-table-section {
+  margin-bottom: 24px;
+}
+
+.emp-table-section .section-title {
+  margin-bottom: 12px;
+}
