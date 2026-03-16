@@ -119,6 +119,11 @@ def _enforce_rbac(allowed_roles: tuple[str, ...]) -> None:
         frappe.throw(_("Authentication required."), frappe.AuthenticationError)
 
     user_roles = set(frappe.get_roles(frappe.session.user))
+
+    # Superusers (Administrator / System Manager) bypass RBAC checks.
+    if "Administrator" in user_roles or "System Manager" in user_roles:
+        return
+
     if not user_roles.intersection(allowed_roles):
         frappe.throw(
             _(

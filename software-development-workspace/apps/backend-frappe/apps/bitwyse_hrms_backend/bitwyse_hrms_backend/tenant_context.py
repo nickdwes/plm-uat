@@ -119,6 +119,16 @@ def resolve_tenant_context() -> TenantContext:
 
     user_roles: set[str] = set(frappe.get_roles(user))
 
+    # Superusers (Administrator / System Manager) get unrestricted Global HR access.
+    if "Administrator" in user_roles or "System Manager" in user_roles:
+        return TenantContext(
+            user=user,
+            primary_role=ROLE_GLOBAL_HR,
+            allowed_companies=None,
+            employee_name=None,
+            department=None,
+        )
+
     # Resolve highest-privilege HRMS role.
     primary_role: str | None = None
     for role in ROLE_PRIORITY:
