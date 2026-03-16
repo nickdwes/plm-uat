@@ -39,7 +39,7 @@ from bitwyse_hrms_backend.tenant_context import (
 
 @frappe.whitelist()
 def get_leave_balance(
-    employee: str,
+    employee: str | None = None,
     as_of_date: str | None = None,
 ) -> dict[str, Any]:
     """Return leave balance per leave type for an employee.
@@ -48,7 +48,7 @@ def get_leave_balance(
       remaining = allocated - taken (approved applications)
 
     Args:
-        employee: Frappe Employee name.
+        employee: Frappe Employee name. Defaults to the current user's employee.
         as_of_date: Optional ISO date; defaults to today.
 
     Returns:
@@ -62,6 +62,16 @@ def get_leave_balance(
     check_rate_limit()
 
     ctx = resolve_tenant_context()
+
+    # Default to the current user's linked employee when not supplied.
+    if not employee:
+        employee = ctx.employee_name or frappe.db.get_value(
+            "Employee", {"user_id": frappe.session.user}, "name"
+        )
+    if not employee:
+        from bitwyse_hrms_backend.response import success_response as _sr
+        return _sr(data={"employee": None, "balances": []})
+
     emp_company = frappe.db.get_value("Employee", employee, "company")
     if emp_company:
         require_company_access(ctx, emp_company)
