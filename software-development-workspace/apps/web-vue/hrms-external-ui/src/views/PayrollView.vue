@@ -153,8 +153,8 @@ onMounted(loadRuns);
               <td>{{ slip.gross_pay.toLocaleString("en-KE", { style: "currency", currency: "KES" }) }}</td>
               <td>{{ slip.net_pay.toLocaleString("en-KE", { style: "currency", currency: "KES" }) }}</td>
               <td>
-                <span :class="['badge', statusBadge(slip.docstatus === 1 ? 'Submitted' : slip.docstatus === 2 ? 'Cancelled' : 'Draft')]">
-                  {{ slip.docstatus === 1 ? "Submitted" : slip.docstatus === 2 ? "Cancelled" : "Draft" }}
+                <span :class="['badge', statusBadge(slip.status)]">
+                  {{ slip.status }}
                 </span>
               </td>
             </tr>

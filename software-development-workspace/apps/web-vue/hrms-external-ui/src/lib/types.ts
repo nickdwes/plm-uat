@@ -100,8 +100,10 @@ export interface EmployeeDetail extends EmployeeRecord {
   user_id: string | null;
   employment_type: string | null;
   branch: string | null;
+  salary_mode: string | null;
   documents: EmployeeDocument[];
   onboarding_status: OnboardingStatus;
+  onboarding_checklist: OnboardingChecklistItem[];
 }
 
 export interface EmployeeDocument {
@@ -117,6 +119,11 @@ export interface OnboardingStatus {
   onboarding_name: string | null;
 }
 
+export interface OnboardingChecklistItem {
+  activity_name: string;
+  status: string;
+}
+
 // ---------------------------------------------------------------------------
 // Phase B – Role / grade / designation types
 // ---------------------------------------------------------------------------
@@ -130,6 +137,8 @@ export interface GradeRecord {
   name: string;
   grade_name: string;
   default_leave_policy: string | null;
+  min_salary: number | null;
+  max_salary: number | null;
 }
 
 export interface GradeDetail extends GradeRecord {
@@ -173,11 +182,13 @@ export interface PayrollRunRecord {
   name: string;
   company: string;
   payroll_frequency: string;
+  payroll_period: string | null;
   start_date: string;
   end_date: string;
   status: string;
   posting_date: string | null;
   salary_slip_based_on_timesheet: number;
+  employee_count: number;
 }
 
 export interface PayrollRunDetail extends PayrollRunRecord {
