@@ -46,10 +46,24 @@ async function connect(): Promise<void> {
       {},
     );
 
-    const companies = company.value ? [company.value] : [];
-
+    // Save credentials first so subsequent calls are authenticated.
     setConnection(baseUrl.value, apiKey.value, apiSecret.value);
-    setSession(role.value, apiKey.value || "guest", companies, companies[0] ?? null);
+
+    // Fetch live company list from the backend.
+    let companies: string[] = [];
+    try {
+      const result = await callFrappeMethod<{ items: { name: string }[] }>(
+        authConfig(),
+        "bitwyse_hrms_backend.api.list_companies",
+        {},
+      );
+      companies = result.items.map((c) => c.name);
+    } catch {
+      // Fall back to manually entered company if list fetch fails.
+      if (company.value) companies = [company.value];
+    }
+
+    setSession(role.value, apiKey.value || "guest", companies, (company.value || companies[0]) ?? null);
 
     void router.push({ name: "dashboard" });
   } catch (err) {
