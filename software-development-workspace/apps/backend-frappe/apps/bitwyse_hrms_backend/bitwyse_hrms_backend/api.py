@@ -45,6 +45,7 @@ from bitwyse_hrms_backend.hr.employee import (  # noqa: F401
     get_employee,
     update_employee,
     list_employees as _hr_list_employees,
+    people_dashboard as _hr_people_dashboard,
 )
 from bitwyse_hrms_backend.hr.roles import (  # noqa: F401
     create_designation,
@@ -238,4 +239,28 @@ def list_employees(
         limit_start=safe_start,
         limit_page_length=safe_length,
     )
+
+
+@frappe.whitelist()
+@timed
+@manager_or_above
+def people_dashboard(company: str | None = None) -> dict[str, Any]:
+    """Return people statistics for the People Dashboard view.
+
+    When no company is provided (Global HR), returns an aggregate broken
+    down per company.  When a company is provided, returns detailed stats
+    for that company: department/employment-type breakdowns and recent
+    active joiners.
+
+    Args:
+        company: Optional company filter.
+
+    Returns:
+        dict[str, Any]: Envelope with mode-specific dashboard data.
+
+    Raises:
+        frappe.PermissionError: If called by guest or unauthorised users.
+    """
+    safe_company = sanitise_company(company)
+    return _hr_people_dashboard(company=safe_company)
 

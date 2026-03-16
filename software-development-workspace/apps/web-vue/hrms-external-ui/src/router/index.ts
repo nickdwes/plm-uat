@@ -3,6 +3,7 @@ import { isConfigured, isCompanyHR, isManager } from "../stores/auth";
 
 import DashboardView from "../views/DashboardView.vue";
 import LoginView from "../views/LoginView.vue";
+import PeopleDashboardView from "../views/PeopleDashboardView.vue";
 import PeopleView from "../views/PeopleView.vue";
 import PeopleDetailView from "../views/PeopleDetailView.vue";
 import OrgView from "../views/OrgView.vue";
@@ -25,6 +26,12 @@ const routes: RouteRecordRaw[] = [
     path: "/dashboard",
     name: "dashboard",
     component: DashboardView,
+  },
+  {
+    path: "/people/dashboard",
+    name: "people-dashboard",
+    component: PeopleDashboardView,
+    meta: { requiresManager: true },
   },
   {
     path: "/people",

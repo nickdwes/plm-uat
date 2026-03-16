@@ -392,6 +392,122 @@ def update_employee(
 # ---------------------------------------------------------------------------
 
 
+@frappe.whitelist()
+def people_dashboard(company: str | None = None) -> dict[str, Any]:
+    """Return people statistics for the People Dashboard view.
+
+    When no company is specified (or the caller is Global HR without a
+    company filter), returns an aggregate breakdown across all accessible
+    companies.  When a company is specified, returns detailed per-company
+    statistics: department breakdown, employment-type counts, and the most
+    recent active joiners.
+
+    Args:
+        company: Optional company name to filter by.
+
+    Returns:
+        dict[str, Any]: Envelope with ``mode`` set to ``"single_company"``
+            or ``"all_companies"`` and the appropriate statistics payload.
+
+    Raises:
+        frappe.PermissionError: If called by guest or unauthorised users.
+    """
+    require_authenticated_user()
+    check_rate_limit()
+
+    ctx = resolve_tenant_context()
+    scope = company_scope_filters(ctx, company)
+    effective_company: str | None = scope.get("company")
+
+    if effective_company:
+        base: dict[str, Any] = {"company": effective_company}
+        total = frappe.db.count("Employee", filters=base)
+        active = frappe.db.count("Employee", filters={**base, "status": "Active"})
+
+        dept_rows = frappe.db.sql(
+            """
+            SELECT COALESCE(department, '—') AS department, COUNT(*) AS cnt
+            FROM tabEmployee
+            WHERE company = %s
+            GROUP BY department
+            ORDER BY cnt DESC
+            LIMIT 12
+            """,
+            effective_company,
+            as_dict=True,
+        )
+
+        type_rows = frappe.db.sql(
+            """
+            SELECT COALESCE(employment_type, '—') AS employment_type, COUNT(*) AS cnt
+            FROM tabEmployee
+            WHERE company = %s
+            GROUP BY employment_type
+            ORDER BY cnt DESC
+            """,
+            effective_company,
+            as_dict=True,
+        )
+
+        recent = frappe.get_list(
+            "Employee",
+            fields=["name", "employee_name", "designation", "department", "date_of_joining"],
+            filters={**base, "status": "Active"},
+            order_by="date_of_joining desc",
+            limit_page_length=8,
+            ignore_permissions=True,
+        )
+
+        return success_response({
+            "mode": "single_company",
+            "summary": {
+                "company": effective_company,
+                "total": total,
+                "active": active,
+                "inactive": total - active,
+                "departments": dept_rows,
+                "employment_types": type_rows,
+                "recent_joiners": recent,
+            },
+        })
+
+    # All-companies mode — available to Global HR.
+    status_rows = frappe.db.sql(
+        """
+        SELECT company, status, COUNT(*) AS cnt
+        FROM tabEmployee
+        GROUP BY company, status
+        ORDER BY company, status
+        """,
+        as_dict=True,
+    )
+
+    company_map: dict[str, dict[str, Any]] = {}
+    for row in status_rows:
+        c = row["company"]
+        if c not in company_map:
+            company_map[c] = {"company": c, "total": 0, "active": 0, "inactive": 0}
+        company_map[c]["total"] += row["cnt"]
+        if row["status"] == "Active":
+            company_map[c]["active"] += row["cnt"]
+        else:
+            company_map[c]["inactive"] += row["cnt"]
+
+    companies = sorted(company_map.values(), key=lambda x: x["total"], reverse=True)
+    total_all = sum(c["total"] for c in companies)
+    active_all = sum(c["active"] for c in companies)
+
+    return success_response({
+        "mode": "all_companies",
+        "totals": {
+            "total": total_all,
+            "active": active_all,
+            "inactive": total_all - active_all,
+        },
+        "companies": companies,
+    })
+
+
 def _get_employee_documents(employee_id: str) -> list[dict]:
     """Return lightweight metadata for files attached to an employee record.
 
