@@ -67,9 +67,9 @@ def list_leave_types() -> dict[str, Any]:
         "Leave Type",
         fields=[
             "name",
-            "max_days_allowed",
+            "max_leaves_allowed",
             "is_carry_forward",
-            "is_paid_leave",
+            "allow_negative",
             "allow_negative",
             "include_holiday",
         ],
@@ -101,9 +101,9 @@ def get_leave_type(leave_type: str) -> dict[str, Any]:
         leave_type,
         [
             "name",
-            "max_days_allowed",
+            "max_leaves_allowed",
             "is_carry_forward",
-            "is_paid_leave",
+            "allow_negative",
             "allow_negative",
             "include_holiday",
             "is_lwp",

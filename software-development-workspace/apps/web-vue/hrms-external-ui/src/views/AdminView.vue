@@ -149,8 +149,8 @@ onMounted(loadDesignations);
           <tbody>
             <tr v-for="lt in leaveTypes" :key="lt.name">
               <td>{{ lt.name }}</td>
-              <td>{{ lt.max_days_allowed ?? "Unlimited" }}</td>
-              <td>{{ lt.is_paid_leave ? "Yes" : "No" }}</td>
+              <td>{{ lt.max_leaves_allowed ?? "Unlimited" }}</td>
+              <td>{{ lt.allow_negative ? "Yes" : "No" }}</td>
               <td>{{ lt.is_carry_forward ? "Yes" : "No" }}</td>
               <td>{{ (lt as any).is_lwp ? "Yes" : "No" }}</td>
             </tr>

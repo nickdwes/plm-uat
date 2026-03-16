@@ -342,9 +342,8 @@ export interface P9Report {
 
 export interface LeaveTypeRecord {
   name: string;
-  max_days_allowed: number | null;
+  max_leaves_allowed: number | null;
   is_carry_forward: number;
-  is_paid_leave: number;
   allow_negative: number;
   include_holiday: number;
 }
