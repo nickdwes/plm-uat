@@ -84,38 +84,66 @@ onMounted(load);
     </div>
 
     <p v-if="loading" class="status">Loading…</p>
-    <p v-if="error" class="error">{{ error }}</p>
+    <p v-if="error" class="error-banner">{{ error }}</p>
 
-    <div class="two-col-layout">
-      <section class="panel">
-        <h3>Departments ({{ departments.length }})</h3>
-        <ul class="entity-list">
-          <li v-for="dept in departments" :key="dept.name">
-            <span class="entity-name">{{ dept.department_name }}</span>
-            <span v-if="dept.parent_department" class="entity-sub">↳ {{ dept.parent_department }}</span>
+    <div class="org-grid">
+      <!-- Departments panel -->
+      <section class="org-panel">
+        <div class="org-panel-header">
+          <div class="org-panel-title">
+            <span class="org-panel-icon">🏢</span>
+            <h3>Departments</h3>
+          </div>
+          <span class="org-count-badge">{{ departments.length }}</span>
+        </div>
+
+        <ul class="org-list" v-if="departments.length > 0">
+          <li v-for="dept in departments" :key="dept.name" class="org-list-item">
+            <div class="org-item-dot"></div>
+            <div class="org-item-body">
+              <span class="org-item-name">{{ dept.department_name }}</span>
+              <span v-if="dept.parent_department" class="org-item-parent">↳ {{ dept.parent_department }}</span>
+            </div>
           </li>
-          <li v-if="departments.length === 0" class="empty">No departments found.</li>
         </ul>
+        <div v-else class="org-empty">No departments found.</div>
 
-        <form class="inline-form" @submit.prevent="createDept">
-          <h4>Add Department</h4>
-          <input v-model="newDeptName" type="text" placeholder="Department name" required />
-          <input v-model="newDeptParent" type="text" placeholder="Parent department (optional)" />
-          <p v-if="createError" class="error">{{ createError }}</p>
-          <button type="submit" class="primary small" :disabled="creating">
-            {{ creating ? "Creating…" : "Add" }}
-          </button>
-        </form>
+        <div class="org-add-section">
+          <h4 class="org-add-title">Add Department</h4>
+          <form class="org-add-form" @submit.prevent="createDept">
+            <input v-model="newDeptName" type="text" placeholder="Department name" required />
+            <input v-model="newDeptParent" type="text" placeholder="Parent department (optional)" />
+            <p v-if="createError" class="error">{{ createError }}</p>
+            <button type="submit" class="primary small" :disabled="creating">
+              {{ creating ? "Creating…" : "Add" }}
+            </button>
+          </form>
+        </div>
       </section>
 
-      <section class="panel">
-        <h3>Branches ({{ branches.length }})</h3>
-        <ul class="entity-list">
-          <li v-for="branch in branches" :key="branch.name">
-            <span class="entity-name">{{ branch.branch }}</span>
+      <!-- Branches panel -->
+      <section class="org-panel">
+        <div class="org-panel-header">
+          <div class="org-panel-title">
+            <span class="org-panel-icon">📍</span>
+            <h3>Branches</h3>
+          </div>
+          <span class="org-count-badge">{{ branches.length }}</span>
+        </div>
+
+        <ul class="org-list" v-if="branches.length > 0">
+          <li v-for="branch in branches" :key="branch.name" class="org-list-item">
+            <div class="org-item-dot"></div>
+            <div class="org-item-body">
+              <span class="org-item-name">{{ branch.branch }}</span>
+            </div>
           </li>
-          <li v-if="branches.length === 0" class="empty">No branches found.</li>
         </ul>
+        <div v-else class="org-empty">
+          <div class="org-empty-icon">📭</div>
+          <p>No branches found.</p>
+          <p class="org-empty-hint">Branches will appear here once added.</p>
+        </div>
       </section>
     </div>
   </div>

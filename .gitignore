@@ -1,0 +1,23 @@
+# VS Code Server
+.vscode-server/
+
+# Copilot
+.copilot/
+
+# Cache directories
+.cache/
+.dotnet/
+.net/
+.lesshst
+.sudo_as_admin_successful
+
+# Shell history
+.bash_history
+.bash_logout
+.bash_profile
+.bashrc
+.profile
+
+# Nested repos (managed separately)
+PLM-Rebuild/
+frappe_docker/

@@ -19,8 +19,11 @@ software-development-workspace/
 |-- .vscode/
 |-- apps/
 |   |-- backend-frappe/
+|   |   `-- apps/
+|   |       `-- bitwyse_hrms_backend/
 |   |-- mobile-react-native/
 |   `-- web-vue/
+|       `-- hrms-external-ui/
 |-- assets/
 |-- config/
 |-- docs/
@@ -57,3 +60,8 @@ See `docs/naming-conventions.md` for details.
 - Documentation and commenting standard: `docs/documentation-and-commenting-standards.md`
 - Logging and troubleshooting guide: `docs/logging-and-troubleshooting.md`
 - Session prompt archive process: `docs/session-prompt-archive.md`
+
+## New Integration Scaffolds
+
+- Backend API app: `apps/backend-frappe/apps/bitwyse_hrms_backend/`
+- External Vue frontend: `apps/web-vue/hrms-external-ui/`
