@@ -164,7 +164,7 @@ export async function callFrappeMethod<T>(
       // Frappe wraps all whitelisted method return values in a `message` key.
       // If that message itself is an HRMS structured envelope, unwrap it.
       const msg = legacyPayload.message;
-      if (msg && typeof msg === "object" && "api_version" in msg) {
+      if (msg && typeof msg === "object" && "api_version" in msg && "data" in msg) {
         const inner = msg as ApiEnvelope<T>;
         if (inner.error) {
           throw new HrmsApiError(inner.error.code, inner.error.message, inner.request_id);
