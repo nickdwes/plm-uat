@@ -42,15 +42,16 @@ async function refreshCompanies() {
 
 <style scoped>
 .refresh-btn {
-  margin-left: 6px;
+  padding: 6px 10px;
   background: none;
-  border: 1px solid currentColor;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
   cursor: pointer;
-  padding: 2px 7px;
-  font-size: 1rem;
-  opacity: 0.7;
+  font-size: 14px;
+  color: var(--text-muted);
+  transition: background 0.15s;
+  flex-shrink: 0;
 }
-.refresh-btn:hover { opacity: 1; }
-.refresh-btn:disabled { cursor: wait; }
+.refresh-btn:hover { background: #f9fafb; color: var(--text); }
+.refresh-btn:disabled { cursor: wait; opacity: 0.5; }
 </style>
