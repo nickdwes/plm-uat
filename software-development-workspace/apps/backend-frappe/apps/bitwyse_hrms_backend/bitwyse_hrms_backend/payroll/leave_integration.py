@@ -101,6 +101,7 @@ def _get_lwp_days(employee: str, start_date: str, end_date: str) -> float:
             "to_date": [">=", start_date],
         },
         fields=["from_date", "to_date", "total_leave_days", "leave_type"],
+        ignore_permissions=True
     )
 
     # Only include leave types that are LWP.
@@ -111,6 +112,7 @@ def _get_lwp_days(employee: str, start_date: str, end_date: str) -> float:
             "Leave Type",
             filters={"name": ["in", all_types], "is_lwp": 1},
             fields=["name"],
+        ignore_permissions=True
         )
         lwp_types = {r["name"] for r in rows}
 
@@ -157,6 +159,7 @@ def _get_encashment(
             "encashment_date": ["between", [start_date, end_date]],
         },
         fields=["leave_days", "encashment_amount"],
+        ignore_permissions=True
     )
 
     total_days = sum(float(e.get("leave_days") or 0) for e in encashments)

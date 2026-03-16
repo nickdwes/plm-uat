@@ -114,7 +114,7 @@ def check_rate_limit() -> None:
         return  # Guest is blocked earlier; skip rate-limit tracking.
 
     cache_key = f"hrms_rate_limit:{user}"
-    current: int = frappe.cache().get(cache_key) or 0
+    current: int = frappe.cache().get_value(cache_key) or 0
 
     if current >= _RATE_LIMIT_PER_MINUTE:
         frappe.throw(
@@ -124,7 +124,7 @@ def check_rate_limit() -> None:
 
     # Increment; set TTL only on first request in the window.
     new_count = current + 1
-    frappe.cache().set(cache_key, new_count, expires_in_sec=_RATE_LIMIT_CACHE_TTL)
+    frappe.cache().set_value(cache_key, new_count, expires_in_sec=_RATE_LIMIT_CACHE_TTL)
 
 
 # ---------------------------------------------------------------------------

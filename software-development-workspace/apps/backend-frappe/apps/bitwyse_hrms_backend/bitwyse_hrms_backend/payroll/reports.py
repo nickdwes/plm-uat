@@ -85,6 +85,7 @@ def _get_submitted_slips(
             "end_date",
         ],
         order_by="employee_name asc",
+        ignore_permissions=True
     )
 
 
@@ -106,6 +107,7 @@ def _get_component_amount(slip_name: str, component_names: list[str]) -> float:
             "salary_component": ["in", component_names],
         },
         fields=["amount"],
+        ignore_permissions=True
     )
     return sum(r.get("amount", 0) or 0 for r in rows)
 

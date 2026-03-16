@@ -39,19 +39,14 @@ async function connect(): Promise<void> {
   error.value = "";
 
   try {
-    // Probe the backend to verify connectivity and fetch company list.
-    type Summary = { company: string | null; total_employees: number; total_salary_structures: number; total_payroll_periods: number };
-    const summary = await callFrappeMethod<Summary>(
+    // Probe the backend with the guest-accessible health endpoint to verify connectivity.
+    await callFrappeMethod<{ status: string }>(
       authConfig(),
-      "bitwyse_hrms_backend.api.hrms_dashboard_summary",
-      company.value ? { company: company.value } : {},
+      "bitwyse_hrms_backend.api.health",
+      {},
     );
 
-    const companies = company.value
-      ? [company.value]
-      : summary.company
-      ? [summary.company]
-      : [];
+    const companies = company.value ? [company.value] : [];
 
     setConnection(baseUrl.value, apiKey.value, apiSecret.value);
     setSession(role.value, apiKey.value || "guest", companies, companies[0] ?? null);

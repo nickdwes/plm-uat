@@ -102,6 +102,8 @@ export async function callFrappeMethod<T>(
     Accept: "application/json",
     "X-API-Version": API_VERSION,
     "X-Request-ID": requestId,
+    // Tells Frappe to skip the CSRF token check (required for cross-origin POST requests).
+    "X-Frappe-CSRF-Token": "fetch",
   };
 
   if (auth.apiKey && auth.apiSecret) {

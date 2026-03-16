@@ -61,13 +61,15 @@ def list_companies() -> dict[str, Any]:
     fields = ["name", "company_name", "country", "default_currency"]
 
     if ctx.is_global_hr:
-        items = frappe.get_list("Company", fields=fields, order_by="company_name asc")
+        items = frappe.get_list("Company", fields=fields, order_by="company_name asc",
+        ignore_permissions=True)
     elif ctx.allowed_companies:
         items = frappe.get_list(
             "Company",
             filters=[["Company", "name", "in", ctx.allowed_companies]],
             fields=fields,
             order_by="company_name asc",
+        ignore_permissions=True
         )
     else:
         items = []
@@ -103,6 +105,7 @@ def list_departments(company: str | None = None) -> dict[str, Any]:
         filters=scope or None,
         fields=fields,
         order_by="department_name asc",
+        ignore_permissions=True
     )
     return success_response(data={"items": items})
 
@@ -144,6 +147,7 @@ def get_department(department_name: str) -> dict[str, Any]:
         filters={"parent_department": department_name},
         fields=["name", "department_name"],
         order_by="department_name asc",
+        ignore_permissions=True
     )
     dept["children"] = children
     return success_response(data=dept)
@@ -178,6 +182,7 @@ def list_branches(company: str | None = None) -> dict[str, Any]:
             filters={"company": scope["company"], "status": "Active"},
             fields=["branch"],
             distinct=True,
+        ignore_permissions=True
         )
         names = [b["branch"] for b in branch_names if b.get("branch")]
         if not names:
@@ -187,9 +192,11 @@ def list_branches(company: str | None = None) -> dict[str, Any]:
             filters=[["Branch", "name", "in", names]],
             fields=fields,
             order_by="branch asc",
+        ignore_permissions=True
         )
     else:
-        items = frappe.get_list("Branch", fields=fields, order_by="branch asc")
+        items = frappe.get_list("Branch", fields=fields, order_by="branch asc",
+        ignore_permissions=True)
 
     return success_response(data={"items": items})
 

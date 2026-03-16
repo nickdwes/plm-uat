@@ -135,10 +135,8 @@ export interface DesignationRecord {
 
 export interface GradeRecord {
   name: string;
-  grade_name: string;
-  default_leave_policy: string | null;
-  min_salary: number | null;
-  max_salary: number | null;
+  default_salary_structure: string | null;
+  default_base_pay: number | null;
 }
 
 export interface GradeDetail extends GradeRecord {

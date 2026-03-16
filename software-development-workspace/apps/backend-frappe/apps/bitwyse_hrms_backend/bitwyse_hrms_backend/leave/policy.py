@@ -74,6 +74,7 @@ def list_leave_types() -> dict[str, Any]:
             "include_holiday",
         ],
         order_by="name asc",
+        ignore_permissions=True
     )
     return success_response(data={"items": items})
 
@@ -140,6 +141,7 @@ def list_leave_policies() -> dict[str, Any]:
         "Leave Policy",
         fields=["name", "leave_policy_name"],
         order_by="leave_policy_name asc",
+        ignore_permissions=True
     )
     return success_response(data={"items": items})
 
@@ -180,6 +182,7 @@ def get_leave_policy(policy_name: str) -> dict[str, Any]:
         filters={"parent": policy_name},
         fields=["leave_type", "annual_days"],
         order_by="leave_type asc",
+        ignore_permissions=True
     )
     policy["leave_type_details"] = details
     return success_response(data=policy)
@@ -298,6 +301,7 @@ def list_leave_allocations(
         order_by="from_date desc",
         limit_start=page_start,
         limit_page_length=page_size,
+        ignore_permissions=True
     )
     total = frappe.db.count("Leave Allocation", filters=filters or None)
 

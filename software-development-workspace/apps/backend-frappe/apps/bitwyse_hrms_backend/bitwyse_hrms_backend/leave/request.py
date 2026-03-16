@@ -159,6 +159,7 @@ def list_leave_requests(
         order_by="from_date desc",
         limit_start=page_start,
         limit_page_length=page_size,
+        ignore_permissions=True
     )
     total = frappe.db.count("Leave Application", filters=filters or None)
 

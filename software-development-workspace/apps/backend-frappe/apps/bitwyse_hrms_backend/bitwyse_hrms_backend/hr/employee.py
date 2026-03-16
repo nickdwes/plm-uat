@@ -161,6 +161,7 @@ def list_employees(
         order_by="modified desc",
         limit_start=page_start,
         limit_page_length=page_size,
+        ignore_permissions=True
     )
 
     total = frappe.db.count("Employee", filters=filters or None)
@@ -409,6 +410,7 @@ def _get_employee_documents(employee_id: str) -> list[dict]:
         },
         fields=["name", "file_name", "file_url", "creation"],
         order_by="creation desc",
+        ignore_permissions=True
     )
 
 

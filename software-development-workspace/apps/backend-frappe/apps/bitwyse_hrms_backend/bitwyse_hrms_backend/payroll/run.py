@@ -110,6 +110,7 @@ def list_payroll_runs(
         order_by="posting_date desc",
         limit_start=page_start,
         limit_page_length=page_size,
+        ignore_permissions=True
     )
     total = frappe.db.count("Payroll Entry", filters=filters or None)
 
@@ -185,11 +186,13 @@ def list_run_exceptions(run_name: str) -> dict[str, Any]:
         "Salary Slip",
         filters={"payroll_entry": run_name, "status": "Cancelled"},
         fields=["name", "employee", "employee_name", "net_pay", "status"],
+        ignore_permissions=True
     )
     negative_pay_slips = frappe.get_all(
         "Salary Slip",
         filters={"payroll_entry": run_name, "net_pay": ["<", 0]},
         fields=["name", "employee", "employee_name", "net_pay", "status"],
+        ignore_permissions=True
     )
 
     # Deduplicate by slip name.

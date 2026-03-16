@@ -159,6 +159,7 @@ def _fetch_employees(company: str, department: str | None) -> list[dict]:
             "department",
             "designation",
         ],
+        ignore_permissions=True
     )
 
 
@@ -180,6 +181,7 @@ def _get_gross(employee: str, start_date: str, end_date: str) -> tuple[float, fl
         fields=["base", "from_date"],
         order_by="from_date desc",
         limit=1,
+        ignore_permissions=True
     )
 
     if not assignments:

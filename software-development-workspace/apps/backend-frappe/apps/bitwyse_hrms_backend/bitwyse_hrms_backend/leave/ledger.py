@@ -180,6 +180,7 @@ def get_leave_calendar(
             "half_day",
         ],
         order_by="from_date asc",
+        ignore_permissions=True
     )
 
     return success_response(
@@ -273,6 +274,7 @@ def get_leave_anomalies(
         },
         fields=["name", "employee", "employee_name", "leave_type", "from_date", "to_date"],
         order_by="employee asc, from_date asc",
+        ignore_permissions=True,
     )
 
     # Group by employee and detect overlaps.
@@ -366,6 +368,7 @@ def list_leave_ledger_entries(
             "creation",
         ],
         order_by="from_date desc",
+        ignore_permissions=True
     )
 
     return success_response(data={"employee": employee, "entries": entries})

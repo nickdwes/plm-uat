@@ -180,6 +180,7 @@ def list_payslips(
         order_by="posting_date desc",
         limit_start=page_start,
         limit_page_length=page_size,
+        ignore_permissions=True
     )
     total = frappe.db.count("Salary Slip", filters=filters or None)
 
@@ -240,12 +241,14 @@ def get_payslip(slip_name: str) -> dict[str, Any]:
         filters={"parent": slip_name, "parentfield": "earnings"},
         fields=["salary_component", "amount", "year_to_date"],
         order_by="idx asc",
+        ignore_permissions=True
     )
     slip["deductions"] = frappe.get_all(
         "Salary Detail",
         filters={"parent": slip_name, "parentfield": "deductions"},
         fields=["salary_component", "amount", "year_to_date"],
         order_by="idx asc",
+        ignore_permissions=True
     )
 
     return success_response(data=slip)

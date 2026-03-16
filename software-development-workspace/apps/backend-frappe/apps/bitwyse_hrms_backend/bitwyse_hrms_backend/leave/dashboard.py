@@ -69,6 +69,7 @@ def pending_approvals(company: str | None = None) -> dict[str, Any]:
                 "from_date", "to_date", "total_leave_days", "description",
             ],
             order_by="from_date asc",
+        ignore_permissions=True
         )
     else:
         items = frappe.get_list(
@@ -80,6 +81,7 @@ def pending_approvals(company: str | None = None) -> dict[str, Any]:
                 "leave_approver",
             ],
             order_by="from_date asc",
+        ignore_permissions=True
         )
 
     return success_response(data={"items": items, "count": len(items)})
@@ -137,6 +139,7 @@ def team_coverage(
             "from_date", "to_date", "total_leave_days",
         ],
         order_by="from_date asc",
+        ignore_permissions=True
     )
 
     # Total headcount for coverage percentage.

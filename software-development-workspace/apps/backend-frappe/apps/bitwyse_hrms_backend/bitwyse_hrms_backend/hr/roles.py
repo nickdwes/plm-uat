@@ -56,6 +56,7 @@ def list_designations() -> dict[str, Any]:
         "Designation",
         fields=["name", "designation_name"],
         order_by="designation_name asc",
+        ignore_permissions=True
     )
     return success_response(data={"items": items})
 
@@ -110,9 +111,11 @@ def list_grades() -> dict[str, Any]:
 
     items = frappe.get_list(
         "Employee Grade",
-        fields=["name", "grade_name", "default_leave_policy"],
-        order_by="grade_name asc",
+        fields=["name", "default_salary_structure", "default_base_pay"],
+        order_by="name asc",
+        ignore_permissions=True
     )
+    # Normalize: expose "name" as the grade identifier
     return success_response(data={"items": items})
 
 
@@ -137,8 +140,9 @@ def get_grade(grade_name: str) -> dict[str, Any]:
     grade = frappe.get_value(
         "Employee Grade",
         grade_name,
-        ["name", "grade_name", "default_leave_policy"],
+        ["name", "default_salary_structure", "default_base_pay"],
         as_dict=True,
+        ignore_permissions=True,
     )
     if not grade:
         frappe.throw(
@@ -154,6 +158,7 @@ def get_grade(grade_name: str) -> dict[str, Any]:
             filters={"parent": grade_name},
             fields=["from_amount", "to_amount", "currency"],
             order_by="from_amount asc",
+        ignore_permissions=True
         )
     except Exception:
         # Child table may not exist depending on HRMS version; fail gracefully.
@@ -190,14 +195,13 @@ def create_grade(
     doc = frappe.get_doc(
         {
             "doctype": "Employee Grade",
-            "grade_name": grade_name.strip(),
-            "default_leave_policy": default_leave_policy or None,
+            "name": grade_name.strip(),
         }
     )
     doc.insert(ignore_permissions=True)
     frappe.db.commit()
 
-    return success_response(data={"name": doc.name, "grade_name": doc.grade_name})
+    return success_response(data={"name": doc.name})
 
 
 # ---------------------------------------------------------------------------
@@ -222,5 +226,6 @@ def list_employment_types() -> dict[str, Any]:
         "Employment Type",
         fields=["name", "employee_type_name"],
         order_by="employee_type_name asc",
+        ignore_permissions=True
     )
     return success_response(data={"items": items})

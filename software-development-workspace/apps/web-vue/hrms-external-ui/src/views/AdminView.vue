@@ -123,13 +123,13 @@ onMounted(loadDesignations);
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Grade</th><th>Min Salary (KES)</th><th>Max Salary (KES)</th></tr>
+            <tr><th>Grade</th><th>Default Salary Structure</th><th>Default Base Pay (KES)</th></tr>
           </thead>
           <tbody>
             <tr v-for="g in grades" :key="g.name">
               <td>{{ g.name }}</td>
-              <td>{{ g.min_salary != null ? g.min_salary.toLocaleString() : "-" }}</td>
-              <td>{{ g.max_salary != null ? g.max_salary.toLocaleString() : "-" }}</td>
+              <td>{{ g.default_salary_structure || "-" }}</td>
+              <td>{{ g.default_base_pay != null ? g.default_base_pay.toLocaleString() : "-" }}</td>
             </tr>
             <tr v-if="grades.length === 0 && !loading">
               <td colspan="3" class="empty">No grades found.</td>

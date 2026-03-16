@@ -93,6 +93,7 @@ def list_payroll_periods(
         order_by="start_date desc",
         limit_start=page_start,
         limit_page_length=page_size,
+        ignore_permissions=True
     )
     total = frappe.db.count("Payroll Period", filters=scope or None)
 
