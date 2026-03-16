@@ -151,7 +151,7 @@ export async function callFrappeMethod<T>(
       }
 
       // Fallback: legacy Frappe envelope (used by health endpoint).
-      const legacyPayload = payload as { message?: T; exc?: string };
+      const legacyPayload = payload as { message?: unknown; exc?: string };
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
@@ -161,7 +161,20 @@ export async function callFrappeMethod<T>(
       if (legacyPayload.message === undefined) {
         throw new Error("Frappe response did not include a message payload.");
       }
-      return legacyPayload.message as T;
+      // Frappe wraps all whitelisted method return values in a `message` key.
+      // If that message itself is an HRMS structured envelope, unwrap it.
+      const msg = legacyPayload.message;
+      if (msg && typeof msg === "object" && "api_version" in msg) {
+        const inner = msg as ApiEnvelope<T>;
+        if (inner.error) {
+          throw new HrmsApiError(inner.error.code, inner.error.message, inner.request_id);
+        }
+        if (inner.data === undefined || inner.data === null) {
+          throw new Error("HRMS API response contained no data payload.");
+        }
+        return inner.data;
+      }
+      return msg as T;
     } catch (error) {
       if (error instanceof HrmsApiError) {
         throw error; // Structured errors are not retried.
