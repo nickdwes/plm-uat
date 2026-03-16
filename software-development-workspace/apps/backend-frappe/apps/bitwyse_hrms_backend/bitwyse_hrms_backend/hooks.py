@@ -63,6 +63,15 @@ on_request = "bitwyse_hrms_backend.observability.on_request"
 on_exception = "bitwyse_hrms_backend.observability.on_exception"
 
 # ---------------------------------------------------------------------------
+# Install / migrate hooks
+# ---------------------------------------------------------------------------
+# After install: create HRMS roles, leave types, and salary components.
+# After migrate: re-sync the same fixtures (idempotent).
+
+after_install = "bitwyse_hrms_backend.setup.install.after_install"
+after_migrate = "bitwyse_hrms_backend.setup.install.after_migrate"
+
+# ---------------------------------------------------------------------------
 # Scheduled tasks
 # ---------------------------------------------------------------------------
 

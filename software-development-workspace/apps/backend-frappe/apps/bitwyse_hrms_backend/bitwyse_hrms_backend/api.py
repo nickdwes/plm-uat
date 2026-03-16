@@ -127,6 +127,10 @@ from bitwyse_hrms_backend.leave.dashboard import pending_approvals as list_pendi
 from bitwyse_hrms_backend.leave.ledger import get_leave_balance as get_leave_balances  # noqa: F401
 
 
+# Phase G – shadow payroll re-export
+from bitwyse_hrms_backend.payroll.shadow import run_shadow_payroll  # noqa: F401
+
+
 @frappe.whitelist(allow_guest=True)
 @timed
 def health() -> dict[str, str]:
