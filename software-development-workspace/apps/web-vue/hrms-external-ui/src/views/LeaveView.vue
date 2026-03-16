@@ -133,10 +133,10 @@ onMounted(() => loadMyLeaves());
     </div>
 
     <div class="tab-bar">
-      <button :class="{ active: tab === 'my-leaves' }" @click="switchTab('my-leaves')">My Leave</button>
-      <button v-if="isManager" :class="{ active: tab === 'pending' }" @click="switchTab('pending')">
+      <button class="tab-btn" :class="{ active: tab === 'my-leaves' }" @click="switchTab('my-leaves')">My Leave</button>
+      <button v-if="isManager" class="tab-btn" :class="{ active: tab === 'pending' }" @click="switchTab('pending')">
         Pending Approvals
-        <span v-if="pending.length" class="badge badge-orange">{{ pending.length }}</span>
+        <span v-if="pending.length" class="badge badge-blue">{{ pending.length }}</span>
       </button>
     </div>
 
@@ -204,7 +204,7 @@ onMounted(() => loadMyLeaves());
                 <td>{{ req.to_date }}</td>
                 <td>{{ req.total_leave_days }}</td>
                 <td>
-                  <span :class="['badge', req.status === 'Approved' ? 'badge-green' : req.status === 'Rejected' ? 'badge-red' : 'badge-grey']">
+                  <span :class="['badge', req.status === 'Approved' ? 'badge-green' : req.status === 'Rejected' ? 'badge-red' : 'badge-gray']">
                     {{ req.status }}
                   </span>
                 </td>

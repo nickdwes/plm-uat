@@ -46,7 +46,7 @@ onMounted(load);
     <p v-if="loading" class="status">Loading…</p>
     <p v-if="error" class="error">{{ error }}</p>
 
-    <div v-if="summary" class="metric-grid">
+    <div v-if="summary" class="metrics-grid">
       <article class="metric-card">
         <p class="metric-label">Company</p>
         <p class="metric-value">{{ summary.company ?? "All" }}</p>
@@ -65,24 +65,24 @@ onMounted(load);
       </article>
     </div>
 
-    <div v-if="isCompanyHR" class="quick-links">
-      <h3>Quick Actions</h3>
-      <div class="action-grid">
+    <div v-if="isCompanyHR" class="quick-actions">
+      <h3 class="section-title">Quick Actions</h3>
+      <div class="actions-grid">
         <router-link :to="{ name: 'people' }" class="action-card">
           <span class="action-icon">👥</span>
-          <span>View Employees</span>
+          <span class="action-label">View Employees</span>
         </router-link>
         <router-link :to="{ name: 'leave' }" class="action-card">
           <span class="action-icon">🌴</span>
-          <span>Leave Requests</span>
+          <span class="action-label">Leave Requests</span>
         </router-link>
         <router-link :to="{ name: 'payroll' }" class="action-card">
           <span class="action-icon">💰</span>
-          <span>Payroll Runs</span>
+          <span class="action-label">Payroll Runs</span>
         </router-link>
         <router-link :to="{ name: 'org' }" class="action-card">
           <span class="action-icon">🏢</span>
-          <span>Organisation</span>
+          <span class="action-label">Organisation</span>
         </router-link>
       </div>
     </div>

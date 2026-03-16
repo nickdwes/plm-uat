@@ -110,7 +110,7 @@ onMounted(() => load(true));
             <td>{{ emp.department ?? "-" }}</td>
             <td>{{ emp.designation ?? "-" }}</td>
             <td>
-              <span :class="['badge', emp.status === 'Active' ? 'badge-green' : 'badge-grey']">
+              <span :class="['badge', emp.status === 'Active' ? 'badge-green' : 'badge-gray']">
                 {{ emp.status }}
               </span>
             </td>

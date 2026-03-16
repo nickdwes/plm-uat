@@ -74,7 +74,7 @@ function switchTab(t: Tab): void {
 function statusBadge(status: string): string {
   if (status === "Submitted") return "badge-green";
   if (status === "Cancelled") return "badge-red";
-  return "badge-grey";
+  return "badge-gray";
 }
 
 onMounted(loadRuns);
@@ -88,10 +88,10 @@ onMounted(loadRuns);
     </div>
 
     <div class="tab-bar">
-      <button :class="{ active: tab === 'runs' }" @click="switchTab('runs')">Payroll Runs</button>
-      <button :class="{ active: tab === 'payslips' }" @click="switchTab('payslips')">
+      <button class="tab-btn" :class="{ active: tab === 'runs' }" @click="switchTab('runs')">Payroll Runs</button>
+      <button class="tab-btn" :class="{ active: tab === 'payslips' }" @click="switchTab('payslips')">
         Payslips
-        <span v-if="selectedRun" class="badge badge-grey">{{ selectedRun }}</span>
+        <span v-if="selectedRun" class="badge badge-gray">{{ selectedRun }}</span>
       </button>
     </div>
 

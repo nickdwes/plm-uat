@@ -91,9 +91,9 @@ onMounted(loadDesignations);
     </div>
 
     <div class="tab-bar">
-      <button :class="{ active: tab === 'designations' }" @click="switchTab('designations')">Designations</button>
-      <button :class="{ active: tab === 'grades' }" @click="switchTab('grades')">Grades</button>
-      <button :class="{ active: tab === 'leave-types' }" @click="switchTab('leave-types')">Leave Types</button>
+      <button class="tab-btn" :class="{ active: tab === 'designations' }" @click="switchTab('designations')">Designations</button>
+      <button class="tab-btn" :class="{ active: tab === 'grades' }" @click="switchTab('grades')">Grades</button>
+      <button class="tab-btn" :class="{ active: tab === 'leave-types' }" @click="switchTab('leave-types')">Leave Types</button>
     </div>
 
     <p v-if="loading" class="status">Loading…</p>
