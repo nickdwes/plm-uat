@@ -210,7 +210,7 @@ async function saveAndNext(): Promise<void> {
         onboarding_id: onboardingId.value,
         step: currentSlug.value,
         data: JSON.stringify(payload),
-        consent_captured: consentCaptured.value,
+        consent_captured: consentCaptured.value ? 1 : 0,
       },
     );
     currentStep.value++;
