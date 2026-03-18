@@ -153,7 +153,22 @@ export async function callFrappeMethod<T>(
       // Fallback: legacy Frappe envelope (used by health endpoint).
       const legacyPayload = payload as { message?: unknown; exc?: string };
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        // Extract Frappe's human-readable validation/error message from the payload.
+        const errBody = payload as Record<string, unknown>;
+        let serverMessage: string | undefined;
+        if (typeof errBody._server_messages === "string") {
+          try {
+            const msgs = JSON.parse(errBody._server_messages) as Array<{ message?: string }>;
+            serverMessage = msgs.map((m) => m.message).filter(Boolean).join(" ");
+          } catch {
+            // JSON parse failed; fall through
+          }
+        }
+        if (!serverMessage && typeof errBody.exception === "string") {
+          const match = (errBody.exception as string).match(/(?:Error|Exception): (.+)$/m);
+          serverMessage = match?.[1]?.trim();
+        }
+        throw new Error(serverMessage || `HTTP ${response.status}: ${response.statusText}`);
       }
       if (legacyPayload.exc) {
         throw new Error("Frappe returned an exception for this request.");
