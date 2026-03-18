@@ -171,12 +171,12 @@ async function createDraft(): Promise<void> {
   saving.value = true;
   submitError.value = "";
   try {
-    const res = await callFrappeMethod<{ name: string; current_step: number }>(
+    const res = await callFrappeMethod<{ onboarding_id: string; status: string }>(
       authConfig(),
       "bitwyse_hrms_backend.api.create_onboarding_draft",
       { ...quickStart },
     );
-    onboardingId.value = res.name;
+    onboardingId.value = res.onboarding_id;
     // Pre-fill employment step from quickstart
     employmentData.company = quickStart.company;
     employmentData.department = quickStart.department;
