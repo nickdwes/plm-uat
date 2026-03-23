@@ -51,6 +51,15 @@ doc_events = {
         # Prevent any direct mutations to audit log records after creation.
         "before_save": "bitwyse_hrms_backend.audit_log.writer._block_audit_log_mutation",
     },
+    # Phase H – Onboarding
+    "HRMS Onboarding": {
+        "after_insert": "bitwyse_hrms_backend.audit.on_onboarding_insert",
+        "on_update": "bitwyse_hrms_backend.audit.on_onboarding_status_change",
+    },
+    "HRMS Secondment": {
+        "after_insert": "bitwyse_hrms_backend.audit.on_secondment_insert",
+        "on_update": "bitwyse_hrms_backend.audit.on_secondment_update",
+    },
 }
 
 # ---------------------------------------------------------------------------
@@ -76,6 +85,9 @@ after_migrate = "bitwyse_hrms_backend.setup.install.after_migrate"
 # ---------------------------------------------------------------------------
 
 scheduler_events = {
-    "daily": [],
+    "daily": [
+        # Auto-complete secondments past their end_date
+        "bitwyse_hrms_backend.onboarding.secondment.auto_complete_expired_secondments",
+    ],
     "weekly": [],
 }

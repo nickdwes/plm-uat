@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { callFrappeMethod, type FrappeAuthConfig } from "../lib/frappe-client";
-import { authStore, isCompanyHR } from "../stores/auth";
+import { authStore, isCompanyHR, isManager } from "../stores/auth";
 import type { DashboardSummary } from "../lib/types";
 import CompanySelector from "../components/CompanySelector.vue";
 
@@ -65,10 +65,14 @@ onMounted(load);
       </article>
     </div>
 
-    <div v-if="isCompanyHR" class="quick-actions">
+    <div v-if="isManager" class="quick-actions">
       <h3 class="section-title">Quick Actions</h3>
       <div class="actions-grid">
-        <router-link :to="{ name: 'people' }" class="action-card">
+        <router-link :to="{ name: 'onboarding-create' }" class="action-card">
+          <span class="action-icon">🆕</span>
+          <span class="action-label">New Onboarding</span>
+        </router-link>
+        <router-link v-if="isCompanyHR" :to="{ name: 'people' }" class="action-card">
           <span class="action-icon">👥</span>
           <span class="action-label">View Employees</span>
         </router-link>

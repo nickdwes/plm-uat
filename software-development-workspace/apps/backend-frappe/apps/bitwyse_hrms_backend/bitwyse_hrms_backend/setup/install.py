@@ -25,9 +25,21 @@ def after_install() -> None:
             f"skipped {skipped} existing items."
         )
     except Exception as exc:  # pragma: no cover
-        # Log but don't abort the install
         frappe.logger().warning(
             f"[bitwyse_hrms_backend] after_install setup warning: {exc}"
+        )
+
+    try:
+        from bitwyse_hrms_backend.onboarding.models import ensure_onboarding_doctypes
+
+        dt_result = ensure_onboarding_doctypes()
+        frappe.logger().info(
+            f"[bitwyse_hrms_backend] onboarding DocTypes: "
+            f"created {dt_result['created']}, skipped {dt_result['skipped']}"
+        )
+    except Exception as exc:  # pragma: no cover
+        frappe.logger().warning(
+            f"[bitwyse_hrms_backend] onboarding DocType install warning: {exc}"
         )
 
 

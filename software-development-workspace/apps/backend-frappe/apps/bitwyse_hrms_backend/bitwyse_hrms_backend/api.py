@@ -131,6 +131,30 @@ from bitwyse_hrms_backend.leave.ledger import get_leave_balance as get_leave_bal
 # Phase G – shadow payroll re-export
 from bitwyse_hrms_backend.payroll.shadow import run_shadow_payroll  # noqa: F401
 
+# Phase H – Employee Onboarding module
+from bitwyse_hrms_backend.onboarding.create import (  # noqa: F401
+    create_onboarding_draft,
+    save_onboarding_step,
+)
+from bitwyse_hrms_backend.onboarding.workflow import (  # noqa: F401
+    submit_onboarding,
+    approve_onboarding,
+    reject_onboarding,
+    reopen_onboarding,
+    mark_onboarded,
+)
+from bitwyse_hrms_backend.onboarding.read import (  # noqa: F401
+    list_onboarding_records,
+    get_onboarding_record,
+    get_onboarding_dashboard,
+)
+from bitwyse_hrms_backend.onboarding.secondment import (  # noqa: F401
+    create_secondment,
+    list_secondments,
+    get_secondment,
+    end_secondment,
+)
+
 
 @frappe.whitelist(allow_guest=True)
 @timed

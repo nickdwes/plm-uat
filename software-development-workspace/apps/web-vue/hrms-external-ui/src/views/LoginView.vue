@@ -39,35 +39,39 @@ async function connect(): Promise<void> {
   error.value = "";
 
   try {
-    // Probe the backend with the guest-accessible health endpoint to verify connectivity.
+    // Step 1: Probe connectivity using the guest-accessible health endpoint.
+    // Do NOT send credentials here — Frappe rejects invalid tokens with 401
+    // even on guest endpoints, causing a misleading error on first connect.
     await callFrappeMethod<{ status: string }>(
-      authConfig(),
+      { baseUrl: baseUrl.value },
       "bitwyse_hrms_backend.api.health",
       {},
     );
 
-    // Save credentials first so subsequent calls are authenticated.
+    // Step 2: Validate credentials and fetch company list.
+    // Let auth errors propagate so the user sees a clear message.
     setConnection(baseUrl.value, apiKey.value, apiSecret.value);
 
-    // Fetch live company list from the backend.
     let companies: string[] = [];
-    try {
-      const result = await callFrappeMethod<{ items: { name: string }[] }>(
-        authConfig(),
-        "bitwyse_hrms_backend.api.list_companies",
-        {},
-      );
-      companies = result.items.map((c) => c.name);
-    } catch {
-      // Fall back to manually entered company if list fetch fails.
-      if (company.value) companies = [company.value];
+    const result = await callFrappeMethod<{ items: { name: string }[] }>(
+      authConfig(),
+      "bitwyse_hrms_backend.api.list_companies",
+      {},
+    );
+    companies = result.items.map((c) => c.name);
+    if (company.value && !companies.includes(company.value)) {
+      companies.push(company.value);
     }
 
     setSession(role.value, apiKey.value || "guest", companies, (company.value || companies[0]) ?? null);
 
     void router.push({ name: "dashboard" });
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "Connection failed.";
+    if (err instanceof Error && err.message.startsWith("HTTP 401")) {
+      error.value = "Invalid API key or secret. Please check your credentials.";
+    } else {
+      error.value = err instanceof Error ? err.message : "Connection failed.";
+    }
   } finally {
     loading.value = false;
   }

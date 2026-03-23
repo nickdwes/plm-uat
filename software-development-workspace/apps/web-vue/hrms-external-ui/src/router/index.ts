@@ -10,6 +10,9 @@ import OrgView from "../views/OrgView.vue";
 import LeaveView from "../views/LeaveView.vue";
 import PayrollView from "../views/PayrollView.vue";
 import AdminView from "../views/AdminView.vue";
+import OnboardingListView from "../views/OnboardingListView.vue";
+import OnboardingCreateView from "../views/OnboardingCreateView.vue";
+import OnboardingDetailView from "../views/OnboardingDetailView.vue";
 
 const routes: RouteRecordRaw[] = [
   {
@@ -68,6 +71,25 @@ const routes: RouteRecordRaw[] = [
     name: "admin",
     component: AdminView,
     meta: { requiresCompanyHR: true },
+  },
+  {
+    path: "/onboarding",
+    name: "onboarding-list",
+    component: OnboardingListView,
+    meta: { requiresManager: true },
+  },
+  {
+    path: "/onboarding/new",
+    name: "onboarding-create",
+    component: OnboardingCreateView,
+    meta: { requiresManager: true },
+  },
+  {
+    path: "/onboarding/:id",
+    name: "onboarding-detail",
+    component: OnboardingDetailView,
+    props: true,
+    meta: { requiresManager: true },
   },
 ];
 

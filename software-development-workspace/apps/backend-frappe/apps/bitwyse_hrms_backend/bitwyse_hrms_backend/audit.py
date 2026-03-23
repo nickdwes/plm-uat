@@ -317,3 +317,91 @@ def on_leave_allocation_submit(doc, method=None) -> None:  # noqa: ANN001
             "to_date": str(getattr(doc, "to_date", "")),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Onboarding audit hooks (Phase H)
+# ---------------------------------------------------------------------------
+
+
+def on_onboarding_status_change(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when an HRMS Onboarding document is saved.
+
+    Tracks status transitions and captures diff of key fields.
+    """
+    changed: dict = {}
+    before = doc.get_doc_before_save()
+    if before:
+        tracked = ["status", "company", "department", "designation",
+                   "date_of_hire", "first_name", "last_name", "approved_by",
+                   "rejected_by", "onboarded_by"]
+        for field in tracked:
+            old_val = getattr(before, field, None)
+            new_val = getattr(doc, field, None)
+            if old_val != new_val:
+                changed[field] = {"before": old_val, "after": new_val}
+
+    if not changed:
+        return
+
+    _write_audit_event(
+        event="onboarding.updated",
+        doctype="HRMS Onboarding",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={"changed": changed},
+    )
+
+
+def on_onboarding_insert(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a new HRMS Onboarding document is created."""
+    _write_audit_event(
+        event="onboarding.created",
+        doctype="HRMS Onboarding",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "company": doc.company,
+            "department": doc.department,
+            "status": doc.status,
+        },
+    )
+
+
+def on_secondment_insert(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when a new HRMS Secondment is created."""
+    _write_audit_event(
+        event="secondment.created",
+        doctype="HRMS Secondment",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={
+            "employee": doc.employee,
+            "host_company": doc.host_company,
+            "start_date": str(doc.start_date),
+            "end_date": str(doc.end_date),
+        },
+    )
+
+
+def on_secondment_update(doc, method=None) -> None:  # noqa: ANN001
+    """Audit hook: fires when an HRMS Secondment is updated."""
+    before = doc.get_doc_before_save()
+    if not before:
+        return
+    changed: dict = {}
+    for field in ["status", "end_date", "host_company", "host_department"]:
+        old_val = getattr(before, field, None)
+        new_val = getattr(doc, field, None)
+        if old_val != new_val:
+            changed[field] = {"before": str(old_val) if old_val else None,
+                               "after": str(new_val) if new_val else None}
+    if not changed:
+        return
+    _write_audit_event(
+        event="secondment.updated",
+        doctype="HRMS Secondment",
+        docname=doc.name,
+        actor=frappe.session.user,
+        payload={"changed": changed},
+    )

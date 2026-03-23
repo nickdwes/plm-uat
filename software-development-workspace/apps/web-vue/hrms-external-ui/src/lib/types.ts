@@ -102,7 +102,7 @@ export interface EmployeeDetail extends EmployeeRecord {
   branch: string | null;
   salary_mode: string | null;
   documents: EmployeeDocument[];
-  onboarding_status: OnboardingStatus;
+  onboarding_status: EmployeeOnboardingStatus;
   onboarding_checklist: OnboardingChecklistItem[];
 }
 
@@ -113,7 +113,7 @@ export interface EmployeeDocument {
   creation: string;
 }
 
-export interface OnboardingStatus {
+export interface EmployeeOnboardingStatus {
   has_onboarding: boolean;
   status: string | null;
   onboarding_name: string | null;
@@ -476,3 +476,142 @@ export interface DepartmentLeaveSummaryRow {
   employee_count: number;
   leave_days_taken: number;
 }
+
+// ---------------------------------------------------------------------------
+// Phase H – Employee Onboarding types
+// ---------------------------------------------------------------------------
+
+export type OnboardingStatus =
+  | "Draft"
+  | "Submitted"
+  | "Approved"
+  | "Rejected"
+  | "Onboarded";
+
+export interface OnboardingQualification {
+  qualification_type: "Academic" | "Professional";
+  institution_name: string;
+  course_or_certification: string;
+  year_completed: string;
+  supporting_document: string | null;
+}
+
+export interface OnboardingNextOfKin {
+  full_name: string;
+  relationship: string;
+  phone_number: string;
+  email: string | null;
+  address: string | null;
+}
+
+export interface OnboardingEmergencyContact {
+  full_name: string;
+  relationship: string;
+  phone_number: string;
+  alternate_phone: string | null;
+  address: string | null;
+}
+
+export interface OnboardingRecord {
+  name: string;
+  status: OnboardingStatus;
+  company: string;
+  department: string;
+  designation: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  full_name: string;
+  employment_type: string | null;
+  date_of_hire: string | null;
+  current_step: number;
+  approved_by: string | null;
+  approval_date: string | null;
+  creation: string;
+  modified: string;
+}
+
+export interface OnboardingDetail extends OnboardingRecord {
+  middle_name: string | null;
+  national_id_type: string | null;
+  national_id_number: string | null;
+  date_of_birth: string | null;
+  gender: string | null;
+  marital_status: string | null;
+  phone_number: string | null;
+  personal_email: string | null;
+  work_email: string | null;
+  physical_address: string | null;
+  reporting_manager: string | null;
+  work_location: string | null;
+  probation_period_months: string | null;
+  group_function: string | null;
+  kra_pin: string | null;
+  nssf_number: string | null;
+  nhif_number: string | null;
+  sha_number: string | null;
+  bank_name: string | null;
+  bank_branch: string | null;
+  account_number: string | null;
+  account_name: string | null;
+  tax_obligations_flag: boolean;
+  national_id_copy: string | null;
+  kra_pin_certificate: string | null;
+  nssf_proof: string | null;
+  nhif_proof: string | null;
+  academic_certificates: string | null;
+  employment_contract: string | null;
+  compliance_documents: string | null;
+  approval_comments: string | null;
+  rejection_reason: string | null;
+  rejected_by: string | null;
+  rejection_date: string | null;
+  onboarded_by: string | null;
+  onboarded_date: string | null;
+  consent_captured: boolean;
+  employee: string | null;
+  step_labels: Record<string, string>;
+  total_steps: number;
+  qualifications: OnboardingQualification[];
+  next_of_kin: OnboardingNextOfKin[];
+  emergency_contacts: OnboardingEmergencyContact[];
+}
+
+export interface OnboardingDashboard {
+  by_status: Record<OnboardingStatus, number>;
+  total: number;
+  pending_approval: Array<{
+    name: string;
+    first_name: string | null;
+    last_name: string | null;
+    full_name: string;
+    company: string;
+    department: string;
+    date_of_hire: string | null;
+    creation: string;
+  }>;
+}
+
+// Secondment types
+
+export type SecondmentStatus = "Active" | "Completed" | "Cancelled";
+
+export interface SecondmentRecord {
+  name: string;
+  employee: string;
+  home_company: string;
+  home_department: string | null;
+  host_company: string;
+  host_department: string | null;
+  reporting_manager: string | null;
+  start_date: string;
+  end_date: string;
+  status: SecondmentStatus;
+}
+
+export interface SecondmentDetail extends SecondmentRecord {
+  notes: string | null;
+}
+
+// Generic per-step payload used by the wizard orchestrator
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type OnboardingStepData = Record<string, any>;
