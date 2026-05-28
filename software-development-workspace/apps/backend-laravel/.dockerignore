@@ -1,0 +1,31 @@
+# ── PHP / Composer ─────────────────────────────────────────────────────────────
+vendor/
+composer.phar
+
+# ── Node (Vite / frontend tooling if present) ──────────────────────────────────
+node_modules/
+
+# ── Laravel generated/runtime files ──────────────────────────────────────────
+storage/logs/
+storage/framework/cache/
+storage/framework/sessions/
+storage/framework/views/
+bootstrap/cache/
+
+# ── Test artifacts ─────────────────────────────────────────────────────────────
+.phpunit.result.cache
+coverage/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*.local
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.DS_Store
+Thumbs.db
+
+# ── Git ───────────────────────────────────────────────────────────────────────
+.git/
+.gitignore

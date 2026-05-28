@@ -8,9 +8,11 @@ RUN npm install
 
 COPY . .
 
-# Inject backend URL at build time if provided; defaults to empty (entered at login)
+# Inject backend URLs at build time if provided; defaults to empty (entered at login)
 ARG VITE_FRAPPE_BASE_URL=""
 ENV VITE_FRAPPE_BASE_URL=$VITE_FRAPPE_BASE_URL
+ARG VITE_LARAVEL_BASE_URL=""
+ENV VITE_LARAVEL_BASE_URL=$VITE_LARAVEL_BASE_URL
 
 RUN npm run build
 

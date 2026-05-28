@@ -2,13 +2,15 @@
 import { ref } from "vue";
 import { useRouter } from "vue-router";
 import { callFrappeMethod, type FrappeAuthConfig } from "../lib/frappe-client";
-import { authStore, setConnection, setSession } from "../stores/auth";
+import { authStore, setConnection, setSession, setLaravelConnection } from "../stores/auth";
 
 const router = useRouter();
 
 const baseUrl = ref(authStore.baseUrl);
 const apiKey = ref(authStore.apiKey);
 const apiSecret = ref(authStore.apiSecret);
+const laravelBaseUrl = ref(authStore.laravelBaseUrl);
+const laravelToken = ref(authStore.laravelToken);
 const company = ref("");
 const role = ref("HRMS Company HR");
 const loading = ref(false);
@@ -64,6 +66,7 @@ async function connect(): Promise<void> {
     }
 
     setSession(role.value, apiKey.value || "guest", companies, (company.value || companies[0]) ?? null);
+    setLaravelConnection(laravelBaseUrl.value.trim(), laravelToken.value.trim());
 
     void router.push({ name: "dashboard" });
   } catch (err) {
@@ -86,12 +89,12 @@ async function connect(): Promise<void> {
 
       <form class="login-form" @submit.prevent="connect">
         <label>
-          Backend URL <span class="required">*</span>
+          Backend URL
+          <span class="field-hint">Leave blank when running via the Vite dev server — it proxies <code>/api</code> to <code>localhost:8080</code> automatically. Fill in for a remote backend (e.g. <code>https://hrms.example.com</code>).</span>
           <input
             v-model="baseUrl"
-            type="url"
-            placeholder="https://hrms-be.bitwyse.co.ke"
-            required
+            type="text"
+            placeholder="Leave blank for local dev (proxied) — or enter remote URL"
           />
         </label>
 
@@ -103,6 +106,22 @@ async function connect(): Promise<void> {
         <label>
           API Secret
           <input v-model="apiSecret" type="password" placeholder="Leave blank for session auth" />
+        </label>
+
+        <label>
+          Laravel API URL
+          <span class="field-hint">Base URL of the Laravel backend (e.g. <code>https://api.hrms.example.com</code>). Required for the Compliance module.</span>
+          <input
+            v-model="laravelBaseUrl"
+            type="text"
+            placeholder="https://api.hrms.example.com"
+          />
+        </label>
+
+        <label>
+          Laravel API Token
+          <span class="field-hint">Your Sanctum personal access token from the Laravel backend.</span>
+          <input v-model="laravelToken" type="password" placeholder="Sanctum Bearer token" />
         </label>
 
         <label>

@@ -1,0 +1,254 @@
+<?php
+
+namespace App\Http\Controllers\HR;
+
+use App\Http\Controllers\Controller;
+use App\Models\Preboarding\PreboardingAttachment;
+use App\Models\Preboarding\PreboardingRecord;
+use App\Models\Preboarding\PreboardingReference;
+use App\Services\HR\PreboardingService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class PreboardingController extends Controller
+{
+    public function __construct(private PreboardingService $service) {}
+
+    private function orgId(Request $request): int
+    {
+        return (int) app('current.organization_id');
+    }
+
+    // ── Records ───────────────────────────────────────────────────────────
+
+    public function index(Request $request): JsonResponse
+    {
+        $records = $this->service->list($this->orgId($request), $request->only(['search', 'status', 'per_page', 'page']));
+        return response()->json([
+            'data' => $records->items(),
+            'meta' => [
+                'total'        => $records->total(),
+                'last_page'    => $records->lastPage(),
+                'current_page' => $records->currentPage(),
+                'per_page'     => $records->perPage(),
+            ],
+        ]);
+    }
+
+    public function store(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'first_name'          => 'required|string|max:100',
+            'last_name'           => 'required|string|max:100',
+            'email'               => 'required|email|max:255',
+            'phone'               => 'nullable|string|max:30',
+            'position'            => 'nullable|string|max:150',
+            'expected_start_date' => 'nullable|date',
+            'candidate_id'        => 'nullable|integer',
+            'notes'               => 'nullable|string|max:1000',
+        ]);
+
+        $record = $this->service->create($this->orgId($request), $data, Auth::id());
+        return response()->json($record, 201);
+    }
+
+    public function show(Request $request, int $preboarding): JsonResponse
+    {
+        $record = $this->service->get($preboarding);
+        $this->authorizeOrg($record, $request);
+        return response()->json($record);
+    }
+
+    public function update(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $data = $request->validate([
+            'first_name'          => 'sometimes|string|max:100',
+            'last_name'           => 'sometimes|string|max:100',
+            'email'               => 'sometimes|email|max:255',
+            'phone'               => 'nullable|string|max:30',
+            'position'            => 'nullable|string|max:150',
+            'expected_start_date' => 'nullable|date',
+            'notes'               => 'nullable|string|max:1000',
+        ]);
+
+        return response()->json($this->service->update($record, $data));
+    }
+
+    public function destroy(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        $this->service->delete($record);
+        return response()->json(['message' => 'Deleted.']);
+    }
+
+    // ── Welcome / Announcement ────────────────────────────────────────────
+
+    public function sendWelcome(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        return response()->json($this->service->markWelcomeSent($record));
+    }
+
+    public function sendAnnouncement(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        return response()->json($this->service->markAnnouncementSent($record));
+    }
+
+    // ── Sections ──────────────────────────────────────────────────────────
+
+    public function updateSection(Request $request, int $preboarding, string $section): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        if (!in_array($section, PreboardingService::SECTIONS)) {
+            return response()->json(['message' => 'Unknown section.'], 422);
+        }
+
+        $data = $request->validate(['data' => 'required|array']);
+        return response()->json($this->service->updateSection($record, $section, $data['data']));
+    }
+
+    public function approveSection(Request $request, int $preboarding, string $section): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $validated = $request->validate(['hr_notes' => 'nullable|string|max:500']);
+        return response()->json(
+            $this->service->approveSection($record, $section, Auth::id(), $validated['hr_notes'] ?? null)
+        );
+    }
+
+    public function sectionNotApplicable(Request $request, int $preboarding, string $section): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        return response()->json($this->service->markSectionNotApplicable($record, $section));
+    }
+
+    // ── References ────────────────────────────────────────────────────────
+
+    public function storeReference(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $data = $request->validate([
+            'referee_name'      => 'required|string|max:150',
+            'referee_email'     => 'required|email|max:255',
+            'referee_company'   => 'nullable|string|max:150',
+            'referee_job_title' => 'nullable|string|max:150',
+            'relationship'      => 'nullable|string|max:100',
+        ]);
+
+        return response()->json($this->service->addReference($record, $data), 201);
+    }
+
+    public function approveReference(Request $request, int $preboarding, int $reference): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        $ref = PreboardingReference::where('preboarding_id', $preboarding)->findOrFail($reference);
+        return response()->json($this->service->approveReference($ref));
+    }
+
+    public function inviteReference(Request $request, int $preboarding, int $reference): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        $ref = PreboardingReference::where('preboarding_id', $preboarding)->findOrFail($reference);
+        return response()->json($this->service->inviteReference($ref));
+    }
+
+    public function destroyReference(Request $request, int $preboarding, int $reference): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        $ref = PreboardingReference::where('preboarding_id', $preboarding)->findOrFail($reference);
+        $this->service->deleteReference($ref);
+        return response()->json(['message' => 'Deleted.']);
+    }
+
+    // ── Attachments ───────────────────────────────────────────────────────
+
+    public function storeAttachment(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $request->validate([
+            'file'     => 'required|file|mimes:pdf,jpg,jpeg,png,webp,doc,docx|max:10240',
+            'category' => ['required', 'string', 'regex:/^[a-z0-9_]+$/'],
+        ]);
+
+        $att = $this->service->storeAttachment(
+            $record,
+            $request->file('file'),
+            $request->input('category'),
+            Auth::id()
+        );
+
+        return response()->json($att, 201);
+    }
+
+    public function downloadAttachment(Request $request, int $preboarding, int $attachment): \Symfony\Component\HttpFoundation\StreamedResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $att = PreboardingAttachment::where('preboarding_id', $preboarding)->findOrFail($attachment);
+
+        abort_unless($att->fileExists(), 404, 'File not found on disk.');
+
+        return response()->streamDownload(
+            function () use ($att) {
+                $stream = $att->readStream();
+                fpassthru($stream);
+                if (is_resource($stream)) fclose($stream);
+            },
+            $att->original_name,
+            [
+                'Content-Type'              => $att->mime_type ?? 'application/octet-stream',
+                'Content-Disposition'       => 'attachment; filename="' . addslashes($att->original_name) . '"',
+                'X-Content-Type-Options'    => 'nosniff',
+                'Cache-Control'             => 'no-store',
+            ]
+        );
+    }
+
+    public function destroyAttachment(Request $request, int $preboarding, int $attachment): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        $att = PreboardingAttachment::where('preboarding_id', $preboarding)->findOrFail($attachment);
+        $this->service->deleteAttachment($att);
+        return response()->json(['message' => 'Deleted.']);
+    }
+
+    // ── Convert to Employee ───────────────────────────────────────────────
+
+    public function convert(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $data = $request->validate(['employee_id' => 'required|integer|exists:employees,id']);
+        return response()->json($this->service->markConverted($record, $data['employee_id']));
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private function authorizeOrg(PreboardingRecord $record, Request $request): void
+    {
+        abort_unless($record->organization_id === $this->orgId($request), 403, 'Forbidden.');
+    }
+}

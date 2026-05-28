@@ -615,3 +615,67 @@ export interface SecondmentDetail extends SecondmentRecord {
 // Generic per-step payload used by the wizard orchestrator
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type OnboardingStepData = Record<string, any>;
+
+// ---------------------------------------------------------------------------
+// Organisation Compliance types
+// ---------------------------------------------------------------------------
+
+export type ComplianceStatus =
+  | "Not Uploaded"
+  | "Under Review"
+  | "Pending Renewal"
+  | "Valid"
+  | "Expiring (6 months)"
+  | "Expiring (3 months)"
+  | "Expiring (1 month)"
+  | "Expiring (this week)"
+  | "Expired";
+
+export interface ComplianceAuditEntry {
+  at: string;
+  by: string;
+  action: string;
+  note: string;
+}
+
+export interface ComplianceDocumentRecord {
+  id: number;
+  document_key: string;
+  segment: string;
+  document_label: string;
+  is_perpetual: boolean;
+  file_url: string | null;
+  file_name: string | null;
+  issue_date: string | null;
+  expiry_date: string | null;
+  anniversary_date: string | null;
+  notes: string | null;
+  owner_name: string | null;
+  owner_email: string | null;
+  status_override: string | null;
+  renewal_guide: string | null;
+  reminder_days_before: number;
+  reminder_recipients: string | null;
+  reminder_active: boolean;
+  reminder_thresholds: number[];
+  last_reminder_sent_at: string | null;
+  audit_trail: ComplianceAuditEntry[];
+  /** Computed by the API */
+  status: ComplianceStatus;
+  days_until_expiry: number | null;
+}
+
+export interface ComplianceSummary {
+  total: number;
+  not_uploaded: number;
+  valid: number;
+  expiring: number;
+  expired: number;
+  under_review: number;
+  pending_renewal: number;
+}
+
+export interface ComplianceDocumentListData {
+  data: ComplianceDocumentRecord[];
+  summary: ComplianceSummary;
+}

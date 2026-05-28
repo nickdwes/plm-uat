@@ -177,6 +177,8 @@ tr:hover td { background: #fafafa; }
 .login-form label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 500; }
 .login-form button { margin-top: 8px; width: 100%; padding: 12px; font-size: 15px; }
 .required { color: #ef4444; }
+.field-hint { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.field-hint code { font-size: 11px; background: #f3f4f6; padding: 1px 4px; border-radius: 4px; }
 
 /* ── Dashboard ──────────────────────────────────────────── */
 .page-header {

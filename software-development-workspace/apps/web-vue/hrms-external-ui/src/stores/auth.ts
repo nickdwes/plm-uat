@@ -25,6 +25,10 @@ export interface AuthState {
   username: string | null;
   /** List of companies this user has access to */
   companies: string[];
+  /** Laravel REST API base URL (e.g. https://api.hrms.example.com) */
+  laravelBaseUrl: string;
+  /** Sanctum personal access token for Laravel REST API */
+  laravelToken: string;
 }
 
 function loadFromStorage(): Partial<AuthState> {
@@ -46,6 +50,8 @@ const state = reactive<AuthState>({
   role: stored.role ?? null,
   username: stored.username ?? null,
   companies: stored.companies ?? [],
+  laravelBaseUrl: stored.laravelBaseUrl ?? import.meta.env.VITE_LARAVEL_BASE_URL ?? "",
+  laravelToken: stored.laravelToken ?? "",
 });
 
 function persist(): void {
@@ -100,6 +106,12 @@ export function setSession(
 
 export function setCompany(company: string | null): void {
   state.company = company;
+  persist();
+}
+
+export function setLaravelConnection(laravelBaseUrl: string, laravelToken: string): void {
+  state.laravelBaseUrl = laravelBaseUrl;
+  state.laravelToken = laravelToken;
   persist();
 }
 

@@ -38,7 +38,14 @@ const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 400;
 
 function normalizeBaseUrl(baseUrl: string): string {
-  return baseUrl.trim().replace(/\/$/, "");
+  const trimmed = baseUrl.trim().replace(/\/$/, "");
+  // In a browser context, an empty baseUrl means "use the current origin"
+  // so all API calls go through the Vite dev-server proxy (or the same-origin
+  // production server). This avoids CORS issues in local development.
+  if (!trimmed && typeof window !== "undefined") {
+    return window.location.origin;
+  }
+  return trimmed;
 }
 
 function generateRequestId(): string {
@@ -85,7 +92,7 @@ export async function callFrappeMethod<T>(
 ): Promise<T> {
   const baseUrl = normalizeBaseUrl(auth.baseUrl);
   if (!baseUrl) {
-    throw new Error("VITE_FRAPPE_BASE_URL is required before API calls can run.");
+    throw new Error("Cannot determine the API base URL. Set VITE_FRAPPE_BASE_URL or provide a Backend URL.");
   }
 
   const url = `${baseUrl}/api/method/${method}`;
