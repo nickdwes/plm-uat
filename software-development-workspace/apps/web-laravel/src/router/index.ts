@@ -13,6 +13,7 @@ import LeaveView           from "../views/LeaveView.vue";
 import LeaveApprovalsView  from "../views/LeaveApprovalsView.vue";
 import LeaveAdminView      from "../views/LeaveAdminView.vue";
 import PayrollView         from "../views/PayrollView.vue";
+import PayrollConfigView   from "../views/PayrollConfigView.vue";
 import OrgView             from "../views/OrgView.vue";
 import OrgProfileView      from "../views/OrgProfileView.vue";
 import PerformanceView     from "../views/PerformanceView.vue";
@@ -36,12 +37,38 @@ import RosterView             from "../views/RosterView.vue";
 // Preboarding
 import PreboardingListView   from "../views/PreboardingListView.vue";
 import PreboardingDetailView from "../views/PreboardingDetailView.vue";
+import PreboardingFormView   from "../views/PreboardingFormView.vue";
+import InterviewScoringFormView from "../views/Recruitment/InterviewScoringFormView.vue";
+
+// SSO
+import SsoCallbackView from "../views/SsoCallbackView.vue";
+
+// Training
+import TrainingDashboardView  from "../views/Training/TrainingDashboardView.vue";
+import TrainingCatalogView    from "../views/Training/TrainingCatalogView.vue";
+import TrainingItemDetailView from "../views/Training/TrainingItemDetailView.vue";
+import MyTrainingView         from "../views/Training/MyTrainingView.vue";
+import CompetencyFrameworkView    from "../views/Training/CompetencyFrameworkView.vue";
+import RoleProfileEditorView      from "../views/Training/RoleProfileEditorView.vue";
+import TrainingRecordDetailView   from "../views/Training/TrainingRecordDetailView.vue";
+import EnrollmentManagerView      from "../views/Training/EnrollmentManagerView.vue";
+import ManagerTrainingApprovalsView from "../views/Training/ManagerTrainingApprovalsView.vue";
+import VendorComplianceView          from "../views/Training/VendorComplianceView.vue";
+
+// Vendor Module
+import VendorsView                   from "../views/Vendor/VendorsView.vue";
+import VendorProfileView             from "../views/Vendor/VendorProfileView.vue";
+
+// Notifications
+import NotificationsView from "../views/NotificationsView.vue";
 
 const routes: RouteRecordRaw[] = [
-  { path: "/", redirect: "/hr-dashboard" },
-  { path: "/login",           name: "login",           component: LoginView,          meta: { public: true } },
+  { path: "/",           redirect: "/hr-dashboard" },
+  { path: "/login",      name: "login",        component: LoginView,       meta: { public: true } },
+  { path: "/sso/callback", name: "sso-callback", component: SsoCallbackView, meta: { public: true } },
   { path: "/dashboard",       name: "dashboard",        component: DashboardView },
   { path: "/hr-dashboard",    name: "hr-dashboard",     component: HRDashboardView },
+  { path: "/notifications",   name: "notifications",    component: NotificationsView },
   { path: "/employees",       name: "employees",        component: EmployeesView },
   { path: "/employees/onboard",name: "onboard",          component: OnboardingView },
   { path: "/employees/:id/edit",name: "employee-edit",   component: OnboardingView, props: true },
@@ -55,6 +82,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/org",             name: "org",              component: OrgView },
   { path: "/org/profile/:slug", name: "org-profile",    component: OrgProfileView, props: true },
   { path: "/org/benefit-plans",name: "benefit-plans",   component: BenefitPlansView },
+  { path: "/org/payroll-config", name: "payroll-config",  component: PayrollConfigView },
   { path: "/performance",     name: "performance",      component: PerformanceView },
   { path: "/goals",           name: "goals",            component: GoalsView },
   // ── Recruitment ──────────────────────────────────────────────────────────
@@ -70,8 +98,24 @@ const routes: RouteRecordRaw[] = [
   // ── Roster ───────────────────────────────────────────────────────────────
   { path: "/roster",  name: "roster",  component: RosterView },
   // ── Pre-Onboarding ────────────────────────────────────────────────────────
-  { path: "/preboarding",      name: "preboarding",        component: PreboardingListView },
-  { path: "/preboarding/:id",  name: "preboarding-detail", component: PreboardingDetailView, props: true },
+  { path: "/preboarding",                    name: "preboarding",        component: PreboardingListView },
+  { path: "/preboarding/:id",                name: "preboarding-detail", component: PreboardingDetailView, props: true },
+  { path: "/pre-onboarding/form/:token",     name: "preboarding-form",   component: PreboardingFormView,   props: true, meta: { public: true } },
+  { path: "/score/:token",                   name: "interview-scoring",  component: InterviewScoringFormView, props: true, meta: { public: true } },
+  // ── Training & Competency ──────────────────────────────────────────────────
+  { path: "/training",                name: "training",                component: TrainingDashboardView },
+  { path: "/training/catalog",        name: "training-catalog",       component: TrainingCatalogView },
+  { path: "/training/catalog/:id",    name: "training-item-detail",   component: TrainingItemDetailView, props: true },
+  { path: "/training/my",             name: "my-training",            component: MyTrainingView },
+  { path: "/training/competencies",       name: "competencies",           component: CompetencyFrameworkView },
+  { path: "/training/role-profiles",      name: "role-profiles",          component: RoleProfileEditorView },
+  { path: "/training/records/:id",         name: "training-record-detail",  component: TrainingRecordDetailView, props: true },
+  { path: "/training/enroll",             name: "training-enroll",         component: EnrollmentManagerView },
+  { path: "/training/approvals",          name: "training-approvals",       component: ManagerTrainingApprovalsView },
+  { path: "/training/vendor-compliance",  name: "vendor-compliance",        component: VendorComplianceView },
+  // ── Vendor Module ─────────────────────────────────────────────────────────
+  { path: "/vendors",       name: "vendors",        component: VendorsView },
+  { path: "/vendors/:id",   name: "vendor-profile", component: VendorProfileView, props: true },
 ];
 
 const router = createRouter({

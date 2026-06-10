@@ -234,6 +234,7 @@ class GoalController extends Controller
 
     public function updateKeyResult(Request $request, GoalKeyResult $keyResult): JsonResponse
     {
+        $this->authorizeOrg($keyResult->goal);
         $data = $request->validate([
             'title'         => 'sometimes|string|max:255',
             'description'   => 'nullable|string',
@@ -260,6 +261,7 @@ class GoalController extends Controller
 
     public function destroyKeyResult(GoalKeyResult $keyResult): JsonResponse
     {
+        $this->authorizeOrg($keyResult->goal);
         $keyResult->delete();
         return response()->json(null, 204);
     }

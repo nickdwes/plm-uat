@@ -9,6 +9,7 @@ use App\Models\TrainingRecord;
 use App\Models\PromotionHistory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class PerformanceController extends Controller
 {
@@ -31,8 +32,9 @@ class PerformanceController extends Controller
 
     public function storeReview(Request $request): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
-            'employee_id'  => 'required|exists:employees,id',
+            'employee_id'  => ['required', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
             'review_cycle' => 'required|string|max:60',
             'review_date'  => 'required|date',
             'rating'       => 'required|integer|min:1|max:5',
@@ -47,6 +49,15 @@ class PerformanceController extends Controller
 
     public function updateReview(Request $request, PerformanceReview $performanceReview): JsonResponse
     {
+        $orgId = app('current.organization_id');
+        abort_unless(
+            Employee::withoutGlobalScope('organization')
+                ->where('id', $performanceReview->employee_id)
+                ->where('primary_organization_id', $orgId)
+                ->exists(),
+            403
+        );
+
         $data = $request->validate([
             'review_cycle' => 'sometimes|string|max:60',
             'review_date'  => 'sometimes|date',
@@ -61,6 +72,14 @@ class PerformanceController extends Controller
 
     public function destroyReview(PerformanceReview $performanceReview): JsonResponse
     {
+        $orgId = app('current.organization_id');
+        abort_unless(
+            Employee::withoutGlobalScope('organization')
+                ->where('id', $performanceReview->employee_id)
+                ->where('primary_organization_id', $orgId)
+                ->exists(),
+            403
+        );
         $performanceReview->delete();
         return response()->json(null, 204);
     }
@@ -84,8 +103,9 @@ class PerformanceController extends Controller
 
     public function storeTraining(Request $request): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
-            'employee_id'      => 'required|exists:employees,id',
+            'employee_id'      => ['required', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
             'course_name'      => 'required|string|max:200',
             'provider'         => 'nullable|string|max:200',
             'completion_date'  => 'required|date',
@@ -98,6 +118,14 @@ class PerformanceController extends Controller
 
     public function destroyTraining(TrainingRecord $trainingRecord): JsonResponse
     {
+        $orgId = app('current.organization_id');
+        abort_unless(
+            Employee::withoutGlobalScope('organization')
+                ->where('id', $trainingRecord->employee_id)
+                ->where('primary_organization_id', $orgId)
+                ->exists(),
+            403
+        );
         $trainingRecord->delete();
         return response()->json(null, 204);
     }
@@ -127,12 +155,13 @@ class PerformanceController extends Controller
 
     public function storePromotion(Request $request): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
-            'employee_id'         => 'required|exists:employees,id',
-            'from_designation_id' => 'nullable|exists:designations,id',
-            'to_designation_id'   => 'nullable|exists:designations,id',
-            'from_job_grade_id'   => 'nullable|exists:job_grades,id',
-            'to_job_grade_id'     => 'nullable|exists:job_grades,id',
+            'employee_id'         => ['required', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
+            'from_designation_id' => ['nullable', Rule::exists('designations', 'id')->where('organization_id', $orgId)],
+            'to_designation_id'   => ['nullable', Rule::exists('designations', 'id')->where('organization_id', $orgId)],
+            'from_job_grade_id'   => ['nullable', Rule::exists('job_grades', 'id')->where('organization_id', $orgId)],
+            'to_job_grade_id'     => ['nullable', Rule::exists('job_grades', 'id')->where('organization_id', $orgId)],
             'effective_date'      => 'required|date',
             'notes'               => 'nullable|string',
         ]);

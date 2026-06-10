@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'azure' => [
+        'tenant_id'     => env('MICROSOFT_TENANT_ID', 'common'),
+        'client_id'     => env('MICROSOFT_CLIENT_ID'),
+        'client_secret' => env('MICROSOFT_CLIENT_SECRET'),
+        'redirect'      => env('AZURE_REDIRECT_URI'),
+    ],
+
 ];

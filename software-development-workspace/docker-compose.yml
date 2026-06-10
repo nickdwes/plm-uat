@@ -38,7 +38,15 @@ services:
       CACHE_STORE: file
       SANCTUM_STATEFUL_DOMAINS: "hrms.bitwyse.co.ke,localhost,localhost:3000"
       FRONTEND_URL: https://hrms.bitwyse.co.ke
+      MAIL_MAILER: graph
+      MAIL_FROM_ADDRESS: "hrms@kns.co.ke"
+      MAIL_FROM_NAME: "HR Portal"
+      MICROSOFT_TENANT_ID: "fe3cf4ea-a68e-4f54-b968-50e80b84f4a7"
+      MICROSOFT_CLIENT_ID: "9b75caba-59a6-4b2a-b700-59ae3c7bc824"
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
+      AZURE_REDIRECT_URI: "https://hrms-be.bitwyse.co.ke/api/auth/azure/callback"
       CORS_ALLOWED_ORIGINS: "https://hrms.bitwyse.co.ke,https://vacancy.bitwyse.co.ke,https://vacancy.bitwyse.com,http://localhost:3000,http://localhost:5173,http://localhost:8080"
+      CORS_ALLOWED_HEADERS: "Content-Type,Authorization,X-Requested-With,X-HRMS-Version,X-Organization"
     volumes:
       - hrms-storage:/var/www/html/storage/app/public
       - hrms-logs:/var/www/html/storage/logs
@@ -60,6 +68,8 @@ services:
     build:
       context: ./apps/web-laravel
       dockerfile: Dockerfile
+      args:
+        VITE_LARAVEL_API_URL: https://hrms-be.bitwyse.co.ke
     container_name: hrms-frontend
     restart: unless-stopped
     ports:

@@ -718,6 +718,7 @@ async function saveReminder(): Promise<void> {
 
       <button class="tab" @click="$router.push('/org/benefit-plans')">Benefit Plans</button>
       <button class="tab" @click="$router.push('/leave/admin')">Leave Admin</button>
+      <button class="tab" @click="$router.push('/org/payroll-config')">Payroll Config</button>
     </div>
 
     <!-- ── PROFILE ──────────────────────────────────────────────────────────── -->

@@ -65,6 +65,14 @@ return [
             'throw'      => true,
         ],
 
+        // Training evidence files — served only through authenticated TrainingRecordController.
+        'training_evidence' => [
+            'driver'     => 'local',
+            'root'       => storage_path('app/private/training-evidence'),
+            'visibility' => 'private',
+            'throw'      => true,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

@@ -12,6 +12,7 @@ use App\Models\OrgBusinessUnit;
 use App\Models\OrgPractice;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class OrgManagementController extends Controller
 {
@@ -248,25 +249,27 @@ class OrgManagementController extends Controller
 
     public function storeDepartment(Request $request): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'               => 'required|string|max:120',
             'cost_center'        => 'nullable|string|max:50',
             'description'        => 'nullable|string|max:300',
-            'functional_unit_id' => 'nullable|integer|exists:org_functional_units,id',
-            'lead_employee_id'   => 'nullable|integer|exists:employees,id',
+            'functional_unit_id' => ['nullable', 'integer', Rule::exists('org_functional_units', 'id')->where('organization_id', $orgId)],
+            'lead_employee_id'   => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
         ]);
-        $dept = Department::create(array_merge($data, ['organization_id' => app('current.organization_id')]));
+        $dept = Department::create(array_merge($data, ['organization_id' => $orgId]));
         return response()->json($dept, 201);
     }
 
     public function updateDepartment(Request $request, Department $department): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'               => 'sometimes|string|max:120',
             'cost_center'        => 'nullable|string|max:50',
             'description'        => 'nullable|string|max:300',
-            'functional_unit_id' => 'nullable|integer|exists:org_functional_units,id',
-            'lead_employee_id'   => 'nullable|integer|exists:employees,id',
+            'functional_unit_id' => ['nullable', 'integer', Rule::exists('org_functional_units', 'id')->where('organization_id', $orgId)],
+            'lead_employee_id'   => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
         ]);
         $department->update($data);
         return response()->json($department);
@@ -282,24 +285,26 @@ class OrgManagementController extends Controller
 
     public function storeBusinessUnit(Request $request): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
-            'department_id'    => 'required|integer|exists:departments,id',
+            'department_id'    => ['required', 'integer', Rule::exists('departments', 'id')->where('organization_id', $orgId)],
             'name'             => 'required|string|max:120',
             'code'             => 'nullable|string|max:20',
             'description'      => 'nullable|string|max:300',
-            'lead_employee_id' => 'nullable|integer|exists:employees,id',
+            'lead_employee_id' => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
         ]);
-        $bu = OrgBusinessUnit::create(array_merge($data, ['organization_id' => app('current.organization_id')]));
+        $bu = OrgBusinessUnit::create(array_merge($data, ['organization_id' => $orgId]));
         return response()->json($bu->load('lead:id,first_name,last_name,employee_number'), 201);
     }
 
     public function updateBusinessUnit(Request $request, OrgBusinessUnit $businessUnit): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'             => 'sometimes|string|max:120',
             'code'             => 'nullable|string|max:20',
             'description'      => 'nullable|string|max:300',
-            'lead_employee_id' => 'nullable|integer|exists:employees,id',
+            'lead_employee_id' => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
             'is_active'        => 'nullable|boolean',
         ]);
         $businessUnit->update($data);
@@ -316,24 +321,26 @@ class OrgManagementController extends Controller
 
     public function storePractice(Request $request): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
-            'business_unit_id' => 'required|integer|exists:org_business_units,id',
+            'business_unit_id' => ['required', 'integer', Rule::exists('org_business_units', 'id')->where('organization_id', $orgId)],
             'name'             => 'required|string|max:120',
             'code'             => 'nullable|string|max:20',
             'description'      => 'nullable|string|max:300',
-            'lead_employee_id' => 'nullable|integer|exists:employees,id',
+            'lead_employee_id' => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
         ]);
-        $practice = OrgPractice::create(array_merge($data, ['organization_id' => app('current.organization_id')]));
+        $practice = OrgPractice::create(array_merge($data, ['organization_id' => $orgId]));
         return response()->json($practice->load('lead:id,first_name,last_name,employee_number'), 201);
     }
 
     public function updatePractice(Request $request, OrgPractice $practice): JsonResponse
     {
+        $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'             => 'sometimes|string|max:120',
             'code'             => 'nullable|string|max:20',
             'description'      => 'nullable|string|max:300',
-            'lead_employee_id' => 'nullable|integer|exists:employees,id',
+            'lead_employee_id' => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
             'is_active'        => 'nullable|boolean',
         ]);
         $practice->update($data);

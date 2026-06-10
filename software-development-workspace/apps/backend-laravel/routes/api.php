@@ -16,6 +16,7 @@ use App\Http\Controllers\HR\PreboardingController;
 use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
+use App\Http\Controllers\Payroll\PayrollConfigController;
 use App\Http\Controllers\OKR\OkrController;
 use App\Http\Controllers\Recruitment\ApplicationController;
 use App\Http\Controllers\Recruitment\CandidateController;
@@ -23,12 +24,24 @@ use App\Http\Controllers\Recruitment\InterviewController;
 use App\Http\Controllers\Recruitment\VacancyController;
 use App\Http\Controllers\Recruitment\VacancyTemplateController;
 use App\Http\Controllers\Recruitment\WorkflowController;
+use App\Http\Controllers\Training\TrainingItemController;
+use App\Http\Controllers\Training\CompetencyController;
+use App\Http\Controllers\Training\TrainingRecordController;
+use App\Http\Controllers\Training\TrainingDashboardController;
+use App\Http\Controllers\Training\TrainingAssignmentController;
+use App\Http\Controllers\Training\VendorComplianceController;
+use App\Http\Controllers\Vendor\VendorController;
+use App\Http\Controllers\Vendor\VendorProfileController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Goals\GoalController;
+use App\Http\Controllers\Roster\HandoverController;
 use App\Http\Controllers\Roster\RosterConfigController;
 use App\Http\Controllers\Roster\RosterScheduleController;
 use App\Http\Controllers\Roster\RosterShiftSwapController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
+use App\Http\Controllers\Auth\AzureSsoController;
 use App\Http\Controllers\Public\PublicJobController;
+use App\Http\Controllers\Public\PublicPreboardingController;
 use App\Http\Controllers\PublicHolidayController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -36,6 +49,13 @@ use Illuminate\Support\Facades\Route;
 // ── Auth (no CSRF — Bearer token based) ──────────────────────────────────────
 Route::post('/login',  [AuthenticatedSessionController::class, 'store'])->middleware('guest');
 Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->middleware('auth:sanctum');
+
+// Azure AD SSO
+Route::prefix('auth/azure')->middleware('throttle:20,1')->group(function () {
+    Route::get('/redirect',  [AzureSsoController::class, 'redirect']);
+    Route::get('/callback',  [AzureSsoController::class, 'callback']);
+    Route::post('/exchange', [AzureSsoController::class, 'exchange']);
+});
 
 // Current authenticated user.
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
@@ -47,6 +67,19 @@ Route::prefix('public')->middleware('throttle:60,1')->group(function () {
     Route::get('/jobs',                      [PublicJobController::class, 'index']);
     Route::get('/jobs/{uuid}',               [PublicJobController::class, 'show']);
     Route::post('/jobs/{uuid}/apply',        [PublicJobController::class, 'apply'])->middleware('throttle:5,1');
+
+    // Pre-hire one-time form access (token-based, no HR auth required)
+    Route::prefix('preboarding/form')->middleware('throttle:30,1')->group(function () {
+        Route::get('/{token}',                         [PublicPreboardingController::class, 'show']);
+        Route::post('/{token}/sections/{section}',     [PublicPreboardingController::class, 'submitSection']);
+        Route::post('/{token}/attachments',            [PublicPreboardingController::class, 'uploadAttachment'])->middleware('throttle:10,1');
+    });
+
+    // Interview scoring form (public, token-based)
+    Route::prefix('scoring')->middleware('throttle:30,1')->group(function () {
+        Route::get('/{token}',    [\App\Http\Controllers\Recruitment\PublicScoringController::class, 'show']);
+        Route::post('/{token}',   [\App\Http\Controllers\Recruitment\PublicScoringController::class, 'submit'])->middleware('throttle:10,1');
+    });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,6 +97,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/{employee}',        [EmployeeController::class, 'show']);
         Route::put('/{employee}',        [EmployeeController::class, 'update']);
         Route::post('/{employee}/exit',  [EmployeeController::class, 'exit']);
+
+        // Profile photo
+        Route::post('/{employee}/photo', [EmployeeController::class, 'uploadPhoto']);
+
+        // Qualifications & certifications
+        Route::post('/{employee}/qualifications',                  [EmployeeController::class, 'storeQualification']);
+        Route::delete('/{employee}/qualifications/{qualification}', [EmployeeController::class, 'destroyQualification']);
+
+        // External secondments
+        Route::post('/{employee}/secondments',               [EmployeeController::class, 'storeSecondment']);
+        Route::delete('/{employee}/secondments/{secondment}', [EmployeeController::class, 'destroySecondment']);
 
         // Emergency contacts (HR or self)
         Route::get('/{employee}/emergency-contacts',              [EmployeeEmergencyContactController::class, 'index']);
@@ -124,6 +168,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Convert preboarding record to employee
         Route::post('/{preboarding}/convert',                    [PreboardingController::class, 'convert']);
+
+        // Link management
+        Route::post('/{preboarding}/resend-link',                [PreboardingController::class, 'resendLink']);
+        Route::post('/{preboarding}/send-link-email',            [PreboardingController::class, 'sendLinkEmail']);
+        Route::put('/{preboarding}/form-config',                 [PreboardingController::class, 'updateFormConfig']);
     });
 
     // ── Leave ─────────────────────────────────────────────────────────────────
@@ -162,6 +211,20 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{payrollPeriod}/approve',             [PayrollController::class, 'approve']);
         Route::post('/{payrollPeriod}/mark-paid',           [PayrollController::class, 'markPaid']);
         Route::get('/{payrollPeriod}/slip/{employee}',      [PayrollController::class, 'slip']);
+    });
+
+    // ── Payroll Configuration ─────────────────────────────────────────────────
+    Route::prefix('payroll-config')->group(function () {
+        Route::get('/',                                         [PayrollConfigController::class, 'index']);
+        Route::put('/tax-bands',                                [PayrollConfigController::class, 'updateTaxBands']);
+        Route::put('/statutory-rates',                          [PayrollConfigController::class, 'updateStatutoryRates']);
+        Route::post('/earning-codes',                           [PayrollConfigController::class, 'storeEarningCode']);
+        Route::put('/earning-codes/{earningCode}',              [PayrollConfigController::class, 'updateEarningCode']);
+        Route::delete('/earning-codes/{earningCode}',           [PayrollConfigController::class, 'destroyEarningCode']);
+        Route::post('/deduction-codes',                         [PayrollConfigController::class, 'storeDeductionCode']);
+        Route::put('/deduction-codes/{deductionCode}',          [PayrollConfigController::class, 'updateDeductionCode']);
+        Route::delete('/deduction-codes/{deductionCode}',       [PayrollConfigController::class, 'destroyDeductionCode']);
+        Route::post('/seed-defaults',                           [PayrollConfigController::class, 'seedDefaults']);
     });
 
     // ── Organisation management ───────────────────────────────────────────────
@@ -297,10 +360,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/applications/bulk-action',              [ApplicationController::class, 'bulkAction']);
 
         // Candidates
+        Route::get('/candidates/export',                      [CandidateController::class, 'exportCsv']);
+        Route::post('/candidates/bulk-action',                [CandidateController::class, 'bulkAction']);
         Route::get('/candidates',                             [CandidateController::class, 'index']);
         Route::post('/candidates',                            [CandidateController::class, 'store']);
         Route::get('/candidates/{candidate}',                 [CandidateController::class, 'show']);
         Route::put('/candidates/{candidate}',                 [CandidateController::class, 'update']);
+        Route::delete('/candidates/{candidate}',              [CandidateController::class, 'destroy']);
         Route::post('/candidates/{candidate}/resume',         [CandidateController::class, 'uploadResume']);
 
         // Interviews
@@ -310,7 +376,79 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/interviews/{interview}',                                  [InterviewController::class, 'show']);
         Route::put('/interviews/{interview}',                                  [InterviewController::class, 'update']);
         Route::post('/interviews/{interview}/send-invites',                    [InterviewController::class, 'sendInvites']);
+        Route::post('/interviews/{interview}/send-candidate-invite',           [InterviewController::class, 'sendCandidateInvite']);
+        Route::post('/interviews/{interview}/create-teams-event',              [InterviewController::class, 'createTeamsEvent']);
         Route::post('/interviews/{interview}/scores',                          [InterviewController::class, 'saveScore']);
+    });
+
+    // ── Training & Competency ──────────────────────────────────────────────────
+    Route::prefix('training')->group(function () {
+        Route::get('/dashboard',                [TrainingDashboardController::class, 'summary']);
+
+        // Catalog (training items)
+        Route::prefix('catalog')->group(function () {
+            Route::get('/',                [TrainingItemController::class, 'index']);
+            Route::post('/',               [TrainingItemController::class, 'store']);
+            Route::get('/{trainingItem}',  [TrainingItemController::class, 'show']);
+            Route::put('/{trainingItem}',  [TrainingItemController::class, 'update']);
+            Route::delete('/{trainingItem}', [TrainingItemController::class, 'destroy']);
+            Route::get('/stats',           [TrainingItemController::class, 'stats']);
+        });
+
+        // Competencies & Role Profiles
+        Route::prefix('competencies')->group(function () {
+            Route::get('/',                        [CompetencyController::class, 'indexCompetencies']);
+            Route::post('/',                       [CompetencyController::class, 'storeCompetency']);
+            Route::get('/{competencyItem}',        [CompetencyController::class, 'showCompetency']);
+            Route::put('/{competencyItem}',        [CompetencyController::class, 'updateCompetency']);
+            Route::delete('/{competencyItem}',     [CompetencyController::class, 'destroyCompetency']);
+        });
+        Route::prefix('role-profiles')->group(function () {
+            Route::get('/',                       [CompetencyController::class, 'indexProfiles']);
+            Route::post('/',                      [CompetencyController::class, 'storeProfile']);
+            Route::get('/{roleProfile}',          [CompetencyController::class, 'showProfile']);
+            Route::put('/{roleProfile}',          [CompetencyController::class, 'updateProfile']);
+            Route::delete('/{roleProfile}',       [CompetencyController::class, 'destroyProfile']);
+        });
+
+        // Training records (enrollment & progress)
+        Route::prefix('records')->group(function () {
+            Route::get('/',                        [TrainingRecordController::class, 'index']);
+            Route::get('/my',                      [TrainingRecordController::class, 'myRecords']);
+            Route::post('/',                       [TrainingRecordController::class, 'store']);
+            Route::post('/bulk-assign',            [TrainingRecordController::class, 'bulkAssign']);
+            Route::get('/{trainingRecord}',        [TrainingRecordController::class, 'show']);
+            Route::patch('/{trainingRecord}/progress', [TrainingRecordController::class, 'logProgress']);
+            Route::post('/{trainingRecord}/checkin',  [TrainingRecordController::class, 'checkIn']);
+            Route::post('/{trainingRecord}/evidence', [TrainingRecordController::class, 'uploadEvidence']);
+            Route::get('/{trainingRecord}/evidence/{evidenceFile}/download', [TrainingRecordController::class, 'downloadEvidence']);
+            Route::patch('/{trainingRecord}/priority', [TrainingRecordController::class, 'setPriority']);
+            Route::patch('/{trainingRecord}/withdraw', [TrainingRecordController::class, 'withdraw']);
+        });
+
+        // Training assignments (approval workflow - Phase 3)
+        Route::prefix('assignments')->group(function () {
+            Route::post('/',                  [TrainingAssignmentController::class, 'bulkCreate']);
+            Route::get('/',                   [TrainingAssignmentController::class, 'index']);
+            Route::get('/my-pending',         [TrainingAssignmentController::class, 'myPending']);
+            Route::get('/stats',              [TrainingAssignmentController::class, 'stats']);
+            Route::get('/{assignment}',       [TrainingAssignmentController::class, 'show']);
+            Route::patch('/{assignment}/approve', [TrainingAssignmentController::class, 'approve']);
+            Route::patch('/{assignment}/reject',  [TrainingAssignmentController::class, 'reject']);
+        });
+
+        // Vendor compliance (Phase 4)
+        Route::prefix('vendor-compliance')->group(function () {
+            Route::get('/summary',                          [VendorComplianceController::class, 'summary']);
+            Route::post('/bulk-assign',                     [VendorComplianceController::class, 'bulkAssign']);
+            Route::get('/',                                 [VendorComplianceController::class, 'index']);
+            Route::post('/',                                [VendorComplianceController::class, 'store']);
+            Route::get('/{vendorPartner}',                  [VendorComplianceController::class, 'show']);
+            Route::put('/{vendorPartner}',                  [VendorComplianceController::class, 'update']);
+            Route::delete('/{vendorPartner}',               [VendorComplianceController::class, 'destroy']);
+            Route::put('/{vendorPartner}/requirements',     [VendorComplianceController::class, 'syncRequirements']);
+            Route::get('/{vendorPartner}/status',           [VendorComplianceController::class, 'vendorStatus']);
+        });
     });
 
     // ── OKRs ──────────────────────────────────────────────────────────────────
@@ -368,6 +506,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
             Route::delete('/{shiftType}',      [RosterConfigController::class, 'destroyShiftType']);
         });
 
+        // ── Handover Reports ──────────────────────────────────────────────────
+        Route::prefix('handovers')->group(function () {
+            Route::get('/',                        [HandoverController::class, 'index']);
+            Route::post('/',                       [HandoverController::class, 'store']);
+            Route::put('/{handover}',              [HandoverController::class, 'update']);
+            Route::post('/{handover}/acknowledge', [HandoverController::class, 'acknowledge']);
+        });
+
         // ── Shift Swap Requests (before /{schedule} to avoid route collision) ─
         Route::prefix('swaps')->group(function () {
             Route::get('/',                    [RosterShiftSwapController::class, 'index']);
@@ -390,6 +536,71 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{schedule}/assignments',                           [RosterScheduleController::class, 'assign']);
         Route::post('/{schedule}/assignments/bulk',                      [RosterScheduleController::class, 'bulkAssign']);
         Route::delete('/{schedule}/assignments/{assignment}',            [RosterScheduleController::class, 'removeAssignment']);
+    });
+
+    // ── Vendor Module ─────────────────────────────────────────────────────────
+    Route::prefix('vendors')->group(function () {
+        Route::get('/metrics',                  [VendorController::class, 'metrics']);
+        Route::get('/',                         [VendorController::class, 'index']);
+        Route::post('/',                        [VendorController::class, 'store']);
+        Route::get('/{vendor}',                 [VendorController::class, 'show']);
+        Route::put('/{vendor}',                 [VendorController::class, 'update']);
+        Route::delete('/{vendor}',              [VendorController::class, 'destroy']);
+        Route::post('/{vendor}/submit',         [VendorController::class, 'submitForReview']);
+        Route::post('/{vendor}/approve',        [VendorController::class, 'approve']);
+        Route::post('/{vendor}/reject',         [VendorController::class, 'reject']);
+        Route::post('/{vendor}/suspend',        [VendorController::class, 'suspend']);
+        Route::post('/{vendor}/reactivate',     [VendorController::class, 'reactivate']);
+
+        // ── Vendor sub-resources (products, incentives, professional certs) ──
+        Route::get('/{vendor}/products',                          [VendorProfileController::class, 'indexProducts']);
+        Route::post('/{vendor}/products',                         [VendorProfileController::class, 'storeProduct']);
+        Route::put('/{vendor}/products/{product}',                [VendorProfileController::class, 'updateProduct']);
+        Route::delete('/{vendor}/products/{product}',             [VendorProfileController::class, 'destroyProduct']);
+
+        Route::get('/{vendor}/incentives',                        [VendorProfileController::class, 'indexIncentives']);
+        Route::post('/{vendor}/incentives',                       [VendorProfileController::class, 'storeIncentive']);
+        Route::put('/{vendor}/incentives/{incentive}',            [VendorProfileController::class, 'updateIncentive']);
+        Route::delete('/{vendor}/incentives/{incentive}',         [VendorProfileController::class, 'destroyIncentive']);
+
+        Route::get('/{vendor}/certifications',                    [VendorProfileController::class, 'indexCertifications']);
+        Route::post('/{vendor}/certifications',                   [VendorProfileController::class, 'storeCertification']);
+        Route::put('/{vendor}/certifications/{certification}',    [VendorProfileController::class, 'updateCertification']);
+        Route::delete('/{vendor}/certifications/{certification}', [VendorProfileController::class, 'destroyCertification']);
+
+        // ── Partnership tiers ──────────────────────────────────────────────────
+        Route::get('/{vendor}/tiers',                           [VendorProfileController::class, 'indexTiers']);
+        Route::post('/{vendor}/tiers',                          [VendorProfileController::class, 'storeTier']);
+        Route::put('/{vendor}/tiers/{tier}',                    [VendorProfileController::class, 'updateTier']);
+        Route::delete('/{vendor}/tiers/{tier}',                 [VendorProfileController::class, 'destroyTier']);
+        Route::post('/{vendor}/tiers/{tier}/set-current',       [VendorProfileController::class, 'setCurrentTier']);
+
+        // ── Portal users ───────────────────────────────────────────────────────
+        Route::get('/{vendor}/portal-users',                     [VendorProfileController::class, 'indexPortalUsers']);
+        Route::post('/{vendor}/portal-users',                    [VendorProfileController::class, 'storePortalUser']);
+        Route::put('/{vendor}/portal-users/{portalUser}',        [VendorProfileController::class, 'updatePortalUser']);
+        Route::delete('/{vendor}/portal-users/{portalUser}',     [VendorProfileController::class, 'destroyPortalUser']);
+
+        // ── Customers ──────────────────────────────────────────────────────────
+        Route::get('/{vendor}/customers',                        [VendorProfileController::class, 'indexCustomers']);
+        Route::post('/{vendor}/customers',                       [VendorProfileController::class, 'storeCustomer']);
+        Route::put('/{vendor}/customers/{customer}',             [VendorProfileController::class, 'updateCustomer']);
+        Route::delete('/{vendor}/customers/{customer}',          [VendorProfileController::class, 'destroyCustomer']);
+
+        // ── Customer Projects ──────────────────────────────────────────────────
+        Route::get('/{vendor}/projects',                         [VendorProfileController::class, 'indexProjects']);
+        Route::post('/{vendor}/projects',                        [VendorProfileController::class, 'storeProject']);
+        Route::put('/{vendor}/projects/{project}',               [VendorProfileController::class, 'updateProject']);
+        Route::delete('/{vendor}/projects/{project}',            [VendorProfileController::class, 'destroyProject']);
+    });
+
+    // ── Notifications (Phase 3) ────────────────────────────────────────────────
+    Route::prefix('notifications')->group(function () {
+        Route::get('/count',            [NotificationController::class, 'unreadCount']);
+        Route::get('/',                 [NotificationController::class, 'all']);
+        Route::patch('/{id}/read',      [NotificationController::class, 'markAsRead']);
+        Route::patch('/mark-all-read',  [NotificationController::class, 'markAllAsRead']);
+        Route::delete('/{id}',          [NotificationController::class, 'delete']);
     });
 });
 

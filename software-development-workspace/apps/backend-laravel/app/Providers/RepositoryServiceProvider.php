@@ -18,6 +18,9 @@ use App\Repositories\Recruitment\CandidateRepository;
 use App\Repositories\Recruitment\VacancyRepository;
 use App\Repositories\Recruitment\VacancyTemplateRepository;
 use App\Repositories\Recruitment\WorkflowRepository;
+use App\Repositories\Training\CompetencyRepository;
+use App\Repositories\Training\TrainingItemRepository;
+use App\Repositories\Training\TrainingRecordRepository;
 use Illuminate\Support\ServiceProvider;
 
 class RepositoryServiceProvider extends ServiceProvider
@@ -50,6 +53,17 @@ class RepositoryServiceProvider extends ServiceProvider
         );
         $this->app->singleton(ApplicationRepository::class, fn () =>
             new ApplicationRepository(new Application())
+        );
+
+        // Training & Competency repositories
+        $this->app->singleton(TrainingItemRepository::class, fn () =>
+            new TrainingItemRepository()
+        );
+        $this->app->singleton(CompetencyRepository::class, fn () =>
+            new CompetencyRepository()
+        );
+        $this->app->singleton(TrainingRecordRepository::class, fn () =>
+            new TrainingRecordRepository()
         );
     }
 }
