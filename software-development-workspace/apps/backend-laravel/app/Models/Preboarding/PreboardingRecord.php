@@ -15,8 +15,10 @@ class PreboardingRecord extends Model
     protected $fillable = [
         'organization_id', 'candidate_id', 'employee_id',
         'first_name', 'last_name', 'email', 'phone',
-        'expected_start_date', 'position',
-        'status', 'token',
+        'expected_start_date', 'position', 'employee_type',
+        'status', 'token', 'token_expires_at', 'token_used_at',
+        'link_expiry_days', 'link_resend_count',
+        'medical_cover_eligible', 'form_config',
         'welcome_sent_at', 'announcement_sent_at',
         'initiated_by', 'notes',
     ];
@@ -25,6 +27,10 @@ class PreboardingRecord extends Model
         'expected_start_date'    => 'date',
         'welcome_sent_at'        => 'datetime',
         'announcement_sent_at'   => 'datetime',
+        'token_expires_at'       => 'datetime',
+        'token_used_at'          => 'datetime',
+        'medical_cover_eligible' => 'boolean',
+        'form_config'            => 'array',
     ];
 
     public function getFullNameAttribute(): string

@@ -24,6 +24,13 @@ class PreboardingService
         'qualifications',
         'memberships',
         'attachments',
+        'employment',   // HR-internal — never seeded automatically, created on first HR save
+    ];
+
+    // Sections that appear in the public candidate form (auto-seeded on record creation)
+    private const CANDIDATE_SECTIONS = [
+        'self_intro', 'personal', 'contact', 'emergency',
+        'dependents', 'immigration', 'qualifications', 'memberships', 'attachments',
     ];
 
     // ── Preboarding Records ───────────────────────────────────────────────
@@ -53,24 +60,88 @@ class PreboardingService
 
     public function create(int $orgId, array $data, int $initiatedBy): PreboardingRecord
     {
+        $expiryDays = max(1, (int)($data['link_expiry_days'] ?? 3));
+        $enabledSections = $data['enabled_sections'] ?? null; // null = all
+        $medicalEligible = (bool)($data['medical_cover_eligible'] ?? false);
+
+        $formConfig = null;
+        if ($enabledSections !== null) {
+            $formConfig = ['enabled_sections' => $enabledSections];
+        } elseif ($medicalEligible) {
+            $formConfig = ['enabled_sections' => self::SECTIONS]; // all sections
+        }
+
         $record = PreboardingRecord::create([
-            'organization_id'   => $orgId,
-            'candidate_id'      => $data['candidate_id'] ?? null,
-            'first_name'        => $data['first_name'],
-            'last_name'         => $data['last_name'],
-            'email'             => $data['email'],
-            'phone'             => $data['phone'] ?? null,
-            'expected_start_date' => $data['expected_start_date'] ?? null,
-            'position'          => $data['position'] ?? null,
-            'notes'             => $data['notes'] ?? null,
-            'status'            => 'pending',
-            'token'             => Str::random(48),
-            'initiated_by'      => $initiatedBy,
+            'organization_id'        => $orgId,
+            'candidate_id'           => $data['candidate_id'] ?? null,
+            'first_name'             => $data['first_name'],
+            'last_name'              => $data['last_name'],
+            'email'                  => $data['email'],
+            'phone'                  => $data['phone'] ?? null,
+            'expected_start_date'    => $data['expected_start_date'] ?? null,
+            'position'               => $data['position'] ?? null,
+            'employee_type'          => $data['employee_type'] ?? null,
+            'medical_cover_eligible' => $medicalEligible,
+            'form_config'            => $formConfig,
+            'link_expiry_days'       => $expiryDays,
+            'notes'                  => $data['notes'] ?? null,
+            'status'                 => 'pending',
+            'token'                  => Str::random(56),
+            'token_expires_at'       => now()->addDays($expiryDays),
+            'initiated_by'           => $initiatedBy,
         ]);
 
-        $this->seedSections($record->id);
+        $this->seedSections($record->id, $enabledSections, $medicalEligible);
 
         return $record->load(['sections', 'references', 'attachments']);
+    }
+
+    /**
+     * Regenerate the secure access token and reset the expiry window.
+     */
+    public function resendLink(PreboardingRecord $record): PreboardingRecord
+    {
+        $record->update([
+            'token'             => Str::random(56),
+            'token_expires_at'  => now()->addDays($record->link_expiry_days ?: 3),
+            'token_used_at'     => null,
+            'link_resend_count' => $record->link_resend_count + 1,
+        ]);
+        return $record->fresh();
+    }
+
+    /**
+     * Look up a record by token, enforcing expiry and single-use.
+     * Marks the token as used on first access.
+     *
+     * @throws \Illuminate\Database\Eloquent\ModelNotFoundException
+     * @throws \RuntimeException with 'expired' or 'already_used' codes
+     */
+    public function getByToken(string $token): PreboardingRecord
+    {
+        $record = PreboardingRecord::with(['sections', 'references', 'attachments'])
+            ->where('token', $token)
+            ->firstOrFail();
+
+        if ($record->token_expires_at && $record->token_expires_at->isPast()) {
+            throw new \RuntimeException('expired', 410);
+        }
+
+        // If the record is already submitted/completed, block further access.
+        // But allow the pre-hire to return to an in_progress form (e.g. after refresh).
+        if (in_array($record->status, ['submitted', 'completed', 'converted'])) {
+            throw new \RuntimeException('already_used', 403);
+        }
+
+        // Mark as in-use on very first access (token_used_at not yet set)
+        if ($record->token_used_at === null) {
+            $record->update([
+                'token_used_at' => now(),
+                'status'        => 'in_progress',
+            ]);
+        }
+
+        return $record->fresh(['sections', 'references', 'attachments']);
     }
 
     public function get(int $id): PreboardingRecord
@@ -119,9 +190,21 @@ class PreboardingService
 
     // ── Sections ─────────────────────────────────────────────────────────
 
-    private function seedSections(int $preboardingId): void
+    private function seedSections(int $preboardingId, ?array $enabledSections, bool $medicalEligible): void
     {
-        foreach (self::SECTIONS as $key) {
+        // Only seed candidate-facing sections (employment is HR-internal and never auto-seeded)
+        if ($enabledSections !== null) {
+            $toSeed = array_intersect(self::CANDIDATE_SECTIONS, $enabledSections);
+        } else {
+            $toSeed = self::CANDIDATE_SECTIONS;
+        }
+
+        // Remove dependents if medical cover not eligible and not explicitly included
+        if (!$medicalEligible && $enabledSections === null) {
+            $toSeed = array_filter($toSeed, fn($s) => $s !== 'dependents');
+        }
+
+        foreach ($toSeed as $key) {
             PreboardingSection::firstOrCreate(
                 ['preboarding_id' => $preboardingId, 'section' => $key],
                 ['status' => 'pending']
@@ -131,9 +214,12 @@ class PreboardingService
 
     public function updateSection(PreboardingRecord $record, string $section, array $data, string $role = 'hr'): PreboardingSection
     {
-        $sec = PreboardingSection::where('preboarding_id', $record->id)
-            ->where('section', $section)
-            ->firstOrFail();
+        // Use firstOrCreate so HR-only sections (e.g. employment) can be saved
+        // even if they were never seeded as a candidate-facing section row.
+        $sec = PreboardingSection::firstOrCreate(
+            ['preboarding_id' => $record->id, 'section' => $section],
+            ['status' => 'pending']
+        );
 
         $sec->update([
             'data'         => $data,
@@ -144,6 +230,19 @@ class PreboardingService
         if ($record->status === 'pending') {
             $record->update(['status' => 'in_progress']);
         }
+
+        return $sec->fresh();
+    }
+
+    /** Save section data without marking it as submitted (draft/auto-save). */
+    public function saveSectionDraft(PreboardingRecord $record, string $section, array $data): PreboardingSection
+    {
+        $sec = PreboardingSection::where('preboarding_id', $record->id)
+            ->where('section', $section)
+            ->firstOrFail();
+
+        // Only update data; preserve existing status (pending stays pending)
+        $sec->update(['data' => $data]);
 
         return $sec->fresh();
     }
@@ -234,8 +333,16 @@ class PreboardingService
 
     public function storeAttachment(PreboardingRecord $record, UploadedFile $file, string $category, int $uploadedBy): PreboardingAttachment
     {
-        $ext  = $file->getClientOriginalExtension();
-        $path = "{$record->organization_id}/{$record->id}/{$category}/" . Str::uuid() . ".{$ext}";
+        $ext = strtolower($file->getClientOriginalExtension());
+
+        // Auto-rename for consistency: FirstName_LastName_CATEGORY_YYYY-MM-DD.ext
+        $safeFirst    = Str::slug($record->first_name, '_');
+        $safeLast     = Str::slug($record->last_name, '_');
+        $safeCategory = strtoupper($category);
+        $dateStr      = now()->format('Y-m-d');
+        $standardName = "{$safeFirst}_{$safeLast}_{$safeCategory}_{$dateStr}.{$ext}";
+
+        $path = "{$record->organization_id}/{$record->id}/{$category}/{$standardName}";
 
         Storage::disk('preboarding_docs')->putFileAs(
             dirname($path),
@@ -246,7 +353,7 @@ class PreboardingService
         return PreboardingAttachment::create([
             'preboarding_id' => $record->id,
             'category'       => $category,
-            'original_name'  => $file->getClientOriginalName(),
+            'original_name'  => $standardName, // standardised name
             'storage_path'   => $path,
             'mime_type'      => $file->getMimeType(),
             'size_bytes'     => $file->getSize(),

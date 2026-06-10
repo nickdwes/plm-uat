@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\HR;
 
 use App\Http\Controllers\Controller;
+use App\Mail\PreboardingLinkMail;
+use App\Models\Organization;
 use App\Models\Preboarding\PreboardingAttachment;
 use App\Models\Preboarding\PreboardingRecord;
 use App\Models\Preboarding\PreboardingReference;
@@ -10,6 +12,7 @@ use App\Services\HR\PreboardingService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Mail;
 
 class PreboardingController extends Controller
 {
@@ -39,14 +42,19 @@ class PreboardingController extends Controller
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'first_name'          => 'required|string|max:100',
-            'last_name'           => 'required|string|max:100',
-            'email'               => 'required|email|max:255',
-            'phone'               => 'nullable|string|max:30',
-            'position'            => 'nullable|string|max:150',
-            'expected_start_date' => 'nullable|date',
-            'candidate_id'        => 'nullable|integer',
-            'notes'               => 'nullable|string|max:1000',
+            'first_name'             => 'required|string|max:100',
+            'last_name'              => 'required|string|max:100',
+            'email'                  => 'required|email|max:255',
+            'phone'                  => 'nullable|string|max:30',
+            'position'               => 'nullable|string|max:150',
+            'employee_type'          => 'nullable|string|in:permanent,contract,intern,probation',
+            'expected_start_date'    => 'nullable|date',
+            'candidate_id'           => 'nullable|integer',
+            'medical_cover_eligible' => 'nullable|boolean',
+            'link_expiry_days'       => 'nullable|integer|min:1|max:30',
+            'enabled_sections'       => 'nullable|array',
+            'enabled_sections.*'     => 'string',
+            'notes'                  => 'nullable|string|max:1000',
         ]);
 
         $record = $this->service->create($this->orgId($request), $data, Auth::id());
@@ -243,6 +251,67 @@ class PreboardingController extends Controller
 
         $data = $request->validate(['employee_id' => 'required|integer|exists:employees,id']);
         return response()->json($this->service->markConverted($record, $data['employee_id']));
+    }
+
+    // ── Link management ───────────────────────────────────────────────────
+
+    /**
+     * Regenerate the secure access token, resetting its expiry.
+     * Used when the original link has expired or was not received.
+     */
+    public function resendLink(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+        return response()->json($this->service->resendLink($record));
+    }
+
+    /**
+     * Send (or re-send) the form link to the candidate's email address.
+     */
+    public function sendLinkEmail(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        if (!$record->token) {
+            return response()->json(['message' => 'No link generated yet. Regenerate first.'], 422);
+        }
+
+        $orgName = Organization::find($record->organization_id)?->name ?? 'HR Portal';
+
+        Mail::to($record->email, trim($record->first_name . ' ' . $record->last_name))
+            ->send(new PreboardingLinkMail($record, $orgName));
+
+        return response()->json(['message' => 'Email sent to ' . $record->email]);
+    }
+
+    /**
+     * Update the configurable form settings (enabled sections, expiry, medical eligibility).
+     */
+    public function updateFormConfig(Request $request, int $preboarding): JsonResponse
+    {
+        $record = PreboardingRecord::findOrFail($preboarding);
+        $this->authorizeOrg($record, $request);
+
+        $data = $request->validate([
+            'medical_cover_eligible' => 'nullable|boolean',
+            'link_expiry_days'       => 'nullable|integer|min:1|max:30',
+            'enabled_sections'       => 'nullable|array',
+            'enabled_sections.*'     => 'string',
+        ]);
+
+        $updates = array_filter([
+            'medical_cover_eligible' => $data['medical_cover_eligible'] ?? null,
+            'link_expiry_days'       => $data['link_expiry_days'] ?? null,
+        ], fn($v) => $v !== null);
+
+        if (isset($data['enabled_sections'])) {
+            $updates['form_config'] = ['enabled_sections' => $data['enabled_sections']];
+        }
+
+        $record->update($updates);
+        return response()->json($record->fresh());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

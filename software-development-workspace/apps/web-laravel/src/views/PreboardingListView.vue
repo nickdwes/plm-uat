@@ -68,7 +68,50 @@ async function load(p = 1) {
 const showCreate = ref(false);
 const creating   = ref(false);
 const createErr  = ref("");
-const form = ref({ first_name: "", last_name: "", email: "", phone: "", position: "", expected_start_date: "" });
+
+const ALL_SECTIONS = [
+  { key: "self_intro",     label: "Self Introduction" },
+  { key: "personal",       label: "Personal Details" },
+  { key: "contact",        label: "Contact Details" },
+  { key: "emergency",      label: "Emergency Contacts" },
+  { key: "dependents",     label: "Dependents" },
+  { key: "immigration",    label: "Immigration" },
+  { key: "qualifications", label: "Qualifications" },
+  { key: "memberships",    label: "Memberships" },
+  { key: "attachments",    label: "Forms & Attachments" },
+];
+
+const form = ref({
+  first_name: "",
+  last_name: "",
+  email: "",
+  phone: "",
+  position: "",
+  employee_type: "permanent",
+  expected_start_date: "",
+  medical_cover_eligible: false,
+  link_expiry_days: 3,
+  enabled_sections: ALL_SECTIONS.map(s => s.key), // all on by default
+});
+
+function resetForm() {
+  form.value = {
+    first_name: "", last_name: "", email: "", phone: "", position: "",
+    employee_type: "permanent", expected_start_date: "",
+    medical_cover_eligible: false, link_expiry_days: 3,
+    enabled_sections: ALL_SECTIONS.map(s => s.key),
+  };
+}
+
+// Auto-toggle dependents when medical cover eligibility changes
+watch(() => form.value.medical_cover_eligible, (eligible) => {
+  const idx = form.value.enabled_sections.indexOf("dependents");
+  if (eligible && idx === -1) {
+    form.value.enabled_sections.push("dependents");
+  } else if (!eligible && idx !== -1) {
+    form.value.enabled_sections.splice(idx, 1);
+  }
+});
 
 async function createRecord() {
   if (!form.value.first_name || !form.value.last_name || !form.value.email) {
@@ -80,7 +123,7 @@ async function createRecord() {
       org: org()!, body: { ...form.value }
     });
     showCreate.value = false;
-    form.value = { first_name: "", last_name: "", email: "", phone: "", position: "", expected_start_date: "" };
+    resetForm();
     router.push({ name: "preboarding-detail", params: { id: rec.id } });
   } catch (e) {
     createErr.value = e instanceof Error ? e.message : "Failed to create.";
@@ -90,10 +133,10 @@ async function createRecord() {
 }
 
 function progressPercent(record: PreboardingRecord): number {
-  const active   = record.sections.filter(s => s.status !== "not_applicable");
+  const active = record.sections.filter(s => s.status !== "not_applicable" && s.section !== "employment");
   if (!active.length) return 0;
-  const approved = active.filter(s => s.status === "approved").length;
-  return Math.round(approved / active.length * 100);
+  const done = active.filter(s => s.status === "submitted" || s.status === "approved").length;
+  return Math.round(done / active.length * 100);
 }
 
 function statusColor(status: string): string {
@@ -204,6 +247,9 @@ watch([search, filterStatus], () => load(1));
         </div>
         <div class="pb-modal-body">
           <div v-if="createErr" class="alert-error">{{ createErr }}</div>
+
+          <!-- Basic info -->
+          <div class="pb-modal-section-label">Candidate Details</div>
           <div class="pb-form-grid">
             <div class="pb-field">
               <label>First Name *</label>
@@ -225,14 +271,63 @@ watch([search, filterStatus], () => load(1));
               <label>Position / Role</label>
               <input v-model="form.position" class="pb-input" placeholder="Software Engineer" />
             </div>
-            <div class="pb-field pb-field-full">
+            <div class="pb-field">
+              <label>Employee Type</label>
+              <select v-model="form.employee_type" class="pb-input">
+                <option value="permanent">Permanent</option>
+                <option value="contract">Contract</option>
+                <option value="intern">Intern</option>
+                <option value="probation">Probation</option>
+              </select>
+            </div>
+            <div class="pb-field">
               <label>Expected Start Date</label>
               <input v-model="form.expected_start_date" type="date" class="pb-input" />
             </div>
           </div>
+
+          <!-- Form settings -->
+          <div class="pb-modal-section-label" style="margin-top:18px">Form Settings</div>
+          <div class="pb-form-grid">
+            <div class="pb-field">
+              <label>Link Valid For (days)</label>
+              <input v-model.number="form.link_expiry_days" type="number" min="1" max="30" class="pb-input" />
+              <span class="pb-field-hint">Pre-hire must complete within this period.</span>
+            </div>
+            <div class="pb-field pb-field-checkbox-group">
+              <label>Medical Cover Eligible</label>
+              <label class="pb-checkbox-label">
+                <input type="checkbox" v-model="form.medical_cover_eligible" class="pb-checkbox" />
+                <span>Eligible for medical cover (enables Dependents section)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Sections to enable -->
+          <div class="pb-modal-section-label" style="margin-top:18px">Form Sections to Collect</div>
+          <div class="pb-sections-grid">
+            <label
+              v-for="sec in ALL_SECTIONS"
+              :key="sec.key"
+              class="pb-section-toggle"
+              :class="{ disabled: sec.key === 'dependents' && !form.medical_cover_eligible }"
+            >
+              <input
+                type="checkbox"
+                :value="sec.key"
+                v-model="form.enabled_sections"
+                :disabled="sec.key === 'dependents' && !form.medical_cover_eligible"
+                class="pb-checkbox"
+              />
+              <span>{{ sec.label }}</span>
+            </label>
+          </div>
+          <p class="pb-hint-text">
+            The pre-hire will only see and complete the selected sections. Dependents section requires medical cover eligibility.
+          </p>
         </div>
         <div class="pb-modal-footer">
-          <button class="btn-secondary" @click="showCreate = false">Cancel</button>
+          <button class="btn-secondary" @click="showCreate = false; resetForm()">Cancel</button>
           <button class="btn-primary" :disabled="creating" @click="createRecord">
             {{ creating ? "Creating…" : "Initiate Preboarding" }}
           </button>
@@ -310,6 +405,27 @@ watch([search, filterStatus], () => load(1));
 .btn-primary   { padding: 9px 18px; background: var(--color-brand-base); color: #fff; border: none; border-radius: var(--radius-md); font-size: 14px; font-weight: 500; cursor: pointer; }
 .btn-primary:disabled { opacity: .6; cursor: default; }
 .btn-secondary { padding: 9px 18px; background: #fff; color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: 14px; cursor: pointer; }
+
+.pb-modal-section-label {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--color-text-muted); margin-bottom: 10px;
+}
+.pb-field-hint { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+.pb-field-checkbox-group { justify-content: flex-start; padding-top: 6px; }
+.pb-checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; margin-top: 4px; }
+.pb-checkbox { width: 15px; height: 15px; accent-color: var(--color-brand-base); flex-shrink: 0; }
+.pb-sections-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px; margin-bottom: 8px;
+}
+.pb-section-toggle {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer;
+  padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  transition: border-color .15s, background .15s;
+}
+.pb-section-toggle:has(input:checked) { border-color: var(--color-brand-base); background: #fff0f1; }
+.pb-section-toggle.disabled { opacity: .45; cursor: not-allowed; }
+.pb-hint-text { font-size: 12px; color: var(--color-text-muted); line-height: 1.5; margin: 0; }
 
 @media (max-width: 540px) {
   .pb-form-grid { grid-template-columns: 1fr; }

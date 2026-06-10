@@ -79,6 +79,13 @@ return [
             'transport' => 'array',
         ],
 
+        'graph' => [
+            'transport'     => 'graph',
+            'tenant_id'     => env('MICROSOFT_TENANT_ID'),
+            'client_id'     => env('MICROSOFT_CLIENT_ID'),
+            'client_secret' => env('MICROSOFT_CLIENT_SECRET'),
+        ],
+
         'failover' => [
             'transport' => 'failover',
             'mailers' => [
