@@ -2,116 +2,60 @@
 
 namespace App\Services\Payroll;
 
-/**
- * Kenya Statutory Deductions Engine — FY 2025/2026
- *
- * Implements:
- *  - PAYE (Pay As You Earn) — KRA 2025 tax bands
- *  - Personal Relief — KES 2,400 / month
- *  - Insurance Relief — 15% of premiums, max KES 5,000 / month
- *  - SHIF (Social Health Insurance Fund) — 2.75% of gross, no ceiling
- *  - NSSF Tier I & II (NSSF Act 2013) — employer & employee each
- *  - Affordable Housing Levy — 1.5% employee, 1.5% employer
- *  - NITA levy — KES 50 / month per employee
- *
- * All amounts in KES.  Figures are MONTHLY.
- */
 class KenyaStatutoryEngine
 {
-    // ── Constants ─────────────────────────────────────────────────────────────
-
-    /** Monthly personal relief (KES) */
-    public const PERSONAL_RELIEF = 2_400.00;
-
-    /** Insurance relief cap per month (KES) */
-    public const INSURANCE_RELIEF_MAX = 5_000.00;
-
-    /** Insurance relief rate */
+    public const PERSONAL_RELIEF      = 2400.00;
+    public const INSURANCE_RELIEF_MAX  = 5000.00;
     public const INSURANCE_RELIEF_RATE = 0.15;
+    public const SHIF_RATE             = 0.0275;
+    public const NSSF_TIER1_CEILING    = 7000.00;
+    public const NSSF_TIER2_CEILING    = 36000.00;
+    public const NSSF_RATE             = 0.06;
+    public const HOUSING_LEVY_RATE     = 0.015;
+    public const NITA                  = 50.00;
 
-    /** SHIF rate (2.75 % of gross) */
-    public const SHIF_RATE = 0.0275;
-
-    /** NSSF upper limit for Tier I (KES) */
-    public const NSSF_TIER1_CEILING = 7_000.00;
-
-    /** NSSF Tier II band: from 7,001 to 36,000 (KES) */
-    public const NSSF_TIER2_CEILING = 36_000.00;
-
-    /** NSSF employee contribution rate (6 %) */
-    public const NSSF_RATE = 0.06;
-
-    /** Affordable Housing Levy employee rate (1.5 %) */
-    public const HOUSING_LEVY_RATE = 0.015;
-
-    /** NITA levy flat amount per month per employee (KES) */
-    public const NITA = 50.00;
-
-    // ── PAYE Tax Bands (monthly, KES) — effective Jan 2025 ───────────────────
     private const PAYE_BANDS = [
-        ['limit' => 24_000,  'rate' => 0.10],
-        ['limit' => 32_333,  'rate' => 0.25],
-        ['limit' => PHP_INT_MAX, 'rate' => 0.30],
+        ['limit' => 24000,      'rate' => 0.10],
+        ['limit' => 32333,      'rate' => 0.25],
+        ['limit' => 500000,     'rate' => 0.30],
+        ['limit' => 800000,     'rate' => 0.325],
+        ['limit' => PHP_INT_MAX,'rate' => 0.35],
     ];
 
-    // ── Public API ────────────────────────────────────────────────────────────
-
-    /**
-     * Compute all Kenya statutory deductions for a single employee for one month.
-     *
-     * @param  float  $grossPay          Gross monthly pay (basic + allowances + ad-hoc earnings)
-     * @param  float  $insurancePremiums Monthly insurance premiums paid by employee
-     * @return array{
-     *     gross_pay: float,
-     *     paye_gross: float,
-     *     paye: float,
-     *     personal_relief: float,
-     *     insurance_relief: float,
-     *     paye_payable: float,
-     *     shif: float,
-     *     nssf_tier1: float,
-     *     nssf_tier2: float,
-     *     nssf_total: float,
-     *     housing_levy: float,
-     *     nita: float,
-     *     total_statutory: float,
-     *     net_pay: float,
-     * }
-     */
-    public static function compute(float $grossPay, float $insurancePremiums = 0.0): array
+    public static function compute(float $grossPay, float $insurancePremiums = 0.0, array $config = []): array
     {
-        // ── NSSF (computed first — NSSF is deductible for PAYE purposes) ─────
-        $nssfTier1 = self::computeNssfTier1($grossPay);
-        $nssfTier2 = self::computeNssfTier2($grossPay);
+        $personalRelief  = (float)($config['personal_relief']           ?? self::PERSONAL_RELIEF);
+        $insReliefRate   = (($config['insurance_relief_rate']           ?? (self::INSURANCE_RELIEF_RATE * 100)) / 100);
+        $insReliefMax    = (float)($config['insurance_relief_max']      ?? self::INSURANCE_RELIEF_MAX);
+        $shifRate        = (($config['shif_rate']                       ?? (self::SHIF_RATE * 100)) / 100);
+        $shifMin         = (float)($config['shif_min']                  ?? 0);
+        $shifMax         = (float)($config['shif_max']                  ?? 0);
+        $tier1Ceiling    = (float)($config['nssf_tier1_ceiling']        ?? self::NSSF_TIER1_CEILING);
+        $tier2Ceiling    = (float)($config['nssf_tier2_ceiling']        ?? self::NSSF_TIER2_CEILING);
+        $nssfRate        = (($config['nssf_employee_rate']              ?? (self::NSSF_RATE * 100)) / 100);
+        $housingLevyRate = (($config['housing_levy_employee_rate']      ?? (self::HOUSING_LEVY_RATE * 100)) / 100);
+        $nitaAmt         = (float)($config['nita_amount']               ?? self::NITA);
+        $taxBands        = $config['tax_bands']                         ?? null;
+
+        $nssfTier1 = round(min($grossPay, $tier1Ceiling) * $nssfRate, 2);
+        $nssfTier2 = 0.0;
+        if ($grossPay > $tier1Ceiling) {
+            $nssfTier2 = round((min($grossPay, $tier2Ceiling) - $tier1Ceiling) * $nssfRate, 2);
+        }
         $nssfTotal = $nssfTier1 + $nssfTier2;
 
-        // ── Taxable income = gross − NSSF employee contribution ──────────────
         $taxableIncome = max(0, $grossPay - $nssfTotal);
+        $payeGross = $taxBands ? self::computePayeFromBands($taxableIncome, $taxBands) : self::computePaye($taxableIncome);
 
-        // ── PAYE (before reliefs) ─────────────────────────────────────────────
-        $payeGross = self::computePaye($taxableIncome);
+        $insuranceRelief = min($insurancePremiums * $insReliefRate, $insReliefMax);
+        $payePayable     = max(0, $payeGross - $personalRelief - $insuranceRelief);
 
-        // ── Reliefs ───────────────────────────────────────────────────────────
-        $personalRelief   = self::PERSONAL_RELIEF;
-        $insuranceRelief  = min(
-            $insurancePremiums * self::INSURANCE_RELIEF_RATE,
-            self::INSURANCE_RELIEF_MAX
-        );
+        $shif = round($grossPay * $shifRate, 2);
+        if ($shifMin > 0) $shif = max($shif, $shifMin);
+        if ($shifMax > 0) $shif = min($shif, $shifMax);
 
-        // ── PAYE payable (cannot go below zero) ───────────────────────────────
-        $payePayable = max(0, $payeGross - $personalRelief - $insuranceRelief);
-
-        // ── SHIF ──────────────────────────────────────────────────────────────
-        $shif = round($grossPay * self::SHIF_RATE, 2);
-
-        // ── Housing Levy ──────────────────────────────────────────────────────
-        $housingLevy = round($grossPay * self::HOUSING_LEVY_RATE, 2);
-
-        // ── NITA ─────────────────────────────────────────────────────────────
-        $nita = self::NITA;
-
-        // ── Totals ────────────────────────────────────────────────────────────
-        $totalStatutory = $payePayable + $shif + $nssfTotal + $housingLevy + $nita;
+        $housingLevy    = round($grossPay * $housingLevyRate, 2);
+        $totalStatutory = $payePayable + $shif + $nssfTotal + $housingLevy + $nitaAmt;
         $netPay         = max(0, $grossPay - $totalStatutory);
 
         return [
@@ -126,47 +70,37 @@ class KenyaStatutoryEngine
             'nssf_tier2'       => round($nssfTier2, 2),
             'nssf_total'       => round($nssfTotal, 2),
             'housing_levy'     => round($housingLevy, 2),
-            'nita'             => $nita,
+            'nita'             => round($nitaAmt, 2),
             'total_statutory'  => round($totalStatutory, 2),
             'net_pay'          => round($netPay, 2),
         ];
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
-
-    /**
-     * Progressive PAYE on taxable income using 2025 monthly bands.
-     */
     private static function computePaye(float $taxableIncome): float
     {
-        $tax       = 0.0;
-        $remaining = $taxableIncome;
-        $prevLimit = 0;
-
+        $tax = 0.0; $remaining = $taxableIncome; $prevLimit = 0;
         foreach (self::PAYE_BANDS as $band) {
             if ($remaining <= 0) break;
-
-            $bandWidth = $band['limit'] === PHP_INT_MAX
-                ? $remaining
-                : min($remaining, $band['limit'] - $prevLimit);
-
-            $tax      += $bandWidth * $band['rate'];
-            $remaining -= $bandWidth;
+            $w = ($band['limit'] === PHP_INT_MAX) ? $remaining : min($remaining, $band['limit'] - $prevLimit);
+            $tax += $w * $band['rate'];
+            $remaining -= $w;
             $prevLimit  = $band['limit'];
         }
-
         return round($tax, 2);
     }
 
-    private static function computeNssfTier1(float $gross): float
+    private static function computePayeFromBands(float $taxableIncome, array $bands): float
     {
-        return round(min($gross, self::NSSF_TIER1_CEILING) * self::NSSF_RATE, 2);
-    }
-
-    private static function computeNssfTier2(float $gross): float
-    {
-        if ($gross <= self::NSSF_TIER1_CEILING) return 0.0;
-        $tier2Base = min($gross, self::NSSF_TIER2_CEILING) - self::NSSF_TIER1_CEILING;
-        return round($tier2Base * self::NSSF_RATE, 2);
+        $tax = 0.0;
+        usort($bands, fn($a, $b) => $a['lower_limit'] <=> $b['lower_limit']);
+        foreach ($bands as $band) {
+            $from = (float)$band['lower_limit'];
+            $to   = (isset($band['upper_limit']) && $band['upper_limit'] !== null) ? (float)$band['upper_limit'] : PHP_INT_MAX;
+            $rate = (float)$band['rate'] / 100;
+            if ($taxableIncome <= $from) break;
+            $inBand = min($taxableIncome, $to) - $from;
+            if ($inBand > 0) $tax += $inBand * $rate;
+        }
+        return round($tax, 2);
     }
 }

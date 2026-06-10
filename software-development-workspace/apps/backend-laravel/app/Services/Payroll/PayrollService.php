@@ -3,6 +3,8 @@
 namespace App\Services\Payroll;
 
 use App\Models\Employee;
+use App\Models\PayrollConfigStatutoryRate;
+use App\Models\PayrollConfigTaxBand;
 use App\Models\PayrollPeriod;
 use App\Models\PayrollRun;
 use App\Repositories\Payroll\PayrollRepository;
@@ -136,8 +138,10 @@ class PayrollService extends BaseService
 
     public function getSlip(int $periodId, int $employeeId): PayrollRun
     {
+        $orgId = app('current.organization_id');
         return PayrollRun::where('payroll_period_id', $periodId)
             ->where('employee_id', $employeeId)
+            ->whereHas('period', fn($q) => $q->where('organization_id', $orgId))
             ->with(['employee.department', 'employee.designation', 'period', 'items'])
             ->firstOrFail();
     }
@@ -227,8 +231,8 @@ class PayrollService extends BaseService
 
         $gross += $adhocEarnings;
 
-        // Run Kenya statutory engine
-        $stat = KenyaStatutoryEngine::compute($gross, $insurance);
+        // Run Kenya statutory engine with org-specific config (falls back to hardcoded defaults if none set)
+        $stat = KenyaStatutoryEngine::compute($gross, $insurance, $this->loadPayrollConfig($period->organization_id));
 
         $totalDeductions = $stat['paye_payable']
             + $stat['shif']
@@ -280,5 +284,39 @@ class PayrollService extends BaseService
             ['payroll_period_id' => $period->id, 'employee_id' => $employee->id],
             $attributes,
         );
+    }
+
+    /**
+     * Load org-specific payroll config from DB for the engine.
+     * Returns [] if no config is set, so the engine uses its hardcoded Kenya defaults.
+     */
+    private function loadPayrollConfig(int $organizationId): array
+    {
+        $config = [];
+
+        $rates = PayrollConfigStatutoryRate::where('organization_id', $organizationId)
+            ->get()->keyBy('param_key');
+
+        foreach (PayrollConfigStatutoryRate::PARAM_KEYS as $key) {
+            if (isset($rates[$key])) {
+                $config[$key] = (float) $rates[$key]->value;
+            }
+        }
+
+        $year = (int) now()->format('Y');
+        $taxBands = PayrollConfigTaxBand::where('organization_id', $organizationId)
+            ->where('tax_year', $year)
+            ->orderBy('band_order')
+            ->get();
+
+        if ($taxBands->isNotEmpty()) {
+            $config['tax_bands'] = $taxBands->map(fn($b) => [
+                'lower_limit' => (float) $b->lower_limit,
+                'upper_limit' => $b->upper_limit !== null ? (float) $b->upper_limit : null,
+                'rate'        => (float) $b->rate,
+            ])->toArray();
+        }
+
+        return $config;
     }
 }
