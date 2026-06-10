@@ -20,7 +20,7 @@ class CandidateController extends Controller
         $this->authorize('viewAny', Candidate::class);
         $candidates = $this->service->list(
             organizationId: app('current.organization_id'),
-            filters: $request->only(['search', 'source']),
+            filters: $request->only(['search', 'source', 'vacancy_id', 'status', 'date_from', 'date_to', 'archived']),
             perPage: (int) $request->input('per_page', 20),
         );
         return CandidateResource::collection($candidates);
@@ -38,7 +38,9 @@ class CandidateController extends Controller
     public function show(Candidate $candidate): CandidateResource
     {
         $this->authorize('view', $candidate);
-        return new CandidateResource($candidate->load(['applications.vacancy', 'applications.currentStage', 'applications.stageHistory']));
+        return new CandidateResource(
+            $candidate->load(['applications.vacancy', 'applications.currentStage', 'applications.stageHistory'])
+        );
     }
 
     public function update(CreateCandidateRequest $request, Candidate $candidate): CandidateResource
@@ -46,6 +48,13 @@ class CandidateController extends Controller
         $this->authorize('update', $candidate);
         $updated = $this->service->update($candidate, $request->validated());
         return new CandidateResource($updated);
+    }
+
+    public function destroy(Candidate $candidate): JsonResponse
+    {
+        $this->authorize('delete', $candidate);
+        $candidate->delete();
+        return response()->json(['message' => 'Candidate deleted.']);
     }
 
     public function uploadResume(Request $request, Candidate $candidate): CandidateResource
@@ -56,5 +65,33 @@ class CandidateController extends Controller
         ]);
         $updated = $this->service->uploadResume($candidate, $request->file('resume'));
         return new CandidateResource($updated);
+    }
+
+    public function bulkAction(Request $request): JsonResponse
+    {
+        $this->authorize('create', Candidate::class);
+        $request->validate([
+            'action'          => 'required|in:archive,unarchive,delete',
+            'candidate_ids'   => 'required|array|min:1',
+            'candidate_ids.*' => 'integer|exists:candidates,id',
+        ]);
+
+        $orgId      = app('current.organization_id');
+        $action     = $request->input('action');
+        $candidates = Candidate::where('organization_id', $orgId)
+            ->whereIn('id', $request->input('candidate_ids'))
+            ->get();
+
+        $count = 0;
+        foreach ($candidates as $c) {
+            match ($action) {
+                'archive'   => $c->update(['is_archived' => true,  'archived_at' => now()]),
+                'unarchive' => $c->update(['is_archived' => false, 'archived_at' => null]),
+                'delete'    => $c->delete(),
+            };
+            $count++;
+        }
+
+        return response()->json(['message' => "{$count} candidate(s) updated.", 'count' => $count]);
     }
 }

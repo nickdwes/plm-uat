@@ -8,9 +8,11 @@ use App\Models\Recruitment\Application;
 use App\Models\Recruitment\Interview;
 use App\Models\Recruitment\InterviewPanelist;
 use App\Models\Recruitment\InterviewScore;
+use App\Services\Recruitment\TeamsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 
 class InterviewController extends Controller
 {
@@ -24,30 +26,39 @@ class InterviewController extends Controller
     private function fmtInterview(Interview $i, bool $withScores = false): array
     {
         $panelists = $i->panelists->map(fn($p) => [
-            'id'            => $p->id,
-            'employee_id'   => $p->employee_id,
-            'name'          => $p->employee ? trim("{$p->employee->first_name} {$p->employee->last_name}") : 'Unknown',
-            'work_email'    => $p->employee?->work_email,
-            'role'          => $p->role,
-            'invite_sent'   => $p->invite_sent,
-            'invite_sent_at'=> $p->invite_sent_at?->toIso8601String(),
-            'confirmed'     => $p->confirmed,
+            'id'              => $p->id,
+            'employee_id'     => $p->employee_id,
+            'name'            => $p->employee
+                                    ? trim("{$p->employee->first_name} {$p->employee->last_name}")
+                                    : ($p->external_name ?? $p->external_email ?? 'External'),
+            'work_email'      => $p->employee?->work_email ?? $p->external_email,
+            'external_email'  => $p->external_email,
+            'is_external'     => is_null($p->employee_id),
+            'role'            => $p->role,
+            'invite_sent'     => $p->invite_sent,
+            'invite_sent_at'  => $p->invite_sent_at?->toIso8601String(),
+            'confirmed'       => $p->confirmed,
+            'scoring_url'     => $p->scoring_token ? TeamsService::scoringUrl($p->scoring_token) : null,
+            'score_submitted' => InterviewScore::where('interview_id', $i->id)->where('panelist_id', $p->employee_id)->where('submitted', true)->exists(),
         ]);
 
         $data = [
-            'id'               => $i->id,
-            'application_id'   => $i->application_id,
-            'vacancy_id'       => $i->vacancy_id,
-            'title'            => $i->title,
-            'interview_type'   => $i->interview_type,
-            'scheduled_at'     => $i->scheduled_at?->toIso8601String(),
-            'duration_minutes' => $i->duration_minutes,
-            'location'         => $i->location,
-            'agenda'           => $i->agenda,
-            'status'           => $i->status,
-            'overall_notes'    => $i->overall_notes,
-            'overall_score'    => $i->overall_score,
-            'recommendation'   => $i->recommendation,
+            'id'                    => $i->id,
+            'application_id'        => $i->application_id,
+            'vacancy_id'            => $i->vacancy_id,
+            'title'                 => $i->title,
+            'interview_type'        => $i->interview_type,
+            'scheduled_at'          => $i->scheduled_at?->toIso8601String(),
+            'duration_minutes'      => $i->duration_minutes,
+            'location'              => $i->location,
+            'agenda'                => $i->agenda,
+            'status'                => $i->status,
+            'overall_notes'         => $i->overall_notes,
+            'overall_score'         => $i->overall_score,
+            'recommendation'        => $i->recommendation,
+            'teams_join_url'           => $i->teams_join_url,
+            'candidate_invite_sent'    => $i->candidate_invite_sent,
+            'candidate_invite_sent_at' => $i->candidate_invite_sent_at?->toIso8601String(),
             'panelists'        => $panelists,
             'created_at'       => $i->created_at?->toIso8601String(),
         ];
@@ -76,8 +87,10 @@ class InterviewController extends Controller
             'interests_goals'         => $s->interests_goals,
             'total'                   => $s->total,
             'average_score'           => $s->average_score,
-            'strengths'               => $s->strengths,
-            'weaknesses'              => $s->weaknesses,
+            'criterion_comments'             => $s->criterion_comments ?? [],
+            'technical_exercise_conducted'   => $s->technical_exercise_conducted,
+            'technical_exercise_score'       => $s->technical_exercise_score,
+            'technical_exercise_notes'       => $s->technical_exercise_notes,
             'remarks'                 => $s->remarks,
             'recommendation'          => $s->recommendation,
             'submitted'               => $s->submitted,
@@ -118,17 +131,28 @@ class InterviewController extends Controller
         $application = Application::with('candidate', 'vacancy')->findOrFail($applicationId);
 
         $v = $request->validate([
-            'title'             => 'required|string|max:200',
-            'interview_type'    => 'required|in:phone,video,onsite,panel,technical,hr',
-            'scheduled_at'      => 'required|date',
-            'duration_minutes'  => 'required|integer|min:15|max:480',
-            'location'          => 'nullable|string|max:300',
-            'agenda'            => 'nullable|string|max:5000',
-            'panelist_ids'      => 'required|array|min:1',
-            'panelist_ids.*'    => 'integer|exists:employees,id',
-            'panelist_roles'    => 'nullable|array',
-            'panelist_roles.*'  => 'in:lead,panelist,observer',
+            'title'              => 'required|string|max:200',
+            'interview_type'     => 'required|in:phone,video,onsite,panel,technical,hr',
+            'scheduled_at'       => 'required|date',
+            'duration_minutes'   => 'required|integer|min:15|max:480',
+            'location'           => 'nullable|string|max:300',
+            'agenda'             => 'nullable|string|max:5000',
+            'panelist_ids'       => 'nullable|array',
+            'panelist_ids.*'     => 'integer|exists:employees,id',
+            'panelist_roles'     => 'nullable|array',
+            'panelist_roles.*'   => 'in:lead,panelist,observer',
+            'external_panelists' => 'nullable|array',
+            'external_panelists.*.email' => 'required|email|max:255',
+            'external_panelists.*.name'  => 'nullable|string|max:150',
+            'external_panelists.*.role'  => 'nullable|in:lead,panelist,observer',
         ]);
+
+        $empIds   = $v['panelist_ids'] ?? [];
+        $extPanel = $v['external_panelists'] ?? [];
+
+        if (empty($empIds) && empty($extPanel)) {
+            return response()->json(['message' => 'At least one panelist is required.'], 422);
+        }
 
         $interview = Interview::create([
             'application_id'   => $applicationId,
@@ -143,13 +167,24 @@ class InterviewController extends Controller
             'status'           => 'scheduled',
         ]);
 
-        // Add panelists
+        // Add employee panelists
         $roles = $v['panelist_roles'] ?? [];
-        foreach ($v['panelist_ids'] as $idx => $empId) {
+        foreach ($empIds as $idx => $empId) {
             InterviewPanelist::create([
                 'interview_id' => $interview->id,
                 'employee_id'  => $empId,
                 'role'         => $roles[$idx] ?? 'panelist',
+            ]);
+        }
+
+        // Add external (email-only) panelists
+        foreach ($extPanel as $ext) {
+            InterviewPanelist::create([
+                'interview_id'   => $interview->id,
+                'employee_id'    => null,
+                'external_email' => $ext['email'],
+                'external_name'  => $ext['name'] ?? null,
+                'role'           => $ext['role'] ?? 'panelist',
             ]);
         }
 
@@ -180,47 +215,66 @@ class InterviewController extends Controller
         return response()->json($this->fmtInterview($interview, true));
     }
 
-    // ── Send invites to panelists ─────────────────────────────────────────────
+    // ── Send panelist invites (with scoring link + CV attachment) ─────────────
 
     public function sendInvites(Request $request, Interview $interview): JsonResponse
     {
         abort_if($interview->organization_id !== $this->orgId(), 403);
 
         $interview->load(['panelists.employee', 'scores']);
-        $application = Application::with('candidate', 'vacancy')->find($interview->application_id);
+        $application   = Application::with('candidate', 'vacancy')->find($interview->application_id);
         $candidateName = $application?->candidate
             ? trim("{$application->candidate->first_name} {$application->candidate->last_name}")
             : 'Candidate';
-        $vacancyName = $application?->vacancy?->name ?? 'the role';
+        $vacancyName  = $application?->vacancy?->name ?? 'the role';
+        $resumeUrl    = $application?->candidate?->resume_path
+            ? Storage::url($application->candidate->resume_path)
+            : null;
 
-        $sent  = 0;
+        $sent   = 0;
         $errors = [];
 
         foreach ($interview->panelists as $panelist) {
-            $email = $panelist->employee?->work_email;
+            $email = $panelist->employee?->work_email ?? $panelist->external_email;
             if (! $email) continue;
 
-            $name    = trim("{$panelist->employee->first_name} {$panelist->employee->last_name}");
-            $dateStr = $interview->scheduled_at->format('l, d F Y \a\t H:i');
-            $dur     = $interview->duration_minutes;
+            // Issue / refresh scoring token
+            $scoringToken = TeamsService::issueScoringToken($panelist);
+            $scoringLink  = TeamsService::scoringUrl($scoringToken);
 
-            $body = "Dear {$name},\n\n"
-                . "You have been invited to participate as an interview panelist ({$panelist->role}) for the following interview:\n\n"
-                . "Position:    {$vacancyName}\n"
-                . "Candidate:   {$candidateName}\n"
-                . "Interview:   {$interview->title}\n"
-                . "Type:        " . ucfirst($interview->interview_type) . "\n"
-                . "Date & Time: {$dateStr}\n"
-                . "Duration:    {$dur} minutes\n"
-                . ($interview->location ? "Location:    {$interview->location}\n" : "")
-                . ($interview->agenda ? "\nAgenda:\n{$interview->agenda}\n" : "")
-                . "\nPlease review the candidate's profile before the interview."
-                . "\n\nRegards,\nHR Team";
+            $name = $panelist->employee
+                ? trim("{$panelist->employee->first_name} {$panelist->employee->last_name}")
+                : ($panelist->external_name ?? $email);
+            $dateStr = $interview->scheduled_at->format('l, d F Y \a\t H:i');
+
+            $html = "<p>Dear <strong>{$name}</strong>,</p>"
+                . "<p>You have been invited as an interview panelist (<em>{$panelist->role}</em>) for:</p>"
+                . "<table style='border-collapse:collapse;font-size:14px'>"
+                . "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Position</td><td>{$vacancyName}</td></tr>"
+                . "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Candidate</td><td>{$candidateName}</td></tr>"
+                . "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Interview</td><td>{$interview->title}</td></tr>"
+                . "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Type</td><td>" . ucfirst($interview->interview_type) . "</td></tr>"
+                . "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Date &amp; Time</td><td>{$dateStr}</td></tr>"
+                . "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Duration</td><td>{$interview->duration_minutes} minutes</td></tr>"
+                . ($interview->location ? "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Location</td><td>{$interview->location}</td></tr>" : "")
+                . ($interview->teams_join_url ? "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Teams Link</td><td><a href='{$interview->teams_join_url}'>{$interview->teams_join_url}</a></td></tr>" : "")
+                . "</table>"
+                . ($interview->agenda ? "<br><strong>Agenda:</strong><br>" . nl2br(htmlspecialchars($interview->agenda)) : "")
+                . "<br><br>"
+                . "<div style='background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:16px;margin:16px 0'>"
+                . "<p style='margin:0 0 8px;font-weight:600;color:#0369a1'>&#9997; Interview Scoring Form</p>"
+                . "<p style='margin:0 0 12px;color:#374151'>Please complete your scoring form after the interview. This link is personal to you — do not share it.</p>"
+                . "<a href='{$scoringLink}' style='background:#004C97;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600;display:inline-block'>Open Scoring Form</a>"
+                . "</div>"
+                . ($resumeUrl
+                    ? "<p><strong>Candidate CV:</strong> <a href='{$resumeUrl}'>Download Resume</a> (please review before the interview)</p>"
+                    : "<p><em>No CV on file for this candidate.</em></p>")
+                . "<br>Regards,<br>HR Team";
 
             try {
-                Mail::raw($body, function ($msg) use ($email, $vacancyName, $candidateName) {
-                    $msg->to($email)
-                        ->subject("Interview Invitation – {$vacancyName} – {$candidateName}");
+                Mail::html($html, function ($msg) use ($email, $name, $vacancyName, $candidateName) {
+                    $msg->to($email, $name)
+                        ->subject("Interview Panel Invitation – {$vacancyName} – {$candidateName}");
                 });
 
                 $panelist->update([
@@ -235,7 +289,7 @@ class InterviewController extends Controller
 
         $interview->load(['panelists.employee']);
         return response()->json([
-            'message'   => "{$sent} invite(s) sent.",
+            'message'   => "{$sent} panelist invite(s) sent.",
             'errors'    => $errors,
             'interview' => $this->fmtInterview($interview),
         ]);
@@ -249,16 +303,19 @@ class InterviewController extends Controller
 
         $v = $request->validate([
             'panelist_id'             => 'required|integer|exists:employees,id',
-            'personal_presentation'   => 'nullable|numeric|min:0|max:10',
-            'training_certifications' => 'nullable|numeric|min:0|max:10',
-            'role_knowledge'          => 'nullable|numeric|min:0|max:10',
-            'problem_solving'         => 'nullable|numeric|min:0|max:10',
-            'teamskills_leadership'   => 'nullable|numeric|min:0|max:10',
-            'attitude_adaptability'   => 'nullable|numeric|min:0|max:10',
-            'personal_values'         => 'nullable|numeric|min:0|max:10',
-            'interests_goals'         => 'nullable|numeric|min:0|max:10',
-            'strengths'               => 'nullable|string|max:3000',
-            'weaknesses'              => 'nullable|string|max:3000',
+            'personal_presentation'   => 'nullable|numeric|min:1|max:5',
+            'training_certifications' => 'nullable|numeric|min:1|max:5',
+            'role_knowledge'          => 'nullable|numeric|min:1|max:5',
+            'problem_solving'         => 'nullable|numeric|min:1|max:5',
+            'teamskills_leadership'   => 'nullable|numeric|min:1|max:5',
+            'attitude_adaptability'   => 'nullable|numeric|min:1|max:5',
+            'personal_values'         => 'nullable|numeric|min:1|max:5',
+            'interests_goals'         => 'nullable|numeric|min:1|max:5',
+            'criterion_comments'      => 'nullable|array',
+            'criterion_comments.*'    => 'nullable|string|max:1000',
+            'technical_exercise_conducted' => 'nullable|boolean',
+            'technical_exercise_score'     => 'nullable|numeric|min:0|max:100',
+            'technical_exercise_notes'     => 'nullable|string|max:3000',
             'remarks'                 => 'nullable|string|max:3000',
             'recommendation'          => 'nullable|in:hire,hold,reject',
             'submit'                  => 'nullable|boolean',
@@ -269,48 +326,147 @@ class InterviewController extends Controller
             'panelist_id'  => $v['panelist_id'],
         ]);
 
-        $criteria = array_keys(InterviewScore::$criteria);
-        foreach ($criteria as $key) {
-            if (array_key_exists($key, $v)) {
-                $score->{$key} = $v[$key];
-            }
+        $fields = ['personal_presentation','training_certifications','role_knowledge','problem_solving',
+                   'teamskills_leadership','attitude_adaptability','personal_values','interests_goals'];
+        foreach ($fields as $f) {
+            if (array_key_exists($f, $v)) $score->$f = $v[$f];
         }
-
-        $score->strengths       = $v['strengths'] ?? $score->strengths;
-        $score->weaknesses      = $v['weaknesses'] ?? $score->weaknesses;
-        $score->remarks         = $v['remarks'] ?? $score->remarks;
-        $score->recommendation  = $v['recommendation'] ?? $score->recommendation;
-
-        $score->computeTotals();
-
-        if (! empty($v['submit'])) {
+        foreach (['remarks','recommendation'] as $f) {
+            if (array_key_exists($f, $v)) $score->$f = $v[$f];
+        }
+        if (array_key_exists('criterion_comments', $v)) {
+            $score->criterion_comments = $v['criterion_comments'] ?: null;
+        }
+        if (array_key_exists('technical_exercise_conducted', $v)) {
+            $score->technical_exercise_conducted = (bool) ($v['technical_exercise_conducted'] ?? false);
+        }
+        if (array_key_exists('technical_exercise_score', $v)) {
+            $score->technical_exercise_score = $v['technical_exercise_score'];
+        }
+        if (array_key_exists('technical_exercise_notes', $v)) {
+            $score->technical_exercise_notes = $v['technical_exercise_notes'] ?: null;
+        }
+        if (!empty($v['submit'])) {
             $score->submitted    = true;
             $score->submitted_at = now();
         }
-
+        $score->save();
+        $score->computeTotals();
         $score->save();
 
-        // Recompute overall interview score from all submitted scores
+        // Recompute overall interview score from all submitted panelist scores
         $allScores = InterviewScore::where('interview_id', $interview->id)
             ->where('submitted', true)
             ->whereNotNull('average_score')
             ->pluck('average_score');
-
         if ($allScores->isNotEmpty()) {
-            $interview->update([
-                'overall_score' => round($allScores->avg(), 2),
-            ]);
+            $interview->update(['overall_score' => round($allScores->avg(), 2)]);
         }
 
-        $score->load('panelist');
-        return response()->json($this->fmtScore($score));
+        $interview->load(['panelists.employee', 'scores.panelist']);
+        return response()->json(['score' => $this->fmtScore($score), 'interview' => $this->fmtInterview($interview, true)]);
     }
 
-    // ── List employees available as panelists ─────────────────────────────────
+    // ── Create Teams calendar event ───────────────────────────────────────────
+
+    public function createTeamsEvent(Request $request, Interview $interview): JsonResponse
+    {
+        abort_if($interview->organization_id !== $this->orgId(), 403);
+
+        $interview->load(['panelists.employee', 'application.candidate', 'application.vacancy']);
+        $application   = $interview->application;
+        $candidateName = $application?->candidate ? trim("{$application->candidate->first_name} {$application->candidate->last_name}") : 'Candidate';
+        $vacancyName   = $application?->vacancy?->name ?? 'the role';
+
+        $attendees = [];
+        foreach ($interview->panelists as $p) {
+            $e = $p->employee?->work_email ?? $p->external_email;
+            if ($e) $attendees[] = $e;
+        }
+        $attendees = array_values(array_unique(array_filter($attendees)));
+
+        $subject  = "Interview: {$interview->title} – {$candidateName} – {$vacancyName}";
+        $bodyHtml = "<p>You are invited to an interview.</p>"
+            . "<p><strong>Candidate:</strong> {$candidateName}<br>"
+            . "<strong>Position:</strong> {$vacancyName}<br>"
+            . "<strong>Type:</strong> " . ucfirst($interview->interview_type) . "<br>"
+            . "<strong>Duration:</strong> {$interview->duration_minutes} minutes</p>"
+            . ($interview->agenda ? "<p><strong>Agenda:</strong><br>" . nl2br(htmlspecialchars($interview->agenda)) . "</p>" : "");
+
+        try {
+            $teams  = new TeamsService();
+            $result = $teams->createOrUpdateEvent($interview, $attendees, $subject, $bodyHtml);
+
+            $interview->update([
+                'teams_event_id' => $result['event_id'],
+                'teams_join_url' => $result['join_url'],
+            ]);
+
+            $interview->load(['panelists.employee', 'scores.panelist']);
+            return response()->json([
+                'message'        => 'Teams event created successfully.',
+                'teams_join_url' => $result['join_url'],
+                'interview'      => $this->fmtInterview($interview, true),
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 502);
+        }
+    }
+
+    // ── Send candidate schedule email ─────────────────────────────────────────
+
+    public function sendCandidateInvite(Request $request, Interview $interview): JsonResponse
+    {
+        abort_if($interview->organization_id !== $this->orgId(), 403);
+
+        $interview->load(['application.candidate', 'application.vacancy']);
+        $application = $interview->application;
+        $candidate   = $application?->candidate;
+
+        if (! $candidate?->email) {
+            return response()->json(['message' => 'No candidate email address found.'], 422);
+        }
+
+        $candidateName = trim("{$candidate->first_name} {$candidate->last_name}");
+        $vacancyName   = $application?->vacancy?->name ?? 'the role';
+        $dateStr       = $interview->scheduled_at->format('l, d F Y \a\t H:i');
+
+        $bodyLines = [
+            "Dear {$candidateName},",
+            "",
+            "We are pleased to invite you to an interview for the position of <strong>{$vacancyName}</strong>.",
+            "",
+            "<table style='border-collapse:collapse;font-size:14px'>",
+            "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Interview</td><td>{$interview->title}</td></tr>",
+            "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Type</td><td>" . ucfirst($interview->interview_type) . "</td></tr>",
+            "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Date &amp; Time</td><td>{$dateStr}</td></tr>",
+            "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Duration</td><td>{$interview->duration_minutes} minutes</td></tr>",
+        ];
+        if ($interview->location)      $bodyLines[] = "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Location</td><td>{$interview->location}</td></tr>";
+        if ($interview->teams_join_url) $bodyLines[] = "<tr><td style='padding:4px 16px 4px 0;font-weight:600'>Teams Link</td><td><a href='{$interview->teams_join_url}'>{$interview->teams_join_url}</a></td></tr>";
+        $bodyLines[] = "</table>";
+        if ($interview->agenda) $bodyLines[] = "<br><strong>Agenda:</strong><br>" . nl2br(htmlspecialchars($interview->agenda));
+        $bodyLines[] = "<br>Please confirm your attendance by replying to this email.<br><br>Regards,<br>HR Team";
+        $html = implode("\n", $bodyLines);
+
+        try {
+            Mail::html($html, function ($msg) use ($candidate, $vacancyName, $candidateName) {
+                $msg->to($candidate->email, $candidateName)->subject("Interview Invitation – {$vacancyName}");
+            });
+
+            $interview->update(['candidate_invite_sent' => true, 'candidate_invite_sent_at' => now()]);
+            $interview->load(['panelists.employee', 'scores.panelist']);
+            return response()->json(['message' => 'Candidate interview invitation sent.', 'interview' => $this->fmtInterview($interview, true)]);
+        } catch (\Exception $e) {
+            return response()->json(['message' => 'Failed to send email: ' . $e->getMessage()], 502);
+        }
+    }
+
+    // ── Employee search ───────────────────────────────────────────────────────
 
     public function employees(Request $request): JsonResponse
     {
-        $orgId = $this->orgId();
+        $orgId  = $this->orgId();
         $search = $request->query('q', '');
 
         $query = Employee::where('primary_organization_id', $orgId)

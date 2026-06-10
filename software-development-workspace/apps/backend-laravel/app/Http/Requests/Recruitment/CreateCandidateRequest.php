@@ -15,6 +15,7 @@ class CreateCandidateRequest extends FormRequest
     {
         return [
             'first_name'   => 'required|string|max:80',
+            'middle_name'  => 'nullable|string|max:80',
             'last_name'    => 'required|string|max:80',
             'email'        => 'required|email|max:200',
             'phone'        => 'nullable|string|max:30',

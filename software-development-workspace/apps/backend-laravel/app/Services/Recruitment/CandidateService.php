@@ -18,7 +18,8 @@ class CandidateService extends BaseService
 
     public function list(int $organizationId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = Candidate::orderByDesc('created_at');
+        $query = Candidate::where('organization_id', $organizationId)
+            ->orderByDesc('created_at');
 
         if (!empty($filters['search'])) {
             $search = $filters['search'];
@@ -31,6 +32,36 @@ class CandidateService extends BaseService
 
         if (!empty($filters['source'])) {
             $query->where('source', $filters['source']);
+        }
+
+        if (!empty($filters['vacancy_id'])) {
+            $query->whereHas('applications', fn($q) =>
+                $q->where('vacancy_id', (int) $filters['vacancy_id'])
+            );
+        }
+
+        if (!empty($filters['status'])) {
+            $query->whereHas('applications', fn($q) =>
+                $q->where('status', $filters['status'])
+            );
+        }
+
+        if (!empty($filters['date_from'])) {
+            $query->whereHas('applications', fn($q) =>
+                $q->whereDate('applied_at', '>=', $filters['date_from'])
+            );
+        }
+
+        if (!empty($filters['date_to'])) {
+            $query->whereHas('applications', fn($q) =>
+                $q->whereDate('applied_at', '<=', $filters['date_to'])
+            );
+        }
+
+        if (!empty($filters['archived'])) {
+            $query->where('is_archived', true);
+        } else {
+            $query->where('is_archived', false);
         }
 
         return $query->with(['applications.vacancy', 'applications.currentStage'])->paginate($perPage);

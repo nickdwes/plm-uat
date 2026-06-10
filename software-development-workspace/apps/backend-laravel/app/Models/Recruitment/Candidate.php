@@ -18,6 +18,7 @@ class Candidate extends Model
     protected $fillable = [
         'organization_id',
         'first_name',
+        'middle_name',
         'last_name',
         'email',
         'phone',
@@ -26,16 +27,22 @@ class Candidate extends Model
         'keywords',
         'source',
         'notes',
+        'is_archived',
+        'archived_at',
     ];
 
     protected $casts = [
         'social_links' => 'array',
         'keywords'     => 'array',
+        'is_archived'  => 'boolean',
+        'archived_at'  => 'datetime',
     ];
 
     public function getFullNameAttribute(): string
     {
-        return "{$this->first_name} {$this->last_name}";
+        return collect([$this->first_name, $this->middle_name, $this->last_name])
+            ->filter()
+            ->join(' ');
     }
 
     public function organization(): BelongsTo

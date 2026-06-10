@@ -220,6 +220,9 @@ const interviews        = ref<Interview[]>([]);
 const interviewsLoading = ref(false);
 const showScheduleModal = ref(false);
 const scheduleAppId     = ref<number | null>(null);
+const manageInterview   = ref<Interview | null>(null);
+const scheduleCandidate = ref<{ id: number; name: string; email: string } | null>(null);
+const scheduleVacancy   = ref<{ id: number; name: string; job_title: string } | null>(null);
 
 async function loadInterviews() {
   if (!vacancy.value || !applications.value.length) { interviews.value = []; return; }
@@ -239,23 +242,40 @@ async function loadInterviews() {
 }
 
 function openScheduleModal(appId?: number) {
-  scheduleAppId.value = appId ?? (applications.value[0]?.id ?? null);
+  manageInterview.value = null;
+  const targetAppId = appId ?? (applications.value[0]?.id ?? null);
+  scheduleAppId.value = targetAppId;
+  scheduleCandidate.value = null; // modal handles candidate selection now
+  scheduleVacancy.value = vacancy.value
+    ? { id: Number(vacancyId()), name: vacancy.value.name, job_title: vacancy.value.job_title }
+    : null;
+  showScheduleModal.value = true;
+}
+
+function openManageModal(interview: Interview) {
+  manageInterview.value = interview;
+  scheduleAppId.value = interview.application_id;
+  const app = applications.value.find(a => a.id === interview.application_id);
+  scheduleCandidate.value = app?.candidate
+    ? { id: app.candidate.id, name: app.candidate.full_name ?? `${app.candidate.first_name} ${app.candidate.last_name}`.trim(), email: app.candidate.email }
+    : null;
+  scheduleVacancy.value = vacancy.value
+    ? { id: Number(vacancyId()), name: vacancy.value.name, job_title: vacancy.value.job_title }
+    : null;
   showScheduleModal.value = true;
 }
 
 function onInterviewSaved(interview: Interview) {
-  interviews.value.unshift(interview);
-  showScheduleModal.value = false;
+  // Add to list if new; keep modal open so user can see post-save actions
+  if (!interviews.value.find(i => i.id === interview.id)) {
+    interviews.value.unshift(interview);
+  }
 }
 
-async function sendInvites(interviewId: number) {
-  try {
-    await api("POST", `/api/v1/recruitment/interviews/${interviewId}/send-invites`, { org: org(), body: {} });
-    alert("Invites sent successfully.");
-    await loadInterviews();
-  } catch (e: any) {
-    alert("Failed to send invites: " + (e?.message ?? e));
-  }
+function onInterviewModalClose() {
+  showScheduleModal.value = false;
+  manageInterview.value = null;
+  loadInterviews();
 }
 
 function interviewTypeLabel(t: string): string {
@@ -378,13 +398,28 @@ watch(currentOrgSlug, loadVacancy);
 
             <!-- Score summary -->
             <div v-if="iv.overall_score !== null" class="overall-score">
-              Overall Score: <strong>{{ iv.overall_score }} / 10</strong>
+              Overall Score: <strong>{{ iv.overall_score }} / 5</strong>
+            </div>
+
+            <!-- Teams join link -->
+            <div v-if="iv.teams_join_url" class="interview-teams-link">
+              <a :href="iv.teams_join_url" target="_blank" class="teams-join-btn">&#128249; Join Teams Meeting</a>
+            </div>
+
+            <!-- Invite status -->
+            <div class="interview-invite-status">
+              <span v-if="iv.candidate_invite_sent" class="invite-status-ok">&#10003; Candidate invited</span>
+              <span v-else class="invite-status-pending">&#9711; Candidate not invited</span>
+              <span class="invite-sep">·</span>
+              <span :class="iv.panelists?.some(p => p.invite_sent) ? 'invite-status-ok' : 'invite-status-pending'">
+                {{ iv.panelists?.filter(p => p.invite_sent).length ?? 0 }}/{{ iv.panelists?.length ?? 0 }} panelists invited
+              </span>
             </div>
 
             <!-- Actions -->
             <div class="interview-actions">
-              <button class="btn btn-sm" @click="sendInvites(iv.id)">📧 Send Invites</button>
-              <router-link :to="`/recruitment/interviews/${iv.id}/scorecard`" class="btn btn-sm btn-primary">📋 Scorecard</router-link>
+              <button class="btn btn-sm btn-primary" @click="openManageModal(iv)">&#9881; Manage / Invite</button>
+              <router-link :to="`/recruitment/interviews/${iv.id}/scorecard`" class="btn btn-sm">&#128203; Scorecard</router-link>
             </div>
           </div>
         </div>
@@ -438,9 +473,12 @@ watch(currentOrgSlug, loadVacancy);
     <!-- Interview schedule modal -->
     <InterviewScheduleModal
       v-if="showSchedule"
-      :application-id="safeScheduleAppId"
+      :initial-application-id="safeScheduleAppId"
       :vacancy-id="Number(vacancyId())"
-      @close="showScheduleModal = false"
+      :existing-interview="manageInterview"
+      :applications="applications"
+      :vacancy-info="scheduleVacancy"
+      @close="onInterviewModalClose"
       @saved="onInterviewSaved"
     />
 
@@ -514,6 +552,13 @@ watch(currentOrgSlug, loadVacancy);
 .panelist-chip em { font-style: normal; opacity: .7; }
 .invite-sent-dot { color: #16a34a; font-weight: 700; margin-left: 3px; }
 .overall-score { font-size: 13px; color: var(--color-text-muted); margin-bottom: var(--space-2); }
+.interview-teams-link { margin-bottom: 6px; }
+.teams-join-btn { font-size: 12px; font-weight: 600; color: #5865F2; text-decoration: none; padding: 3px 10px; border: 1px solid #c7d2fe; border-radius: 6px; background: #eef2ff; }
+.teams-join-btn:hover { background: #e0e7ff; }
+.interview-invite-status { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 6px; }
+.invite-status-ok { color: #059669; font-weight: 600; }
+.invite-status-pending { color: #9ca3af; }
+.invite-sep { color: #d1d5db; }
 .interview-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
 .mt-3 { margin-top: var(--space-3); }
 

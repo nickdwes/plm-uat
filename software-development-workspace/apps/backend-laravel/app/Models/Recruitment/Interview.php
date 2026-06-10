@@ -28,12 +28,18 @@ class Interview extends Model
         'overall_notes',
         'overall_score',
         'recommendation',
+        'teams_event_id',
+        'teams_join_url',
+        'candidate_invite_sent',
+        'candidate_invite_sent_at',
     ];
 
     protected $casts = [
-        'scheduled_at'    => 'datetime',
-        'overall_score'   => 'float',
-        'duration_minutes'=> 'integer',
+        'scheduled_at'             => 'datetime',
+        'overall_score'            => 'float',
+        'duration_minutes'         => 'integer',
+        'candidate_invite_sent'    => 'boolean',
+        'candidate_invite_sent_at' => 'datetime',
     ];
 
     public function application(): BelongsTo

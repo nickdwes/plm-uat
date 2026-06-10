@@ -29,6 +29,10 @@ class InterviewScore extends Model
         'recommendation',
         'submitted',
         'submitted_at',
+        'criterion_comments',
+        'technical_exercise_conducted',
+        'technical_exercise_score',
+        'technical_exercise_notes',
     ];
 
     protected $casts = [
@@ -44,6 +48,9 @@ class InterviewScore extends Model
         'average_score'           => 'float',
         'submitted'               => 'boolean',
         'submitted_at'            => 'datetime',
+        'criterion_comments'      => 'array',
+        'technical_exercise_conducted' => 'boolean',
+        'technical_exercise_score'     => 'float',
     ];
 
     /** Score criteria and their display labels */

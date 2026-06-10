@@ -19,6 +19,8 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'azure_id',
+        'sso_only',
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────

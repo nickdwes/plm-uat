@@ -61,15 +61,28 @@ class ApplicationController extends Controller
     {
         $this->authorize('create', Application::class);
         $request->validate([
-            'action'          => 'required|in:reject,shortlist',
+            'action'          => 'required|in:reject,shortlist,archive,delete',
             'application_ids' => 'required|array|min:1',
             'application_ids.*' => 'integer|exists:applications,id',
         ]);
-        $count = $this->service->bulkAction(
-            applicationIds: $request->input('application_ids'),
-            action: $request->input('action'),
-            movedBy: $request->user()->id,
-        );
+
+        $action = $request->input('action');
+
+        if (in_array($action, ['reject', 'shortlist'])) {
+            $count = $this->service->bulkAction(
+                applicationIds: $request->input('application_ids'),
+                action: $action,
+                movedBy: $request->user()->id,
+            );
+        } else {
+            $applications = Application::whereIn('id', $request->input('application_ids'))->get();
+            $count = 0;
+            foreach ($applications as $app) {
+                $action === 'archive' ? $app->update(['status' => 'withdrawn']) : $app->delete();
+                $count++;
+            }
+        }
+
         return response()->json(['message' => "{$count} application(s) updated.", 'count' => $count]);
     }
 }

@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { api, ApiError } from "../lib/api";
 import { setAuth } from "../stores/auth";
 import type { LoginResponse } from "../lib/types";
 
 const router = useRouter();
+const route  = useRoute();
 
 const email    = ref("");
 const password = ref("");
 const loading  = ref(false);
-const error    = ref("");
+const ssoLoading = ref(false);
+const error    = ref((route.query.sso_error as string) ?? "");
 
 async function login(): Promise<void> {
   if (!email.value.trim() || !password.value) {
@@ -41,6 +43,21 @@ async function login(): Promise<void> {
     loading.value = false;
   }
 }
+
+async function signInWithMicrosoft(): Promise<void> {
+  ssoLoading.value = true;
+  error.value = "";
+  try {
+    const res = await api<{ url: string }>("GET", "/api/auth/azure/redirect");
+    // Full page navigation to Microsoft login
+    window.location.href = res.url;
+  } catch (err) {
+    ssoLoading.value = false;
+    error.value = err instanceof ApiError
+      ? err.message
+      : "Could not initiate Microsoft sign-in. Please try again.";
+  }
+}
 </script>
 
 <template>
@@ -53,6 +70,26 @@ async function login(): Promise<void> {
 
       <h1>Welcome back</h1>
       <p class="lead">Sign in to access your workspace.</p>
+
+      <!-- Microsoft SSO -->
+      <button
+        class="btn-microsoft"
+        :disabled="ssoLoading || loading"
+        @click="signInWithMicrosoft"
+        type="button"
+      >
+        <svg class="ms-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21">
+          <rect x="1"  y="1"  width="9" height="9" fill="#f25022"/>
+          <rect x="11" y="1"  width="9" height="9" fill="#7fba00"/>
+          <rect x="1"  y="11" width="9" height="9" fill="#00a4ef"/>
+          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+        </svg>
+        {{ ssoLoading ? "Redirecting…" : "Sign in with Microsoft" }}
+      </button>
+
+      <div class="login-divider">
+        <span>or sign in with email</span>
+      </div>
 
       <form class="login-form" @submit.prevent="login">
         <label>
@@ -81,7 +118,7 @@ async function login(): Promise<void> {
 
         <p v-if="error" class="error">{{ error }}</p>
 
-        <button type="submit" class="btn btn-primary" :disabled="loading" style="width:100%">
+        <button type="submit" class="btn btn-primary" :disabled="loading || ssoLoading" style="width:100%">
           {{ loading ? "Signing in…" : "Sign in" }}
         </button>
       </form>
