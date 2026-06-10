@@ -39,10 +39,40 @@ const comp = reactive({
   medical_allowance: 0, other_allowances: 0, insurance_relief: 0,
 });
 
+// Photo upload
+const photoInput    = ref<HTMLInputElement | null>(null);
+const photoUploading = ref(false);
+
+// Profile text editing (summary / about / hobbies)
+const editingProfile = ref(false);
+const profileSaving  = ref(false);
+const profileDraft   = reactive({ professional_summary: "", about_me: "", hobbies_interests: "" });
+
+// Job description editing
+const editingJD = ref(false);
+const jdSaving  = ref(false);
+const jdDraft   = ref("");
+
+// Qualifications
+const showQualForm = ref(false);
+const qualSaving   = ref(false);
+const qualError    = ref("");
+const qualForm = reactive({
+  title: "", institution: "", qualification_type: "certificate",
+  field_of_study: "", year_obtained: "" as string | number,
+  certificate_number: "", notes: "",
+});
+
+// Secondments
+const showSecondmentForm = ref(false);
+const secondmentSaving   = ref(false);
+const secondmentError    = ref("");
+const secondmentForm = reactive({
+  organization_name: "", role: "", start_date: "", end_date: "", notes: "",
+});
+
 function org(): string | null { return currentOrgSlug.value; }
 
-// Sensitive fields are only returned by the API when the viewer is HR or self.
-// We detect access by checking if any sensitive-only field key is present.
 const hasSensitive = computed(() => {
   const e = employee.value as any;
   if (!e) return false;
@@ -172,8 +202,113 @@ async function deleteEC(id: number) {
   await load();
 }
 
+// ── Photo upload ───────────────────────────────────────────────────────────
+function triggerPhotoUpload() { photoInput.value?.click(); }
+
+async function onPhotoSelected(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  photoUploading.value = true;
+  try {
+    const fd = new FormData();
+    fd.append("photo", file);
+    const res = await api<{ data: { photo_url: string } }>("POST", `/api/v1/employees/${props.id}/photo`, { org: org(), formData: fd });
+    if (employee.value) (employee.value as any).photo_url = (res as any).data?.photo_url ?? (res as any).photo_url;
+  } catch (err) { error.value = err instanceof Error ? err.message : "Photo upload failed."; }
+  finally { photoUploading.value = false; if (photoInput.value) photoInput.value.value = ""; }
+}
+
+// ── Profile text ───────────────────────────────────────────────────────────
+function openEditProfile() {
+  const e = employee.value as any;
+  Object.assign(profileDraft, {
+    professional_summary: e.professional_summary ?? "",
+    about_me: e.about_me ?? "",
+    hobbies_interests: e.hobbies_interests ?? "",
+  });
+  editingProfile.value = true;
+}
+
+async function saveProfile() {
+  profileSaving.value = true;
+  try {
+    await api("PUT", `/api/v1/employees/${props.id}`, { org: org(), body: { ...profileDraft } });
+    if (employee.value) {
+      (employee.value as any).professional_summary = profileDraft.professional_summary;
+      (employee.value as any).about_me             = profileDraft.about_me;
+      (employee.value as any).hobbies_interests    = profileDraft.hobbies_interests;
+    }
+    editingProfile.value = false;
+  } catch (err) { error.value = err instanceof Error ? err.message : "Save failed."; }
+  finally { profileSaving.value = false; }
+}
+
+// ── Job description ────────────────────────────────────────────────────────
+function openEditJD() {
+  jdDraft.value = (employee.value as any).job_description ?? "";
+  editingJD.value = true;
+}
+
+async function saveJD() {
+  jdSaving.value = true;
+  try {
+    await api("PUT", `/api/v1/employees/${props.id}`, { org: org(), body: { job_description: jdDraft.value } });
+    if (employee.value) (employee.value as any).job_description = jdDraft.value;
+    editingJD.value = false;
+  } catch (err) { error.value = err instanceof Error ? err.message : "Save failed."; }
+  finally { jdSaving.value = false; }
+}
+
+// ── Qualifications ─────────────────────────────────────────────────────────
+async function addQualification() {
+  qualSaving.value = true; qualError.value = "";
+  try {
+    const res = await api<{ data: any }>("POST", `/api/v1/employees/${props.id}/qualifications`, {
+      org: org(), body: { ...qualForm, year_obtained: qualForm.year_obtained || null },
+    });
+    const e = employee.value as any;
+    e.qualifications = [((res as any).data ?? res), ...(e.qualifications ?? [])];
+    showQualForm.value = false;
+    Object.assign(qualForm, { title: "", institution: "", qualification_type: "certificate", field_of_study: "", year_obtained: "", certificate_number: "", notes: "" });
+  } catch (err) { qualError.value = err instanceof Error ? err.message : "Failed to save."; }
+  finally { qualSaving.value = false; }
+}
+
+async function deleteQualification(qualId: number) {
+  if (!confirm("Remove this qualification?")) return;
+  await api("DELETE", `/api/v1/employees/${props.id}/qualifications/${qualId}`, { org: org() });
+  const e = employee.value as any;
+  e.qualifications = e.qualifications?.filter((q: any) => q.id !== qualId) ?? [];
+}
+
+// ── Secondments ────────────────────────────────────────────────────────────
+async function addSecondment() {
+  secondmentSaving.value = true; secondmentError.value = "";
+  try {
+    const res = await api<{ data: any }>("POST", `/api/v1/employees/${props.id}/secondments`, {
+      org: org(), body: { ...secondmentForm },
+    });
+    const e = employee.value as any;
+    e.secondments = [((res as any).data ?? res), ...(e.secondments ?? [])];
+    showSecondmentForm.value = false;
+    Object.assign(secondmentForm, { organization_name: "", role: "", start_date: "", end_date: "", notes: "" });
+  } catch (err) { secondmentError.value = err instanceof Error ? err.message : "Failed to save."; }
+  finally { secondmentSaving.value = false; }
+}
+
+async function deleteSecondment(secId: number) {
+  if (!confirm("Remove this secondment record?")) return;
+  await api("DELETE", `/api/v1/employees/${props.id}/secondments/${secId}`, { org: org() });
+  const e = employee.value as any;
+  e.secondments = e.secondments?.filter((s: any) => s.id !== secId) ?? [];
+}
+
 function statusBadge(status: string): string {
   return { active: "badge-green", inactive: "badge-yellow", exited: "badge-gray" }[status] ?? "badge-gray";
+}
+
+function qualTypeBadgeColor(type: string): string {
+  return { degree: "#3b82f6", diploma: "#8b5cf6", certificate: "#10b981", professional: "#f59e0b" }[type] ?? "#64748b";
 }
 
 onMounted(load);
@@ -196,7 +331,21 @@ onMounted(load);
 
       <!-- ── PROFILE CARD ──────────────────────────────────────────────────── -->
       <div class="ed-profile-card">
-        <div class="ed-avatar">{{ initials(employee) }}</div>
+
+        <!-- Photo / avatar -->
+        <div class="ed-photo-wrap">
+          <img v-if="(employee as any).photo_url" :src="(employee as any).photo_url" class="ed-photo-img" alt="Profile photo" />
+          <div v-else class="ed-avatar">{{ initials(employee) }}</div>
+          <button v-if="hasSensitive" class="ed-photo-btn" :disabled="photoUploading" @click="triggerPhotoUpload" title="Change profile photo">
+            <svg v-if="!photoUploading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+              <circle cx="12" cy="13" r="4"/>
+            </svg>
+            <span v-else style="font-size:10px">…</span>
+          </button>
+          <input ref="photoInput" type="file" accept="image/jpeg,image/png,image/webp" style="display:none" @change="onPhotoSelected" />
+        </div>
+
         <div class="ed-profile-main">
           <div class="ed-profile-top">
             <div>
@@ -207,6 +356,14 @@ onMounted(load);
                 {{ (employee as any).department?.name ?? "No department" }}
               </p>
               <span class="ed-emp-id-badge">{{ (employee as any).employee_number }}</span>
+              <span v-if="(employee as any).manager?.full_name" class="ed-manager-chip">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="9" cy="7" r="4"/>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                {{ (employee as any).manager.full_name }}
+              </span>
             </div>
             <div class="ed-profile-actions">
               <span :class="['badge', statusBadge((employee as any).status)]" style="font-size:0.82rem;padding:5px 14px;text-transform:capitalize">
@@ -215,6 +372,11 @@ onMounted(load);
               <router-link :to="{ name: 'employee-edit', params: { id: (employee as any).id } }" class="btn btn-outline btn-sm">✏ Edit</router-link>
             </div>
           </div>
+
+          <!-- Professional summary preview (one line) -->
+          <p v-if="(employee as any).professional_summary" class="ed-summary-preview">
+            {{ (employee as any).professional_summary }}
+          </p>
         </div>
       </div>
 
@@ -222,7 +384,7 @@ onMounted(load);
       <div class="ed-tabs">
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'overview'  }]" @click="tab = 'overview'">Overview</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'career'    }]" @click="tab = 'career'">Career</button>
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'profiles'  }]" @click="tab = 'profiles'">Profiles</button>
+        <button :class="['ed-tab', { 'ed-tab-active': tab === 'profiles'  }]" @click="tab = 'profiles'">Profile</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'benefits'  }]" @click="tab = 'benefits'">Benefits</button>
         <router-link :to="{ name: 'employee-dependents', params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Dependents</router-link>
         <router-link :to="{ name: 'employee-vehicles',   params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Vehicles</router-link>
@@ -298,13 +460,10 @@ onMounted(load);
           </div>
         </div>
 
-        <!-- ── Sensitive sections (only visible to HR or the employee themselves) ── -->
+        <!-- ── Sensitive sections ── -->
         <template v-if="hasSensitive">
 
-          <!-- Personal Details + Statutory IDs -->
           <div class="ed-two-col">
-
-            <!-- PERSONAL -->
             <div class="ed-section-card ed-sensitive">
               <h3 class="ed-section-title ed-sensitive-title">🔒 Personal Details</h3>
               <div class="ed-kv-list">
@@ -323,7 +482,6 @@ onMounted(load);
               </div>
             </div>
 
-            <!-- STATUTORY IDs -->
             <div class="ed-section-card ed-sensitive">
               <h3 class="ed-section-title ed-sensitive-title">🔒 Statutory IDs</h3>
               <div class="ed-kv-list">
@@ -351,7 +509,6 @@ onMounted(load);
             </div>
           </div>
 
-          <!-- HEALTH INFORMATION -->
           <div class="ed-section-card ed-sensitive ed-health">
             <h3 class="ed-section-title ed-health-title">🔒 Health Information</h3>
             <div class="ed-health-grid">
@@ -378,14 +535,12 @@ onMounted(load);
             </div>
           </div>
 
-          <!-- EMERGENCY CONTACTS -->
           <div class="ed-section-card ed-sensitive">
             <div class="ed-section-hdr" style="margin-bottom:14px">
               <h3 class="ed-section-title ed-sensitive-title" style="margin:0">🔒 Emergency Contacts</h3>
               <button class="btn btn-outline btn-sm" @click="openAddEC">+ Add</button>
             </div>
 
-            <!-- Add/edit form -->
             <div v-if="showECForm" class="ed-ec-form">
               <p v-if="ecError" class="error" style="margin-bottom:8px">{{ ecError }}</p>
               <div class="ed-comp-form-grid ed-ec-grid">
@@ -416,7 +571,6 @@ onMounted(load);
               </div>
             </div>
 
-            <!-- Contact cards -->
             <div v-if="(employee as any).emergency_contacts?.length" class="ed-ec-list">
               <div v-for="c in (employee as any).emergency_contacts" :key="c.id" class="ed-ec-card">
                 <div class="ed-ec-top">
@@ -437,12 +591,13 @@ onMounted(load);
             <p v-else-if="!showECForm" class="ed-empty-hint">No emergency contacts added yet.</p>
           </div>
 
-        </template><!-- /hasSensitive -->
-
+        </template>
       </div><!-- /overview -->
 
       <!-- ── CAREER ────────────────────────────────────────────────────────── -->
       <div v-if="tab === 'career'" class="ed-tab-body">
+
+        <!-- Career Details -->
         <div class="ed-section-card">
           <h3 class="ed-section-title">Career Details</h3>
           <div class="ed-kv-list">
@@ -458,8 +613,8 @@ onMounted(load);
               <span class="ed-kv-label">Date of Joining</span>
               <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span>
             </div>
-            <div class="ed-kv-row">
-              <span class="ed-kv-label">Probation End</span>
+            <div class="ed-kv-row" v-if="(employee as any).probation_end_date">
+              <span class="ed-kv-label">Probation / Review Date</span>
               <span class="ed-kv-val">{{ fmtDate((employee as any).probation_end_date) }}</span>
             </div>
             <div class="ed-kv-row" v-if="(employee as any).contract_end_date">
@@ -467,6 +622,187 @@ onMounted(load);
               <span class="ed-kv-val">{{ fmtDate((employee as any).contract_end_date) }}</span>
             </div>
           </div>
+        </div>
+
+        <!-- Reporting Structure -->
+        <div class="ed-section-card">
+          <h3 class="ed-section-title">Reporting Structure</h3>
+
+          <div v-if="(employee as any).manager" class="ed-kv-list" style="margin-bottom:14px">
+            <div class="ed-kv-row">
+              <span class="ed-kv-label">Reports To</span>
+              <router-link
+                :to="{ name: 'employee-detail', params: { id: (employee as any).manager.id } }"
+                class="ed-link ed-kv-val"
+              >{{ (employee as any).manager.full_name }}</router-link>
+            </div>
+          </div>
+
+          <template v-if="(employee as any).direct_reports?.length">
+            <div class="ed-dr-header">Direct Reports ({{ (employee as any).direct_reports.length }})</div>
+            <div class="ed-dr-chips">
+              <router-link
+                v-for="dr in (employee as any).direct_reports"
+                :key="dr.id"
+                :to="{ name: 'employee-detail', params: { id: dr.id } }"
+                class="ed-dr-chip"
+              >
+                <span class="ed-dr-initials">{{ initials(dr) }}</span>
+                <div class="ed-dr-info">
+                  <span class="ed-dr-name">{{ dr.full_name }}</span>
+                  <span v-if="dr.designation?.title" class="ed-dr-role">{{ dr.designation.title }}</span>
+                </div>
+              </router-link>
+            </div>
+          </template>
+          <p v-else-if="!(employee as any).manager" class="ed-empty-hint">No reporting structure defined.</p>
+          <p v-else class="ed-empty-hint">No direct reports.</p>
+        </div>
+
+        <!-- Job Description -->
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Job Description</h3>
+            <button v-if="hasSensitive && !editingJD" class="btn btn-outline btn-sm" @click="openEditJD">✏ Edit</button>
+            <button v-if="editingJD" class="btn btn-secondary btn-sm" @click="editingJD = false">Cancel</button>
+          </div>
+          <div v-if="editingJD">
+            <textarea v-model="jdDraft" class="input" rows="7" style="width:100%;resize:vertical" placeholder="Describe this employee's responsibilities, expectations, and key deliverables…" />
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" :disabled="jdSaving" @click="saveJD">{{ jdSaving ? "Saving…" : "Save" }}</button>
+            </div>
+          </div>
+          <p v-else-if="(employee as any).job_description" class="ed-prose">{{ (employee as any).job_description }}</p>
+          <p v-else class="ed-empty-hint">No job description added.</p>
+        </div>
+
+        <!-- Qualifications & Certifications -->
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Qualifications &amp; Certifications</h3>
+            <button v-if="hasSensitive" class="btn btn-outline btn-sm" @click="showQualForm = !showQualForm">
+              {{ showQualForm ? "✕ Cancel" : "+ Add" }}
+            </button>
+          </div>
+
+          <div v-if="showQualForm" class="ed-sub-form">
+            <p v-if="qualError" class="error" style="margin-bottom:8px">{{ qualError }}</p>
+            <div class="ed-comp-form-grid">
+              <div>
+                <label class="ed-form-label">Title / Qualification Name *</label>
+                <input v-model="qualForm.title" type="text" class="input" placeholder="e.g. BSc Information Technology" />
+              </div>
+              <div>
+                <label class="ed-form-label">Institution / Awarding Body</label>
+                <input v-model="qualForm.institution" type="text" class="input" placeholder="University, college, or body" />
+              </div>
+              <div>
+                <label class="ed-form-label">Type</label>
+                <select v-model="qualForm.qualification_type" class="input">
+                  <option value="degree">Degree</option>
+                  <option value="diploma">Diploma</option>
+                  <option value="certificate">Certificate</option>
+                  <option value="professional">Professional Certification</option>
+                </select>
+              </div>
+              <div>
+                <label class="ed-form-label">Year Obtained</label>
+                <input v-model="qualForm.year_obtained" type="number" class="input" min="1950" :max="new Date().getFullYear()" placeholder="e.g. 2020" />
+              </div>
+              <div>
+                <label class="ed-form-label">Field of Study</label>
+                <input v-model="qualForm.field_of_study" type="text" class="input" placeholder="e.g. Computer Science" />
+              </div>
+              <div>
+                <label class="ed-form-label">Certificate / Reg. No.</label>
+                <input v-model="qualForm.certificate_number" type="text" class="input" placeholder="Optional" />
+              </div>
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" :disabled="qualSaving || !qualForm.title" @click="addQualification">
+                {{ qualSaving ? "Saving…" : "Save Qualification" }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="(employee as any).qualifications?.length" class="ed-qual-list">
+            <div v-for="q in (employee as any).qualifications" :key="q.id" class="ed-qual-card">
+              <div class="ed-qual-top">
+                <div style="flex:1;min-width:0">
+                  <span class="ed-qual-title">{{ q.title }}</span>
+                  <span class="ed-qual-type" :style="{ background: qualTypeBadgeColor(q.qualification_type) + '18', color: qualTypeBadgeColor(q.qualification_type) }">
+                    {{ q.qualification_type }}
+                  </span>
+                </div>
+                <button v-if="hasSensitive" class="act-btn act-del" @click="deleteQualification(q.id)">✕</button>
+              </div>
+              <div class="ed-qual-meta">
+                <span v-if="q.institution">{{ q.institution }}</span>
+                <span v-if="q.field_of_study"> · {{ q.field_of_study }}</span>
+                <span v-if="q.year_obtained" class="ed-qual-year">{{ q.year_obtained }}</span>
+              </div>
+              <div v-if="q.certificate_number" class="ed-qual-cert">Cert / Reg #: {{ q.certificate_number }}</div>
+            </div>
+          </div>
+          <p v-else-if="!showQualForm" class="ed-empty-hint">No qualifications or certifications recorded.</p>
+        </div>
+
+        <!-- Secondments / Placements -->
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Secondments &amp; External Placements</h3>
+            <button v-if="hasSensitive" class="btn btn-outline btn-sm" @click="showSecondmentForm = !showSecondmentForm">
+              {{ showSecondmentForm ? "✕ Cancel" : "+ Add" }}
+            </button>
+          </div>
+
+          <div v-if="showSecondmentForm" class="ed-sub-form">
+            <p v-if="secondmentError" class="error" style="margin-bottom:8px">{{ secondmentError }}</p>
+            <div class="ed-comp-form-grid">
+              <div>
+                <label class="ed-form-label">Organization *</label>
+                <input v-model="secondmentForm.organization_name" type="text" class="input" placeholder="Organization name" />
+              </div>
+              <div>
+                <label class="ed-form-label">Role / Title</label>
+                <input v-model="secondmentForm.role" type="text" class="input" placeholder="Job title during secondment" />
+              </div>
+              <div>
+                <label class="ed-form-label">Start Date *</label>
+                <input v-model="secondmentForm.start_date" type="date" class="input" />
+              </div>
+              <div>
+                <label class="ed-form-label">End Date</label>
+                <input v-model="secondmentForm.end_date" type="date" class="input" />
+              </div>
+            </div>
+            <div style="margin-top:8px">
+              <label class="ed-form-label">Notes</label>
+              <input v-model="secondmentForm.notes" type="text" class="input" placeholder="Optional notes" />
+            </div>
+            <div style="margin-top:8px;display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" :disabled="secondmentSaving || !secondmentForm.organization_name || !secondmentForm.start_date" @click="addSecondment">
+                {{ secondmentSaving ? "Saving…" : "Save Secondment" }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="(employee as any).secondments?.length" class="ed-secondment-list">
+            <div v-for="s in (employee as any).secondments" :key="s.id" class="ed-secondment-card">
+              <div class="ed-secondment-top">
+                <div style="flex:1;min-width:0">
+                  <span class="ed-secondment-org">{{ s.organization_name }}</span>
+                  <span v-if="s.role" class="ed-secondment-role">{{ s.role }}</span>
+                </div>
+                <button v-if="hasSensitive" class="act-btn act-del" @click="deleteSecondment(s.id)">✕</button>
+              </div>
+              <div class="ed-secondment-dates">
+                {{ fmtDate(s.start_date) }} → {{ s.end_date ? fmtDate(s.end_date) : "Present" }}
+              </div>
+              <p v-if="s.notes" class="ed-secondment-notes">{{ s.notes }}</p>
+            </div>
+          </div>
+          <p v-else-if="!showSecondmentForm" class="ed-empty-hint">No secondments or external placements recorded.</p>
         </div>
 
         <!-- Exit info (if exited) -->
@@ -514,8 +850,54 @@ onMounted(load);
 
       <!-- ── PROFILES ──────────────────────────────────────────────────────── -->
       <div v-if="tab === 'profiles'" class="ed-tab-body">
-        <div class="ed-two-col">
 
+        <!-- Professional Summary (full-width, always visible) -->
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Professional Summary</h3>
+            <button v-if="!editingProfile" class="btn btn-outline btn-sm" @click="openEditProfile">✏ Edit</button>
+            <button v-if="editingProfile" class="btn btn-secondary btn-sm" @click="editingProfile = false">Cancel</button>
+          </div>
+
+          <!-- Edit mode -->
+          <div v-if="editingProfile">
+            <div class="form-group">
+              <label class="ed-form-label">Professional Summary</label>
+              <textarea v-model="profileDraft.professional_summary" class="input" rows="4" style="width:100%;resize:vertical" placeholder="Brief professional background and career highlights…" />
+            </div>
+            <div class="form-group">
+              <label class="ed-form-label">About Me</label>
+              <textarea v-model="profileDraft.about_me" class="input" rows="3" style="width:100%;resize:vertical" placeholder="Personal statement or introduction…" />
+            </div>
+            <div class="form-group">
+              <label class="ed-form-label">Hobbies &amp; Interests</label>
+              <textarea v-model="profileDraft.hobbies_interests" class="input" rows="2" style="width:100%;resize:vertical" placeholder="Reading, running, photography…" />
+            </div>
+            <button class="btn btn-primary btn-sm" :disabled="profileSaving" @click="saveProfile">{{ profileSaving ? "Saving…" : "Save Profile" }}</button>
+          </div>
+
+          <!-- Read mode -->
+          <template v-else>
+            <p v-if="(employee as any).professional_summary" class="ed-prose">{{ (employee as any).professional_summary }}</p>
+            <p v-else class="ed-empty-hint">No professional summary added. Click Edit to add one.</p>
+          </template>
+        </div>
+
+        <!-- About Me + Hobbies (read-only, two-col) -->
+        <div v-if="!editingProfile" class="ed-two-col">
+          <div class="ed-section-card">
+            <h3 class="ed-section-title">About Me</h3>
+            <p v-if="(employee as any).about_me" class="ed-prose" style="margin:0">{{ (employee as any).about_me }}</p>
+            <p v-else class="ed-empty-hint">—</p>
+          </div>
+          <div class="ed-section-card">
+            <h3 class="ed-section-title">Hobbies &amp; Interests</h3>
+            <p v-if="(employee as any).hobbies_interests" class="ed-prose" style="margin:0">{{ (employee as any).hobbies_interests }}</p>
+            <p v-else class="ed-empty-hint">—</p>
+          </div>
+        </div>
+
+        <div class="ed-two-col">
           <!-- PERSONAL -->
           <div class="ed-section-card">
             <h3 class="ed-section-title">Personal</h3>
@@ -571,7 +953,6 @@ onMounted(load);
       <!-- ── BENEFITS ──────────────────────────────────────────────────────── -->
       <div v-if="tab === 'benefits'" class="ed-tab-body">
 
-        <!-- COMPENSATION -->
         <div class="ed-section-card">
           <div class="ed-section-hdr" style="margin-bottom:16px">
             <h3 class="ed-section-title" style="margin:0">Monthly Compensation</h3>
@@ -584,7 +965,6 @@ onMounted(load);
           </div>
           <p v-if="compError" class="error">{{ compError }}</p>
 
-          <!-- Read -->
           <div v-if="!showCompEdit" class="ed-kv-list">
             <div class="ed-kv-row">
               <span class="ed-kv-label">Basic Salary</span>
@@ -612,7 +992,6 @@ onMounted(load);
             </div>
           </div>
 
-          <!-- Edit -->
           <div v-else>
             <div class="ed-comp-form-grid">
               <div>
@@ -649,7 +1028,6 @@ onMounted(load);
           </div>
         </div>
 
-        <!-- STATUTORY BENEFITS -->
         <div class="ed-section-card" style="margin-top:16px">
           <h3 class="ed-section-title">Statutory Contributions (Estimated Monthly)</h3>
           <div class="ed-kv-list">
@@ -694,17 +1072,26 @@ onMounted(load);
 
 /* Profile card */
 .ed-profile-card { background: #fff; border: 1px solid var(--color-border, #e2e8f0); border-radius: 12px; padding: 24px; display: flex; gap: 20px; align-items: flex-start; }
-.ed-avatar { width: 64px; height: 64px; border-radius: 50%; background: #3b9c74; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; font-weight: 700; flex-shrink: 0; }
-.ed-profile-main { flex: 1; }
+.ed-profile-main { flex: 1; min-width: 0; }
 .ed-profile-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .ed-name { font-size: 1.25rem; font-weight: 700; color: #0f172a; margin: 0 0 4px; }
-.ed-sub { font-size: 0.85rem; color: #64748b; margin: 0 0 10px; }
+.ed-sub { font-size: 0.85rem; color: #64748b; margin: 0 0 8px; }
 .ed-emp-id-badge { display: inline-block; background: #f0fdf4; border: 1px solid #86efac; color: #166534; font-size: 0.72rem; font-weight: 600; padding: 2px 10px; border-radius: 20px; font-family: ui-monospace, monospace; }
+.ed-manager-chip { display: inline-flex; align-items: center; gap: 4px; background: #f0f6ff; border: 1px solid #bfdbfe; color: #1d4ed8; font-size: 0.72rem; font-weight: 500; padding: 2px 10px; border-radius: 20px; margin-left: 6px; }
 .ed-profile-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ed-summary-preview { font-size: 0.84rem; color: #475569; margin: 10px 0 0; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Photo wrap */
+.ed-photo-wrap { position: relative; flex-shrink: 0; width: 80px; height: 80px; }
+.ed-photo-img { width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 3px solid #e2e8f0; }
+.ed-avatar { width: 80px; height: 80px; border-radius: 50%; background: #3b9c74; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 1.7rem; font-weight: 700; }
+.ed-photo-btn { position: absolute; bottom: 0; right: 0; width: 26px; height: 26px; border-radius: 50%; background: #fff; border: 1.5px solid #e2e8f0; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #475569; box-shadow: 0 1px 4px rgba(0,0,0,.12); transition: background 0.15s; }
+.ed-photo-btn:hover { background: #f1f5f9; }
+.ed-photo-btn:disabled { opacity: 0.6; cursor: default; }
 
 /* Tabs */
 .ed-tabs { display: flex; border-bottom: 2px solid #e2e8f0; margin: 24px 0 0; overflow-x: auto; }
-.ed-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 0.88rem; font-weight: 500; color: #64748b; cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s; }
+.ed-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 0.88rem; font-weight: 500; color: #64748b; cursor: pointer; white-space: nowrap; transition: color 0.15s, border-color 0.15s; text-decoration: none; }
 .ed-tab:hover { color: #1e293b; }
 .ed-tab-active { color: var(--color-brand-base, #004C97); border-bottom-color: var(--color-brand-base, #004C97); font-weight: 600; }
 
@@ -719,6 +1106,9 @@ onMounted(load);
 .ed-section-card { background: #fff; border: 1px solid var(--color-border, #e2e8f0); border-radius: 10px; padding: 20px; }
 .ed-section-title { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em; color: #94a3b8; margin: 0 0 14px; text-transform: uppercase; }
 .ed-section-hdr { display: flex; align-items: center; justify-content: space-between; }
+
+/* Sub form */
+.ed-sub-form { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
 
 /* Sensitive */
 .ed-sensitive { border-color: #fed7aa; background: #fffbeb; }
@@ -741,13 +1131,43 @@ onMounted(load);
 .ed-ec-primary-badge { font-size: 0.72rem; font-weight: 600; background: #dbeafe; color: #1d4ed8; padding: 2px 8px; border-radius: 20px; }
 .ed-ec-actions { margin-left: auto; display: flex; gap: 4px; }
 .ed-ec-details { font-size: 0.82rem; color: #64748b; display: flex; gap: 16px; flex-wrap: wrap; }
-.ed-empty-hint { font-size: 0.82rem; color: #94a3b8; margin: 0; }
-.act-btn { background: none; border: 1px solid #e2e8f0; border-radius: 5px; padding: 2px 7px; font-size: 0.78rem; cursor: pointer; color: #64748b; }
-.act-btn:hover { background: #f1f5f9; }
-.act-del { color: #dc2626; border-color: #fca5a5; }
-.act-del:hover { background: #fff7f7; }
 
-/* Kv wrap */
+/* Prose */
+.ed-prose { white-space: pre-wrap; font-size: 0.88rem; color: #374151; line-height: 1.65; margin: 0; }
+
+/* Reporting structure */
+.ed-dr-header { font-size: 0.75rem; font-weight: 600; color: #64748b; letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 10px; }
+.ed-dr-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ed-dr-chip { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; text-decoration: none; color: inherit; transition: border-color 0.15s, background 0.15s; min-width: 160px; }
+.ed-dr-chip:hover { border-color: #94a3b8; background: #f1f5f9; }
+.ed-dr-initials { width: 34px; height: 34px; border-radius: 50%; background: #004C97; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 0.82rem; font-weight: 700; flex-shrink: 0; }
+.ed-dr-info { display: flex; flex-direction: column; min-width: 0; }
+.ed-dr-name { font-size: 0.85rem; font-weight: 600; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-dr-role { font-size: 0.75rem; color: #64748b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Qualifications */
+.ed-qual-list { display: flex; flex-direction: column; gap: 10px; }
+.ed-qual-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; }
+.ed-qual-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }
+.ed-qual-title { font-size: 0.9rem; font-weight: 600; color: #0f172a; }
+.ed-qual-type { font-size: 0.68rem; font-weight: 600; padding: 2px 8px; border-radius: 20px; text-transform: capitalize; margin-left: 6px; white-space: nowrap; }
+.ed-qual-meta { font-size: 0.8rem; color: #64748b; display: flex; flex-wrap: wrap; gap: 0; }
+.ed-qual-year { margin-left: auto; font-size: 0.82rem; font-weight: 600; color: #374151; }
+.ed-qual-cert { font-size: 0.76rem; color: #94a3b8; margin-top: 4px; font-family: ui-monospace, monospace; }
+
+/* Secondments */
+.ed-secondment-list { display: flex; flex-direction: column; gap: 10px; }
+.ed-secondment-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; }
+.ed-secondment-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }
+.ed-secondment-org { font-size: 0.9rem; font-weight: 600; color: #0f172a; }
+.ed-secondment-role { font-size: 0.78rem; color: #64748b; background: #f1f5f9; padding: 2px 8px; border-radius: 20px; margin-left: 6px; }
+.ed-secondment-dates { font-size: 0.8rem; color: #64748b; margin-bottom: 4px; }
+.ed-secondment-notes { font-size: 0.8rem; color: #94a3b8; margin: 4px 0 0; }
+
+/* Empty hint */
+.ed-empty-hint { font-size: 0.82rem; color: #94a3b8; margin: 0; }
+
+/* KV wrap */
 .ed-kv-wrap { white-space: pre-wrap; text-align: right; max-width: 280px; }
 .ed-link { color: var(--color-brand-base, #004C97); text-decoration: none; font-size: 0.85rem; }
 .ed-link:hover { text-decoration: underline; }
@@ -781,8 +1201,18 @@ onMounted(load);
 .btn-outline { background: #fff; border: 1px solid var(--color-border, #e2e8f0); color: #374151; }
 .btn-outline:hover { background: #f8fafc; border-color: #94a3b8; }
 
+/* form-group spacing */
+.form-group { margin-bottom: 12px; }
+
+/* Act buttons */
+.act-btn { background: none; border: 1px solid #e2e8f0; border-radius: 5px; padding: 2px 7px; font-size: 0.78rem; cursor: pointer; color: #64748b; }
+.act-btn:hover { background: #f1f5f9; }
+.act-del { color: #dc2626; border-color: #fca5a5; }
+.act-del:hover { background: #fff7f7; }
+
 @media (max-width: 640px) {
   .ed-comp-form-grid { grid-template-columns: 1fr; }
   .ed-profile-card { flex-direction: column; }
+  .ed-ec-grid { grid-template-columns: 1fr; }
 }
 </style>

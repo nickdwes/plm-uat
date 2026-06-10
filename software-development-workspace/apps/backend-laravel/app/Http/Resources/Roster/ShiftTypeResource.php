@@ -21,6 +21,7 @@ class ShiftTypeResource extends JsonResource
             'net_minutes'            => $this->net_minutes,
             'is_overnight'           => $this->is_overnight,
             'is_active'              => $this->is_active,
+            'color'                  => $this->color ?? '#3B82F6',
             'shift_group'            => $this->whenLoaded('shiftGroup', fn () => [
                 'id'   => $this->shiftGroup->id,
                 'name' => $this->shiftGroup->name,

@@ -87,6 +87,12 @@ class Employee extends Model
         'has_work_permit',
         'work_permit_number',
         'work_permit_expiry',
+        // Profile / career
+        'photo_url',
+        'professional_summary',
+        'about_me',
+        'hobbies_interests',
+        'job_description',
     ];
 
     protected $casts = [
@@ -223,6 +229,16 @@ class Employee extends Model
     public function documents(): HasMany
     {
         return $this->hasMany(EmployeeDocument::class);
+    }
+
+    public function qualifications(): HasMany
+    {
+        return $this->hasMany(EmployeeQualification::class)->orderByDesc('year_obtained');
+    }
+
+    public function secondments(): HasMany
+    {
+        return $this->hasMany(EmployeeSecondment::class)->orderByDesc('start_date');
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────────

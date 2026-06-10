@@ -18,6 +18,7 @@ class EmployeeResource extends JsonResource
         $base = [
             'id'                      => $this->id,
             'employee_number'         => $this->employee_number,
+            'photo_url'               => $this->photo_url,
             'full_name'               => $this->full_name,
             'display_name'            => $this->display_name,
             'first_name'              => $this->first_name,
@@ -37,6 +38,12 @@ class EmployeeResource extends JsonResource
             'residential_address'     => $this->when($canSensitive, $this->residential_address),
             'city'                    => $this->city,
             'country'                 => $this->country,
+
+            // Profile / career narrative
+            'professional_summary'    => $this->professional_summary,
+            'about_me'                => $this->about_me,
+            'hobbies_interests'       => $this->hobbies_interests,
+            'job_description'         => $this->job_description,
 
             // Employment
             'employment_type'         => $this->employment_type,
@@ -74,6 +81,39 @@ class EmployeeResource extends JsonResource
                 'full_name'    => $this->manager->full_name,
                 'work_email'   => $this->manager->work_email,
             ] : null),
+
+            'direct_reports'          => $this->whenLoaded('directReports', fn () =>
+                $this->directReports->map(fn ($dr) => [
+                    'id'          => $dr->id,
+                    'full_name'   => $dr->full_name,
+                    'work_email'  => $dr->work_email,
+                    'designation' => $dr->designation ? ['title' => $dr->designation->title] : null,
+                ])
+            ),
+
+            'qualifications'          => $this->whenLoaded('qualifications', fn () =>
+                $this->qualifications->map(fn ($q) => [
+                    'id'                 => $q->id,
+                    'title'              => $q->title,
+                    'institution'        => $q->institution,
+                    'qualification_type' => $q->qualification_type,
+                    'field_of_study'     => $q->field_of_study,
+                    'year_obtained'      => $q->year_obtained,
+                    'certificate_number' => $q->certificate_number,
+                    'notes'              => $q->notes,
+                ])
+            ),
+
+            'secondments'             => $this->whenLoaded('secondments', fn () =>
+                $this->secondments->map(fn ($s) => [
+                    'id'                => $s->id,
+                    'organization_name' => $s->organization_name,
+                    'role'              => $s->role,
+                    'start_date'        => $s->start_date?->toDateString(),
+                    'end_date'          => $s->end_date?->toDateString(),
+                    'notes'             => $s->notes,
+                ])
+            ),
 
             'created_at'              => $this->created_at?->toISOString(),
             'updated_at'              => $this->updated_at?->toISOString(),

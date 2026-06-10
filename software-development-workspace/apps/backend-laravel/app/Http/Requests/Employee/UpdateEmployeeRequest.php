@@ -80,6 +80,12 @@ class UpdateEmployeeRequest extends FormRequest
             'work_permit_number'   => ['nullable', 'string', 'max:50'],
             'work_permit_expiry'   => ['nullable', 'date'],
 
+            // Profile / career text fields
+            'professional_summary' => ['nullable', 'string', 'max:5000'],
+            'about_me'             => ['nullable', 'string', 'max:3000'],
+            'hobbies_interests'    => ['nullable', 'string', 'max:1000'],
+            'job_description'      => ['nullable', 'string', 'max:5000'],
+
             // Secondments
             'secondments'                    => ['nullable', 'array'],
             'secondments.*.org_id'           => ['required_with:secondments', 'integer', 'exists:organizations,id'],

@@ -20,6 +20,7 @@ class RosterShiftType extends Model
         'duration_minutes',
         'is_overnight',
         'is_active',
+        'color',
     ];
 
     protected $casts = [

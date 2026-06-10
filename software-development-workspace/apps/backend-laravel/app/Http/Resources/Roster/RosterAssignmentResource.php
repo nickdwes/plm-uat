@@ -29,6 +29,11 @@ class RosterAssignmentResource extends JsonResource
                     'end_time'         => $this->shiftType->end_time,
                     'duration_minutes' => $this->shiftType->duration_minutes,
                     'is_overnight'     => $this->shiftType->is_overnight,
+                    'color'            => $this->shiftType->color ?? '#3B82F6',
+                    'shift_group'      => $this->shiftType->shiftGroup ? [
+                        'id'   => $this->shiftType->shiftGroup->id,
+                        'name' => $this->shiftType->shiftGroup->name,
+                    ] : null,
                 ];
             }),
             'assignment_date' => $this->assignment_date?->toDateString(),

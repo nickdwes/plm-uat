@@ -76,7 +76,10 @@ class EmployeeService extends BaseService
         $secondments = $data['secondments'] ?? null;
         unset($data['secondments']);
 
-        $employee = Employee::withoutGlobalScope('organization')->findOrFail($id);
+        $orgId = app('current.organization_id');
+        $employee = Employee::when($orgId, fn($q) => $q->where('primary_organization_id', $orgId))
+            ->withoutGlobalScope('organization')
+            ->findOrFail($id);
         $employee->update($data);
 
         if ($secondments !== null) {
@@ -100,14 +103,19 @@ class EmployeeService extends BaseService
 
     public function get(int $id): Employee
     {
+        $orgId = app('current.organization_id');
         return Employee::with(['primaryOrganization', 'department', 'designation', 'jobGrade', 'manager'])
             ->withoutGlobalScope('organization')
+            ->when($orgId, fn($q) => $q->where('primary_organization_id', $orgId))
             ->findOrFail($id);
     }
 
     public function exit(int $id, string $dateExited, string $exitReason): Employee
     {
-        $employee = Employee::withoutGlobalScope('organization')->findOrFail($id);
+        $orgId = app('current.organization_id');
+        $employee = Employee::when($orgId, fn($q) => $q->where('primary_organization_id', $orgId))
+            ->withoutGlobalScope('organization')
+            ->findOrFail($id);
 
         $employee->update([
             'status'      => 'exited',

@@ -323,6 +323,7 @@ export interface Vacancy {
 export interface Candidate {
   id: number;
   first_name: string;
+  middle_name: string | null;
   last_name: string;
   full_name: string;
   email: string;
@@ -332,6 +333,8 @@ export interface Candidate {
   keywords: string[];
   source: string | null;
   notes: string | null;
+  is_archived: boolean;
+  archived_at: string | null;
   applications?: CandidateApplication[];
   created_at: string;
 }
@@ -511,13 +514,17 @@ export type Recommendation = 'hire' | 'hold' | 'reject';
 
 export interface InterviewPanelist {
   id: number;
-  employee_id: number;
+  employee_id: number | null;
   name: string;
   work_email: string | null;
+  external_email: string | null;
+  is_external: boolean;
   role: PanelistRole;
   invite_sent: boolean;
   invite_sent_at: string | null;
   confirmed: boolean;
+  scoring_url: string | null;
+  score_submitted: boolean;
 }
 
 export interface InterviewScore {
@@ -535,8 +542,10 @@ export interface InterviewScore {
   interests_goals: number | null;
   total: number | null;
   average_score: number | null;
-  strengths: string | null;
-  weaknesses: string | null;
+  criterion_comments: Record<string, string> | null;
+  technical_exercise_conducted: boolean | null;
+  technical_exercise_score: number | null;
+  technical_exercise_notes: string | null;
   remarks: string | null;
   recommendation: Recommendation | null;
   submitted: boolean;
@@ -557,6 +566,10 @@ export interface Interview {
   overall_notes: string | null;
   overall_score: number | null;
   recommendation: Recommendation | null;
+  teams_event_id: string | null;
+  teams_join_url: string | null;
+  candidate_invite_sent: boolean;
+  candidate_invite_sent_at: string | null;
   panelists: InterviewPanelist[];
   scores: InterviewScore[];
   created_at: string;
@@ -604,7 +617,27 @@ export interface ShiftType {
   net_minutes: number;
   is_overnight: boolean;
   is_active: boolean;
+  color: string;
   shift_group: { id: number; name: string } | null;
+  created_at: string;
+}
+
+export interface HandoverReport {
+  id: number;
+  schedule_id: number | null;
+  report_date: string;
+  shift_start: string | null;
+  shift_end: string | null;
+  shift_type: { id: number; name: string; color: string } | null;
+  outgoing_employee: { id: number; full_name: string } | null;
+  incoming_employee: { id: number; full_name: string } | null;
+  tasks_completed: string | null;
+  ongoing_issues: string | null;
+  tasks_pending: string | null;
+  equipment_notes: string | null;
+  general_notes: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: { id: number; full_name: string } | null;
   created_at: string;
 }
 
@@ -659,4 +692,400 @@ export interface ShiftSwapRequest {
   responded_at: string | null;
   approved_at: string | null;
   created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Training & Competency
+// ---------------------------------------------------------------------------
+
+export type TrainingType = 'course' | 'workshop' | 'certification' | 'exam_voucher' | 'subscription' | 'on_job' | 'mentoring' | 'conference';
+export type TrainingDelivery = 'in_person' | 'virtual' | 'e_learning' | 'blended' | 'self_study';
+export type TrainingStatus = 'enrolled' | 'in_progress' | 'completed' | 'expired' | 'withdrawn' | 'failed';
+export type TrainingAssignmentType = 'self_assigned' | 'mandatory' | 'manager_assigned' | 'approval_based';
+
+export interface TrainingItem {
+  id: number;
+  uuid: string;
+  title: string;
+  description: string | null;
+  type: TrainingType;
+  delivery: TrainingDelivery;
+  duration_hours: number;
+  duration_minutes: number;
+  is_long_course: boolean;
+  provider_name: string;
+  provider_url: string | null;
+  cost_currency: string;
+  estimated_cost: number;
+  tags: string[];
+  is_active: boolean;
+  is_featured: boolean;
+  requires_approval: boolean;
+  is_budgeted: boolean;
+  budget_amount: number | null;
+  max_enrollments: number | null;
+  thumbnail_url: string | null;
+  competencies?: CompetencyItem[];
+  training_records_count?: number;
+  created_at: string;
+}
+
+export interface CompetencyItem {
+  id: number;
+  uuid: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  proficiency_levels: { level: number; descriptor: string }[];
+  required_level?: number;
+  created_at: string;
+}
+
+export interface RoleCompetencyProfile {
+  id: number;
+  uuid: string;
+  job_title: string;
+  description: string | null;
+  department: { id: number; name: string } | null;
+  competencies?: (CompetencyItem & { required_level: number })[];
+  created_at: string;
+}
+
+export interface ProgressUpdate {
+  id: number;
+  progress_percent: number;
+  notes: string | null;
+  recorded_at: string;
+}
+
+export interface DailyCheckIn {
+  id: number;
+  check_in_date: string;
+  notes: string | null;
+  hours_spent: number;
+}
+
+export interface TrainingEvidenceFile {
+  id: number;
+  category: string | null;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  uploaded_by: number;
+  created_at: string;
+}
+
+export interface EmployeeTrainingRecord {
+  id: number;
+  uuid: string;
+  assignment_type: TrainingAssignmentType;
+  status: TrainingStatus;
+  progress_percent: number;
+  started_at: string | null;
+  completed_at: string | null;
+  due_date: string | null;
+  score: number | null;
+  is_priority: boolean;
+  priority_reason: string | null;
+  training_item: TrainingItem;
+  employee: { id: number; name: string; email?: string } | null;
+  evidence_files?: TrainingEvidenceFile[];
+  progress_updates?: ProgressUpdate[];
+  daily_check_ins?: DailyCheckIn[];
+  created_at: string;
+}
+
+export interface TrainingDashboardStats {
+  active_learners: number;
+  completions_this_month: number;
+  overdue: number;
+  priority_active: number;
+  completion_rate_percent: number;
+  catalog_total: number;
+  catalog_active: number;
+}
+
+// Phase 3: Training Assignment (Approval Workflow)
+export interface TrainingAssignment {
+  id: string;
+  organization_id: number;
+  training_item_id: string;
+  employee_id: number;
+  assigned_by_user_id: number;
+  manager_id: number | null;
+  status: 'pending' | 'approved' | 'rejected' | 'withdrawn';
+  rejection_reason: string | null;
+  approval_notes: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  withdrawn_at: string | null;
+  due_date: string | null;
+  assignment_type: 'mandatory' | 'recommended';
+  created_at: string;
+  updated_at: string;
+  training_item?: TrainingItem;
+  employee?: { id: number; first_name: string; last_name: string; email: string };
+  assigned_by_user?: { id: number; name: string; email: string };
+  manager?: { id: number; name: string; email: string };
+}
+
+// Phase 3: Notifications
+export interface Notification {
+  id: string;
+  organization_id: number;
+  user_id: number;
+  type: 'training_assigned' | 'training_approved' | 'training_rejected' | 'training_completed' | 'training_overdue' | string;
+  title: string;
+  message: string | null;
+  data: Record<string, any> | null;
+  notifiable_type: string | null;
+  notifiable_id: string | null;
+  read_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+
+// Phase 4: Vendor Partner Compliance
+export interface VendorRequirement {
+  training_item_id: number;
+  training_item_uuid: string;
+  title: string;
+  type: string;
+  required_headcount: number;
+  notes: string | null;
+}
+
+export interface VendorPartner {
+  id: number;
+  uuid: string;
+  name: string;
+  contact_email: string | null;
+  contact_phone: string | null;
+  website_url: string | null;
+  notes: string | null;
+  is_active: boolean;
+  requirements?: VendorRequirement[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorGap {
+  training_item_id: number;
+  training_item_uuid: string;
+  title: string;
+  type: string;
+  required_headcount: number;
+  actual_holders: number;
+  expiring_soon: number;
+  gap: number;
+  met: boolean;
+  notes: string | null;
+}
+
+export interface VendorComplianceStatus {
+  vendor: {
+    id: number;
+    uuid: string;
+    name: string;
+    contact_email: string | null;
+    website_url: string | null;
+    is_active: boolean;
+  };
+  status: 'compliant' | 'at_risk' | 'non_compliant';
+  certified_count: number;
+  required_count: number;
+  expiring_soon: number;
+  gaps: VendorGap[];
+}
+
+// ── Vendor Module (registration + lifecycle) ─────────────────────────────────
+export type VendorType = 'supplier' | 'service_provider' | 'contractor' | 'consultant' | 'distributor' | 'partner';
+export type VendorOnboardingStatus = 'draft' | 'pending_review' | 'approved' | 'rejected' | 'suspended';
+
+export interface Vendor {
+  id: number;
+  uuid: string;
+  vendor_number: string | null;
+  // Company
+  name: string;
+  registration_number: string | null;
+  tax_id: string | null;
+  vendor_type: VendorType;
+  category: string | null;
+  description: string | null;
+  // Contact
+  primary_contact_name: string | null;
+  primary_contact_designation: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  website_url: string | null;
+  logo_url: string | null;
+  // Address
+  physical_address: string | null;
+  city: string | null;
+  country: string | null;
+  // Partnership & fiscal
+  partnership_level: string | null;
+  fiscal_year_start_month: number | null;
+  renewal_anniversary_date: string | null;
+  renewal_cost: number | null;
+  renewal_cost_currency: string | null;
+  renewal_reminder_days: number | null;
+  // Status
+  is_active: boolean;
+  onboarding_status: VendorOnboardingStatus;
+  approved_at: string | null;
+  approved_by: number | null;
+  rejection_reason: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorMetrics {
+  total: number;
+  draft: number;
+  pending_review: number;
+  approved: number;
+  rejected: number;
+  suspended: number;
+}
+
+export type ProductType = 'product' | 'solution' | 'service' | 'platform';
+
+export interface VendorProduct {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  name: string;
+  sku: string | null;
+  product_type: ProductType;
+  technology_space: string;
+  technology_subcategory: string | null;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type IncentiveType = 'rebate' | 'nfr' | 'spiff' | 'mdf' | 'deal_registration' | 'co_op' | 'other';
+export type ValueType = 'percentage' | 'fixed' | 'per_unit' | 'variable';
+
+export interface VendorIncentive {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  name: string;
+  incentive_type: IncentiveType;
+  description: string | null;
+  value: number | null;
+  value_type: ValueType;
+  currency: string | null;
+  eligibility_criteria: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CertLevel = 'associate' | 'professional' | 'expert' | 'specialist' | 'practitioner' | 'foundation';
+
+export interface VendorCertification {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  training_item_id: number | null;
+  training_item: { id: number; title: string; type: string } | null;
+  name: string;
+  code: string | null;
+  level: CertLevel;
+  technology_space: string;
+  technology_subcategory: string | null;
+  description: string | null;
+  validity_months: number | null;
+  exam_cost_usd: number | null;
+  training_cost_usd: number | null;
+  prerequisites: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorPartnershipTier {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  tier_name: string;
+  tier_order: number;
+  revenue_target: number | null;
+  revenue_currency: string;
+  min_certifications: number | null;
+  min_headcount: number | null;
+  requirements: string | null;
+  benefits: string | null;
+  is_current: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PortalUserRole = 'admin' | 'user' | 'viewer';
+
+export interface VendorPortalUser {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  user_id: number | null;
+  display_name: string;
+  email: string;
+  role: PortalUserRole;
+  portal_url: string | null;
+  access_level: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CustomerType = 'enterprise' | 'sme' | 'government' | 'ngo' | 'education' | 'telco' | 'other';
+export type ProjectStatus = 'active' | 'completed' | 'on_hold' | 'cancelled' | 'pipeline';
+
+export interface VendorCustomer {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  name: string;
+  customer_type: CustomerType;
+  industry: string | null;
+  country: string;
+  contact_name: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
+  notes: string | null;
+  is_active: boolean;
+  projects_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorProject {
+  id: number;
+  uuid: string;
+  vendor_partner_id: number;
+  vendor_customer_id: number | null;
+  customer_name: string | null;
+  name: string;
+  project_code: string | null;
+  status: ProjectStatus;
+  technology_space: string | null;
+  technology_subcategory: string | null;
+  description: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  contract_value: number | null;
+  currency: string;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
 }

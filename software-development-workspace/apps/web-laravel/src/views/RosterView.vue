@@ -11,10 +11,11 @@ import type {
   RosterSchedule,
   RosterAssignment,
   ShiftSwapRequest,
+  HandoverReport,
 } from "../lib/types";
 
 // ── Tab state ─────────────────────────────────────────────────────────────
-type Tab = "schedule" | "shift-types" | "shift-groups" | "swaps" | "config";
+type Tab = "schedule" | "reports" | "handover" | "shift-types" | "shift-groups" | "swaps" | "config";
 const tab = ref<Tab>("schedule");
 
 function org() { return currentOrgSlug.value; }
@@ -113,7 +114,7 @@ const shiftTypesLoading= ref(false);
 const shiftTypesError  = ref("");
 const showShiftForm    = ref(false);
 const editingShiftId   = ref<number | null>(null);
-const shiftForm        = ref({ name: "", shift_group_id: "" as number | "", start_time: "", end_time: "", break_start: "", break_duration_minutes: 0, is_active: true });
+const shiftForm        = ref({ name: "", shift_group_id: "" as number | "", start_time: "", end_time: "", break_start: "", break_duration_minutes: 0, is_active: true, color: "#3B82F6" });
 const shiftSaving      = ref(false);
 const shiftFormError   = ref("");
 const shiftSearch      = ref("");
@@ -131,10 +132,11 @@ async function loadShiftTypes() {
 function openShiftForm(s?: ShiftType) {
   if (s) {
     editingShiftId.value = s.id;
-    shiftForm.value = { name: s.name, shift_group_id: s.shift_group?.id ?? "", start_time: s.start_time, end_time: s.end_time, break_start: s.break_start ?? "", break_duration_minutes: s.break_duration_minutes, is_active: s.is_active };
+    const toHHMM = (t: string) => t ? t.slice(0, 5) : "";
+    shiftForm.value = { name: s.name, shift_group_id: s.shift_group?.id ?? "", start_time: toHHMM(s.start_time), end_time: toHHMM(s.end_time), break_start: toHHMM(s.break_start ?? ""), break_duration_minutes: s.break_duration_minutes, is_active: s.is_active, color: s.color ?? "#3B82F6" };
   } else {
     editingShiftId.value = null;
-    shiftForm.value = { name: "", shift_group_id: "", start_time: "", end_time: "", break_start: "", break_duration_minutes: 0, is_active: true };
+    shiftForm.value = { name: "", shift_group_id: "", start_time: "", end_time: "", break_start: "", break_duration_minutes: 0, is_active: true, color: "#3B82F6" };
   }
   shiftFormError.value = ""; showShiftForm.value = true;
 }
@@ -175,28 +177,23 @@ const schedulesLoading = ref(false);
 const schedulesError   = ref("");
 const activeSchedule   = ref<RosterSchedule | null>(null);
 
-// New schedule form
 const showSchedForm    = ref(false);
 const schedForm        = ref({ name: "", start_date: "", end_date: "" });
 const schedSaving      = ref(false);
 const schedFormError   = ref("");
 
-// Assignment grid
 const assignments      = ref<RosterAssignment[]>([]);
 const assignLoading    = ref(false);
 const assignError      = ref("");
 
-// Employees list (for assignment)
 const employees        = ref<Employee[]>([]);
 const employeesLoaded  = ref(false);
 
-// Assignment modal
 const showAssignModal  = ref(false);
 const assignForm       = ref({ employee_id: "" as number | "", shift_type_id: "" as number | "", assignment_date: "", type: "shift" as "shift" | "day_off" | "leave", notes: "" });
 const assignSaving     = ref(false);
 const assignFormError  = ref("");
 
-// Week navigation
 const weekOffset = ref(0);
 
 const weekDates = computed<string[]>(() => {
@@ -223,7 +220,6 @@ const canNextWeek = computed(() => {
   return last < end;
 });
 
-// Build a lookup: employeeId → date → assignment
 const assignMap = computed<Record<number, Record<string, RosterAssignment>>>(() => {
   const map: Record<number, Record<string, RosterAssignment>> = {};
   for (const a of assignments.value) {
@@ -234,7 +230,7 @@ const assignMap = computed<Record<number, Record<string, RosterAssignment>>>(() 
   return map;
 });
 
-// Distinct employees that have at least one assignment in this schedule
+// Distinct employees sorted alpha
 const rosterEmployees = computed<{ id: number; full_name: string; employee_number: string }[]>(() => {
   const seen = new Set<number>();
   const list: { id: number; full_name: string; employee_number: string }[] = [];
@@ -246,6 +242,28 @@ const rosterEmployees = computed<{ id: number; full_name: string; employee_numbe
   return list.sort((a, b) => a.full_name.localeCompare(b.full_name));
 });
 
+// Group employees by their dominant shift group (for team header rows in grid)
+const rosterByGroup = computed(() => {
+  const empGroup = new Map<number, { id: number | null; name: string }>();
+  for (const a of assignments.value) {
+    if (!a.employee || empGroup.has(a.employee.id)) continue;
+    const sg = (a.shift_type as any)?.shift_group;
+    empGroup.set(a.employee.id, sg ? { id: sg.id, name: sg.name } : { id: null, name: "General" });
+  }
+  const teamMap = new Map<string, { name: string; employees: typeof rosterEmployees.value }>();
+  for (const emp of rosterEmployees.value) {
+    const g   = empGroup.get(emp.id) ?? { id: null, name: "General" };
+    const key = g.id !== null ? `g_${g.id}` : "general";
+    if (!teamMap.has(key)) teamMap.set(key, { name: g.name, employees: [] });
+    teamMap.get(key)!.employees.push(emp);
+  }
+  return Array.from(teamMap.values()).sort((a, b) => {
+    if (a.name === "General" && b.name !== "General") return 1;
+    if (b.name === "General" && a.name !== "General") return -1;
+    return a.name.localeCompare(b.name);
+  });
+});
+
 const totalShiftHoursForEmployee = computed(() => (empId: number): string => {
   let total = 0;
   for (const a of assignments.value) {
@@ -255,6 +273,50 @@ const totalShiftHoursForEmployee = computed(() => (empId: number): string => {
   }
   return fmtDuration(total);
 });
+
+// Shift types actually used in this schedule (for legend)
+const usedShiftTypes = computed(() => {
+  const map = new Map<number, { name: string; color: string }>();
+  for (const a of assignments.value) {
+    if (a.type === "shift" && a.shift_type && !map.has(a.shift_type.id)) {
+      map.set(a.shift_type.id, { name: a.shift_type.name, color: (a.shift_type as any).color ?? "#3B82F6" });
+    }
+  }
+  return Array.from(map.values());
+});
+
+// Cell styling helpers
+function cellBg(empId: number, date: string): Record<string, string> {
+  const a = assignMap.value[empId]?.[date];
+  if (!a) return {};
+  if (a.type === "day_off") return { background: "#FACC15", color: "#78350F" };
+  if (a.type === "leave")   return { background: "#9CA3AF", color: "#1F2937" };
+  const color = (a.shift_type as any)?.color ?? "#3B82F6";
+  return { background: color, color: contrastColor(color) };
+}
+
+function cellLabel(empId: number, date: string): string {
+  const a = assignMap.value[empId]?.[date];
+  if (!a) return "";
+  if (a.type === "day_off") return "OFF";
+  if (a.type === "leave")   return "LEAVE";
+  return a.shift_type?.name ?? "Shift";
+}
+
+function cellSubLabel(empId: number, date: string): string {
+  const a = assignMap.value[empId]?.[date];
+  if (!a || a.type !== "shift" || !a.shift_type) return "";
+  return `${a.shift_type.start_time}–${a.shift_type.end_time}`;
+}
+
+function contrastColor(hex: string): string {
+  try {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? "#1F2937" : "#FFFFFF";
+  } catch { return "#FFFFFF"; }
+}
 
 async function loadSchedules() {
   if (!org()) return;
@@ -344,16 +406,61 @@ function isToday(date: string): boolean {
   return date === new Date().toISOString().slice(0, 10);
 }
 
-function assignTypeColor(type: string): string {
-  if (type === "day_off") return "#E5E7EB";
-  if (type === "leave")   return "#FEF3C7";
-  return "#DBEAFE";
-}
-function assignTypeText(a: RosterAssignment): string {
-  if (a.type === "day_off") return "Off";
-  if (a.type === "leave")   return "Leave";
-  return a.shift_type ? `${a.shift_type.name} (${a.shift_type.start_time}–${a.shift_type.end_time})` : "Shift";
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// REPORTS
+// ─────────────────────────────────────────────────────────────────────────────
+type ReportSubTab = "coverage" | "my-schedule";
+const reportSubTab = ref<ReportSubTab>("coverage");
+
+// Coverage: per-date count of employees by assignment type/shift
+const coverageDates = computed(() => {
+  if (!activeSchedule.value) return [];
+  const start = new Date(activeSchedule.value.start_date + "T00:00:00");
+  const end   = new Date(activeSchedule.value.end_date   + "T00:00:00");
+  const dates: string[] = [];
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  return dates;
+});
+
+// Build coverage: date → { shiftTypeId → count, off → count, leave → count }
+const coverageMap = computed(() => {
+  const map: Record<string, Record<string, number>> = {};
+  for (const a of assignments.value) {
+    const date = a.assignment_date;
+    if (!map[date]) map[date] = {};
+    const key = a.type === "shift" && a.shift_type ? `st_${a.shift_type.id}` : a.type;
+    map[date][key] = (map[date][key] ?? 0) + 1;
+  }
+  return map;
+});
+
+// Unique shift types used across full schedule (for coverage table header)
+const coverageShiftTypes = computed(() => {
+  const map = new Map<number, { id: number; name: string; color: string }>();
+  for (const a of assignments.value) {
+    if (a.type === "shift" && a.shift_type && !map.has(a.shift_type.id)) {
+      map.set(a.shift_type.id, { id: a.shift_type.id, name: a.shift_type.name, color: (a.shift_type as any).color ?? "#3B82F6" });
+    }
+  }
+  return Array.from(map.values());
+});
+
+// Employee hours summary for reports
+const empHoursSummary = computed(() => {
+  const byEmp = new Map<number, { emp: typeof rosterEmployees.value[0]; shifts: number; offDays: number; leaveDays: number; totalMins: number }>();
+  for (const a of assignments.value) {
+    if (!a.employee) continue;
+    const id = a.employee.id;
+    if (!byEmp.has(id)) byEmp.set(id, { emp: a.employee, shifts: 0, offDays: 0, leaveDays: 0, totalMins: 0 });
+    const row = byEmp.get(id)!;
+    if (a.type === "shift")   { row.shifts++; row.totalMins += a.shift_type?.duration_minutes ?? 0; }
+    if (a.type === "day_off") row.offDays++;
+    if (a.type === "leave")   row.leaveDays++;
+  }
+  return Array.from(byEmp.values()).sort((a, b) => a.emp.full_name.localeCompare(b.emp.full_name));
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SWAP REQUESTS
@@ -387,6 +494,79 @@ function swapStatusBadge(s: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HANDOVER REPORTS
+// ─────────────────────────────────────────────────────────────────────────────
+const handovers        = ref<HandoverReport[]>([]);
+const handoversLoading = ref(false);
+const handoversError   = ref("");
+const showHandoverForm = ref(false);
+const handoverSaving   = ref(false);
+const handoverError    = ref("");
+const expandedHandover = ref<number | null>(null);
+
+const handoverForm = ref({
+  schedule_id:          null as number | null,
+  shift_type_id:        "" as number | "",
+  outgoing_employee_id: "" as number | "",
+  incoming_employee_id: "" as number | "",
+  report_date:          new Date().toISOString().slice(0, 10),
+  shift_start:          "",
+  shift_end:            "",
+  tasks_completed:      "",
+  ongoing_issues:       "",
+  tasks_pending:        "",
+  equipment_notes:      "",
+  general_notes:        "",
+});
+
+async function loadHandovers() {
+  if (!org()) return;
+  handoversLoading.value = true; handoversError.value = "";
+  try {
+    const params: Record<string, any> = { per_page: 30 };
+    if (activeSchedule.value) params.schedule_id = activeSchedule.value.id;
+    const res = await api<{ data: HandoverReport[] }>("GET", "/api/v1/roster/handovers", { org: org(), params });
+    handovers.value = res.data;
+  } catch (e) { handoversError.value = e instanceof Error ? e.message : "Failed to load handover reports."; }
+  finally { handoversLoading.value = false; }
+}
+
+function openHandoverForm() {
+  handoverForm.value.schedule_id = activeSchedule.value?.id ?? null;
+  handoverForm.value.report_date = new Date().toISOString().slice(0, 10);
+  handoverError.value = "";
+  showHandoverForm.value = true;
+  void loadEmployees();
+}
+
+async function saveHandover() {
+  handoverSaving.value = true; handoverError.value = "";
+  const body = {
+    ...handoverForm.value,
+    shift_type_id:        handoverForm.value.shift_type_id        || null,
+    outgoing_employee_id: handoverForm.value.outgoing_employee_id || null,
+    incoming_employee_id: handoverForm.value.incoming_employee_id || null,
+    shift_start:          handoverForm.value.shift_start || null,
+    shift_end:            handoverForm.value.shift_end   || null,
+  };
+  try {
+    const res = await api<{ data: HandoverReport }>("POST", "/api/v1/roster/handovers", { org: org(), body });
+    handovers.value.unshift((res as any).data);
+    showHandoverForm.value = false;
+  } catch (e) { handoverError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Failed to save."; }
+  finally { handoverSaving.value = false; }
+}
+
+async function acknowledgeHandover(id: number) {
+  if (!confirm("Acknowledge this handover report? This confirms you have received the shift briefing.")) return;
+  try {
+    const res = await api<{ data: HandoverReport }>("POST", `/api/v1/roster/handovers/${id}/acknowledge`, { org: org(), body: {} });
+    const idx = handovers.value.findIndex(h => h.id === id);
+    if (idx >= 0) handovers.value[idx] = (res as any).data;
+  } catch (e) { alert(e instanceof Error ? e.message : "Failed to acknowledge."); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 onMounted(() => {
@@ -405,10 +585,11 @@ watch(currentOrgSlug, () => {
 });
 
 watch(tab, (t) => {
-  if (t === "swaps")       void loadSwaps();
-  if (t === "shift-types") void loadShiftTypes();
-  if (t === "shift-groups")void loadGroups();
-  if (t === "config")      void loadConfig();
+  if (t === "swaps")        void loadSwaps();
+  if (t === "shift-types")  void loadShiftTypes();
+  if (t === "shift-groups") void loadGroups();
+  if (t === "config")       void loadConfig();
+  if (t === "handover")     void loadHandovers();
 });
 
 watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
@@ -427,19 +608,19 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
 
     <!-- ── Tabs ───────────────────────────────────────────────────────────── -->
     <div class="tab-bar">
-      <button :class="['tab-btn', { active: tab === 'schedule' }]"    @click="tab = 'schedule'">Schedule</button>
-      <button :class="['tab-btn', { active: tab === 'shift-types' }]" @click="tab = 'shift-types'">Shift Types</button>
-      <button :class="['tab-btn', { active: tab === 'shift-groups' }]"@click="tab = 'shift-groups'">Shift Groups</button>
-      <button :class="['tab-btn', { active: tab === 'swaps' }]"       @click="tab = 'swaps'">Swap Requests</button>
-      <button :class="['tab-btn', { active: tab === 'config' }]"       @click="tab = 'config'">Configuration</button>
+      <button :class="['tab-btn', { active: tab === 'schedule'     }]" @click="tab = 'schedule'">Schedule</button>
+      <button :class="['tab-btn', { active: tab === 'reports'      }]" @click="tab = 'reports'">Reports</button>
+      <button :class="['tab-btn', { active: tab === 'handover'     }]" @click="tab = 'handover'">Handover</button>
+      <button :class="['tab-btn', { active: tab === 'shift-types'  }]" @click="tab = 'shift-types'">Shift Types</button>
+      <button :class="['tab-btn', { active: tab === 'shift-groups' }]" @click="tab = 'shift-groups'">Shift Groups</button>
+      <button :class="['tab-btn', { active: tab === 'swaps'        }]" @click="tab = 'swaps'">Swap Requests</button>
+      <button :class="['tab-btn', { active: tab === 'config'       }]" @click="tab = 'config'">Configuration</button>
     </div>
 
     <!-- ══════════════════════════════════════════════════════════════════════
          TAB: SCHEDULE
     ═══════════════════════════════════════════════════════════════════════ -->
     <template v-if="tab === 'schedule'">
-
-      <!-- Schedule selector bar -->
       <div class="roster-toolbar">
         <div class="roster-schedule-list">
           <button
@@ -453,21 +634,16 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
           </button>
           <button class="btn btn-sm btn-outline" @click="showSchedForm = true">+ New Schedule</button>
         </div>
-
         <div v-if="activeSchedule" class="roster-actions">
-          <button
-            v-if="activeSchedule.status === 'draft'"
-            class="btn btn-sm btn-primary"
-            @click="publishSchedule"
-          >Publish</button>
+          <button v-if="activeSchedule.status === 'draft'" class="btn btn-sm btn-primary" @click="publishSchedule">Publish</button>
         </div>
       </div>
 
       <p v-if="schedulesLoading || assignLoading" class="status">Loading…</p>
       <p v-if="schedulesError || assignError" class="error">{{ schedulesError || assignError }}</p>
 
-      <!-- Grid -->
       <template v-if="activeSchedule && !assignLoading">
+        <!-- Week navigation -->
         <div class="roster-week-nav">
           <div>
             <strong>{{ activeSchedule.name }}</strong>
@@ -481,62 +657,75 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
           </div>
         </div>
 
+        <!-- ── Excel-style roster grid ─────────────────────────────────────── -->
         <div class="roster-grid-wrapper">
           <table class="roster-grid">
             <thead>
               <tr>
-                <th class="roster-emp-col">Employee</th>
-                <th class="roster-emp-col">Total Hours</th>
+                <th class="col-emp">Employee</th>
+                <th class="col-hrs">Total Hrs</th>
                 <th
                   v-for="date in weekDates"
                   :key="date"
-                  :class="['roster-day-col', { 'roster-today': isToday(date) }]"
+                  :class="['col-day', { 'col-today': isToday(date) }]"
                 >{{ dayLabel(date) }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="rosterEmployees.length === 0">
-                <td :colspan="weekDates.length + 2" style="text-align:center;padding:32px;color:var(--color-text-muted);">
+                <td :colspan="weekDates.length + 2" class="grid-empty">
                   No assignments yet. Click <strong>+ Assign Shift</strong> to get started.
                 </td>
               </tr>
-              <tr v-for="emp in rosterEmployees" :key="emp.id">
-                <td class="roster-emp-cell">
-                  <span class="emp-avatar">{{ emp.full_name[0] }}</span>
-                  <span>{{ emp.full_name }}</span>
-                </td>
-                <td class="roster-hours-cell">{{ totalShiftHoursForEmployee(emp.id) }}</td>
-                <td
-                  v-for="date in weekDates"
-                  :key="date"
-                  class="roster-slot"
-                  @click="() => { const a = assignMap[emp.id]?.[date]; if (!a) openAssignModal(date, emp.id); }"
-                >
-                  <template v-if="assignMap[emp.id]?.[date] as RosterAssignment | undefined">
-                    <div
-                      class="shift-chip"
-                      :style="{ background: assignTypeColor(assignMap[emp.id][date].type) }"
-                    >
-                      <span class="shift-chip-label">{{ assignTypeText(assignMap[emp.id][date]) }}</span>
-                      <button
-                        class="shift-chip-del"
-                        title="Remove"
-                        @click.stop="removeAssignment(assignMap[emp.id][date].id)"
-                      >×</button>
-                    </div>
-                  </template>
-                  <template v-else>
-                    <span class="roster-slot-empty" title="Click to assign">+</span>
-                  </template>
-                </td>
-              </tr>
+
+              <!-- Grouped by team/shift-group -->
+              <template v-for="team in rosterByGroup" :key="team.name">
+                <!-- Team header row -->
+                <tr v-if="rosterByGroup.length > 1" class="team-header-row">
+                  <td :colspan="weekDates.length + 2" class="team-header-cell">{{ team.name }}</td>
+                </tr>
+                <!-- Employee rows -->
+                <tr v-for="emp in team.employees" :key="emp.id" class="emp-row">
+                  <td class="cell-emp">
+                    <span class="emp-avatar">{{ emp.full_name[0] }}</span>
+                    <span class="emp-name">{{ emp.full_name }}</span>
+                  </td>
+                  <td class="cell-hrs">{{ totalShiftHoursForEmployee(emp.id) }}</td>
+                  <td
+                    v-for="date in weekDates"
+                    :key="date"
+                    class="cell-slot"
+                    :style="cellBg(emp.id, date)"
+                    @click="() => { const a = assignMap[emp.id]?.[date]; if (!a) openAssignModal(date, emp.id); }"
+                  >
+                    <template v-if="assignMap[emp.id]?.[date]">
+                      <div class="cell-inner">
+                        <span class="cell-main-label">{{ cellLabel(emp.id, date) }}</span>
+                        <span class="cell-sub-label" v-if="cellSubLabel(emp.id, date)">{{ cellSubLabel(emp.id, date) }}</span>
+                        <button
+                          v-if="activeSchedule.status === 'draft'"
+                          class="cell-del"
+                          @click.stop="removeAssignment(assignMap[emp.id][date].id)"
+                          title="Remove"
+                        >×</button>
+                      </div>
+                    </template>
+                    <span v-else class="cell-empty" title="Click to assign">+</span>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
 
-        <!-- Employees not yet on roster -->
-        <div v-if="rosterEmployees.length === 0" style="margin-top:16px;">
-          <p class="text-muted" style="font-size:13px;">You can also add employees via Bulk Assign in a future step.</p>
+        <!-- Shift type color legend -->
+        <div v-if="usedShiftTypes.length" class="shift-legend">
+          <span class="legend-label">Legend:</span>
+          <div class="legend-items">
+            <span v-for="st in usedShiftTypes" :key="st.name" class="legend-chip" :style="{ background: st.color, color: contrastColor(st.color) }">{{ st.name }}</span>
+            <span class="legend-chip" style="background:#FACC15;color:#78350F;">OFF</span>
+            <span class="legend-chip" style="background:#9CA3AF;color:#1F2937;">LEAVE</span>
+          </div>
         </div>
       </template>
 
@@ -547,32 +736,21 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
       <!-- New Schedule Modal -->
       <div v-if="showSchedForm" class="modal-overlay" @click.self="showSchedForm = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>New Schedule</h3>
-            <button class="modal-close" @click="showSchedForm = false">×</button>
-          </div>
+          <div class="modal-header"><h3>New Schedule</h3><button class="modal-close" @click="showSchedForm = false">×</button></div>
           <div class="modal-body">
             <p v-if="schedFormError" class="error">{{ schedFormError }}</p>
             <div class="form-group">
               <label>Schedule Name *</label>
-              <input v-model="schedForm.name" class="form-input" placeholder="e.g. Week 18 — ICU" />
+              <input v-model="schedForm.name" class="form-input" placeholder="e.g. June 2026 — SOC" />
             </div>
             <div class="form-row">
-              <div class="form-group">
-                <label>Start Date *</label>
-                <input v-model="schedForm.start_date" type="date" class="form-input" />
-              </div>
-              <div class="form-group">
-                <label>End Date *</label>
-                <input v-model="schedForm.end_date" type="date" class="form-input" />
-              </div>
+              <div class="form-group"><label>Start Date *</label><input v-model="schedForm.start_date" type="date" class="form-input" /></div>
+              <div class="form-group"><label>End Date *</label><input v-model="schedForm.end_date" type="date" class="form-input" /></div>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-outline" @click="showSchedForm = false">Cancel</button>
-            <button class="btn btn-primary" :disabled="schedSaving" @click="createSchedule">
-              {{ schedSaving ? "Saving…" : "Create Schedule" }}
-            </button>
+            <button class="btn btn-primary" :disabled="schedSaving" @click="createSchedule">{{ schedSaving ? "Saving…" : "Create Schedule" }}</button>
           </div>
         </div>
       </div>
@@ -580,10 +758,7 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
       <!-- Assign Shift Modal -->
       <div v-if="showAssignModal" class="modal-overlay" @click.self="showAssignModal = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>Assign Shift</h3>
-            <button class="modal-close" @click="showAssignModal = false">×</button>
-          </div>
+          <div class="modal-header"><h3>Assign Shift</h3><button class="modal-close" @click="showAssignModal = false">×</button></div>
           <div class="modal-body">
             <p v-if="assignFormError" class="error">{{ assignFormError }}</p>
             <div class="form-group">
@@ -609,7 +784,7 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
               <label>Shift Type</label>
               <select v-model="assignForm.shift_type_id" class="form-input">
                 <option value="">— No specific shift type —</option>
-                <option v-for="st in shiftTypes" :key="st.id" :value="st.id">
+                <option v-for="st in shiftTypes.filter(s => s.is_active)" :key="st.id" :value="st.id">
                   {{ st.name }} ({{ st.start_time }}–{{ st.end_time }})
                 </option>
               </select>
@@ -621,9 +796,273 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
           </div>
           <div class="modal-footer">
             <button class="btn btn-outline" @click="showAssignModal = false">Cancel</button>
-            <button class="btn btn-primary" :disabled="assignSaving" @click="saveAssignment">
-              {{ assignSaving ? "Saving…" : "Assign" }}
-            </button>
+            <button class="btn btn-primary" :disabled="assignSaving" @click="saveAssignment">{{ assignSaving ? "Saving…" : "Assign" }}</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         TAB: REPORTS
+    ═══════════════════════════════════════════════════════════════════════ -->
+    <template v-if="tab === 'reports'">
+      <div class="report-sub-tabs">
+        <button :class="['sub-tab-btn', { active: reportSubTab === 'coverage' }]"    @click="reportSubTab = 'coverage'">Coverage Summary</button>
+        <button :class="['sub-tab-btn', { active: reportSubTab === 'my-schedule' }]" @click="reportSubTab = 'my-schedule'">My Schedule</button>
+      </div>
+
+      <!-- No active schedule notice -->
+      <div v-if="!activeSchedule" class="report-empty">
+        <p>Select a schedule on the Schedule tab first.</p>
+      </div>
+
+      <!-- ── Coverage Summary ─────────────────────────────────────────────── -->
+      <template v-if="activeSchedule && reportSubTab === 'coverage'">
+        <!-- Daily coverage table -->
+        <div class="report-section">
+          <h3 class="report-section-title">Daily Coverage — {{ activeSchedule.name }}</h3>
+          <div class="table-wrapper">
+            <table class="data-table coverage-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th v-for="st in coverageShiftTypes" :key="st.id">
+                    <span class="cov-type-badge" :style="{ background: st.color, color: contrastColor(st.color) }">{{ st.name }}</span>
+                  </th>
+                  <th><span class="cov-type-badge" style="background:#FACC15;color:#78350F;">OFF</span></th>
+                  <th><span class="cov-type-badge" style="background:#9CA3AF;color:#1F2937;">LEAVE</span></th>
+                  <th>Total Staff</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="date in coverageDates" :key="date" :class="{ 'row-today': isToday(date) }">
+                  <td>
+                    <strong>{{ new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) }}</strong>
+                  </td>
+                  <td v-for="st in coverageShiftTypes" :key="st.id" class="cov-count-cell">
+                    <span v-if="coverageMap[date]?.[`st_${st.id}`]" class="cov-count" :style="{ background: st.color + '22', color: st.color }">
+                      {{ coverageMap[date][`st_${st.id}`] }}
+                    </span>
+                    <span v-else class="cov-zero">—</span>
+                  </td>
+                  <td class="cov-count-cell">
+                    <span v-if="coverageMap[date]?.day_off" class="cov-count" style="background:#fef9c3;color:#78350F;">{{ coverageMap[date].day_off }}</span>
+                    <span v-else class="cov-zero">—</span>
+                  </td>
+                  <td class="cov-count-cell">
+                    <span v-if="coverageMap[date]?.leave" class="cov-count" style="background:#f3f4f6;color:#374151;">{{ coverageMap[date].leave }}</span>
+                    <span v-else class="cov-zero">—</span>
+                  </td>
+                  <td class="cov-count-cell">
+                    <strong>{{ Object.values(coverageMap[date] ?? {}).reduce((s, v) => s + v, 0) }}</strong>
+                  </td>
+                </tr>
+                <tr v-if="coverageDates.length === 0">
+                  <td :colspan="coverageShiftTypes.length + 4" class="empty-row">No dates in range.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Employee hours summary -->
+        <div class="report-section" style="margin-top:24px;">
+          <h3 class="report-section-title">Employee Hours Summary</h3>
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr><th>Employee</th><th>Shift Days</th><th>Day-Off Days</th><th>Leave Days</th><th>Total Shift Hours</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in empHoursSummary" :key="row.emp.id">
+                  <td><strong>{{ row.emp.full_name }}</strong></td>
+                  <td>{{ row.shifts }}</td>
+                  <td>{{ row.offDays }}</td>
+                  <td>{{ row.leaveDays }}</td>
+                  <td><strong>{{ fmtDuration(row.totalMins) }}</strong></td>
+                </tr>
+                <tr v-if="empHoursSummary.length === 0">
+                  <td colspan="5" class="empty-row">No assignments in this schedule.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── My Schedule ──────────────────────────────────────────────────── -->
+      <template v-if="activeSchedule && reportSubTab === 'my-schedule'">
+        <div class="report-section">
+          <h3 class="report-section-title">My Assignments — {{ activeSchedule.name }}</h3>
+          <div class="my-schedule-grid">
+            <div
+              v-for="a in assignments"
+              :key="a.id"
+              class="my-sched-card"
+              :style="a.type === 'shift' && a.shift_type ? { borderLeftColor: (a.shift_type as any).color ?? '#3B82F6' } : a.type === 'day_off' ? { borderLeftColor: '#FACC15' } : { borderLeftColor: '#9CA3AF' }"
+            >
+              <div class="my-sched-date">{{ new Date(a.assignment_date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) }}</div>
+              <div class="my-sched-type"
+                :style="a.type === 'shift' && a.shift_type ? { color: (a.shift_type as any).color ?? '#3B82F6' } : {}"
+              >
+                {{ a.type === 'day_off' ? 'Day Off' : a.type === 'leave' ? 'Leave' : a.shift_type?.name ?? 'Shift' }}
+              </div>
+              <div v-if="a.type === 'shift' && a.shift_type" class="my-sched-time">
+                {{ a.shift_type.start_time }} — {{ a.shift_type.end_time }}
+                <span v-if="a.shift_type.is_overnight" class="overnight-badge">Overnight</span>
+              </div>
+              <div v-if="a.notes" class="my-sched-note">{{ a.notes }}</div>
+            </div>
+            <div v-if="assignments.length === 0" class="report-empty">No assignments found.</div>
+          </div>
+        </div>
+      </template>
+    </template>
+
+    <!-- ══════════════════════════════════════════════════════════════════════
+         TAB: HANDOVER
+    ═══════════════════════════════════════════════════════════════════════ -->
+    <template v-if="tab === 'handover'">
+      <div class="section-toolbar">
+        <div>
+          <h3 style="margin:0;font-size:15px;font-weight:600;">Shift Handover Reports</h3>
+          <p class="text-muted" style="font-size:12px;margin:2px 0 0;">Document ongoing issues, tasks, and briefings at shift changeover.</p>
+        </div>
+        <button class="btn btn-primary" @click="openHandoverForm">+ New Handover Report</button>
+      </div>
+
+      <p v-if="handoversLoading" class="status">Loading…</p>
+      <p v-if="handoversError" class="error">{{ handoversError }}</p>
+
+      <!-- Create form -->
+      <div v-if="showHandoverForm" class="handover-form-card">
+        <div class="handover-form-header">
+          <h4>New Handover Report</h4>
+          <button class="modal-close" @click="showHandoverForm = false">×</button>
+        </div>
+        <p v-if="handoverError" class="error">{{ handoverError }}</p>
+
+        <div class="handover-form-grid">
+          <div class="form-group">
+            <label>Report Date *</label>
+            <input v-model="handoverForm.report_date" type="date" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>Shift Type</label>
+            <select v-model="handoverForm.shift_type_id" class="form-input">
+              <option value="">— Select shift —</option>
+              <option v-for="st in shiftTypes.filter(s => s.is_active)" :key="st.id" :value="st.id">{{ st.name }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Outgoing Employee *</label>
+            <select v-model="handoverForm.outgoing_employee_id" class="form-input">
+              <option value="">— Select —</option>
+              <option v-for="e in employees" :key="e.id" :value="e.id">{{ e.full_name }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Incoming Employee</label>
+            <select v-model="handoverForm.incoming_employee_id" class="form-input">
+              <option value="">— Select —</option>
+              <option v-for="e in employees" :key="e.id" :value="e.id">{{ e.full_name }}</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Shift Start</label>
+            <input v-model="handoverForm.shift_start" type="time" class="form-input" />
+          </div>
+          <div class="form-group">
+            <label>Shift End</label>
+            <input v-model="handoverForm.shift_end" type="time" class="form-input" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Tasks Completed</label>
+          <textarea v-model="handoverForm.tasks_completed" class="form-input" rows="3" placeholder="What was completed during this shift…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Ongoing Issues / Incidents</label>
+          <textarea v-model="handoverForm.ongoing_issues" class="form-input" rows="3" placeholder="Open issues, alerts, or incidents that need attention…"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Pending Tasks</label>
+          <textarea v-model="handoverForm.tasks_pending" class="form-input" rows="2" placeholder="Tasks that still need to be completed…"></textarea>
+        </div>
+        <div class="handover-form-grid">
+          <div class="form-group">
+            <label>Equipment / Systems Notes</label>
+            <textarea v-model="handoverForm.equipment_notes" class="form-input" rows="2" placeholder="Any equipment or system status notes…"></textarea>
+          </div>
+          <div class="form-group">
+            <label>General Notes</label>
+            <textarea v-model="handoverForm.general_notes" class="form-input" rows="2" placeholder="Any other information for incoming staff…"></textarea>
+          </div>
+        </div>
+
+        <div class="handover-form-footer">
+          <button class="btn btn-outline" @click="showHandoverForm = false">Cancel</button>
+          <button class="btn btn-primary" :disabled="handoverSaving || !handoverForm.outgoing_employee_id || !handoverForm.report_date" @click="saveHandover">
+            {{ handoverSaving ? "Saving…" : "Submit Handover Report" }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Handover list -->
+      <div class="handover-list">
+        <div v-if="handovers.length === 0 && !handoversLoading && !showHandoverForm" class="report-empty">
+          No handover reports yet.
+        </div>
+
+        <div v-for="h in handovers" :key="h.id" class="handover-card">
+          <div class="handover-card-header" @click="expandedHandover = expandedHandover === h.id ? null : h.id">
+            <div class="handover-meta">
+              <span class="handover-date">{{ new Date(h.report_date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }) }}</span>
+              <span v-if="h.shift_type" class="handover-shift-badge" :style="{ background: h.shift_type.color + '22', color: h.shift_type.color, border: `1px solid ${h.shift_type.color}44` }">{{ h.shift_type.name }}</span>
+              <span class="handover-people">
+                <strong>{{ h.outgoing_employee?.full_name ?? '—' }}</strong>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+                <span>{{ h.incoming_employee?.full_name ?? 'No incoming assigned' }}</span>
+              </span>
+              <span v-if="h.shift_start && h.shift_end" class="text-muted" style="font-size:11px;">{{ h.shift_start }} – {{ h.shift_end }}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span v-if="h.acknowledged_at" class="badge badge-green" style="font-size:10px;">Acknowledged</span>
+              <span v-else class="badge badge-yellow" style="font-size:10px;">Pending acknowledgment</span>
+              <button v-if="!h.acknowledged_at" class="btn btn-sm btn-outline" @click.stop="acknowledgeHandover(h.id)">Acknowledge</button>
+              <span class="expand-icon" :style="{ transform: expandedHandover === h.id ? 'rotate(90deg)' : '' }">›</span>
+            </div>
+          </div>
+
+          <!-- Expanded detail -->
+          <div v-if="expandedHandover === h.id" class="handover-detail">
+            <div class="handover-detail-grid">
+              <div v-if="h.tasks_completed" class="handover-field">
+                <div class="handover-field-label">Tasks Completed</div>
+                <div class="handover-field-body">{{ h.tasks_completed }}</div>
+              </div>
+              <div v-if="h.ongoing_issues" class="handover-field handover-field-issues">
+                <div class="handover-field-label">Ongoing Issues</div>
+                <div class="handover-field-body">{{ h.ongoing_issues }}</div>
+              </div>
+              <div v-if="h.tasks_pending" class="handover-field">
+                <div class="handover-field-label">Pending Tasks</div>
+                <div class="handover-field-body">{{ h.tasks_pending }}</div>
+              </div>
+              <div v-if="h.equipment_notes" class="handover-field">
+                <div class="handover-field-label">Equipment / Systems</div>
+                <div class="handover-field-body">{{ h.equipment_notes }}</div>
+              </div>
+              <div v-if="h.general_notes" class="handover-field" style="grid-column:1/-1">
+                <div class="handover-field-label">General Notes</div>
+                <div class="handover-field-body">{{ h.general_notes }}</div>
+              </div>
+            </div>
+            <div v-if="h.acknowledged_at" class="handover-ack-notice">
+              ✓ Acknowledged by {{ h.acknowledged_by?.full_name ?? 'unknown' }} at {{ new Date(h.acknowledged_at).toLocaleString('en-GB') }}
+            </div>
+            <div class="handover-submitted">Submitted {{ new Date(h.created_at).toLocaleString('en-GB') }}</div>
           </div>
         </div>
       </div>
@@ -648,22 +1087,14 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
         <table class="data-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Group</th>
-              <th>Start</th>
-              <th>End</th>
-              <th>Duration</th>
-              <th>Break</th>
-              <th>Overnight</th>
-              <th>Status</th>
-              <th></th>
+              <th>Color</th><th>Name</th><th>Group</th><th>Start</th><th>End</th>
+              <th>Duration</th><th>Break</th><th>Overnight</th><th>Status</th><th></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-if="shiftTypes.length === 0">
-              <td colspan="9" class="empty-row">No shift types configured yet.</td>
-            </tr>
+            <tr v-if="shiftTypes.length === 0"><td colspan="10" class="empty-row">No shift types configured yet.</td></tr>
             <tr v-for="st in shiftTypes" :key="st.id">
+              <td><span class="color-swatch" :style="{ background: st.color ?? '#3B82F6' }"></span></td>
               <td><strong>{{ st.name }}</strong></td>
               <td>{{ st.shift_group?.name ?? '—' }}</td>
               <td>{{ st.start_time }}</td>
@@ -683,16 +1114,25 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
 
       <!-- Shift Type Form Modal -->
       <div v-if="showShiftForm" class="modal-overlay" @click.self="showShiftForm = false">
-        <div class="modal">
+        <div class="modal modal-lg">
           <div class="modal-header">
             <h3>{{ editingShiftId ? 'Edit Shift Type' : 'Add Shift Type' }}</h3>
             <button class="modal-close" @click="showShiftForm = false">×</button>
           </div>
           <div class="modal-body">
             <p v-if="shiftFormError" class="error">{{ shiftFormError }}</p>
-            <div class="form-group">
-              <label>Shift Name *</label>
-              <input v-model="shiftForm.name" class="form-input" placeholder="e.g. Morning Shift" />
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label>Shift Name *</label>
+                <input v-model="shiftForm.name" class="form-input" placeholder="e.g. SOC Night" />
+              </div>
+              <div class="form-group" style="flex:0 0 auto">
+                <label>Color</label>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <input v-model="shiftForm.color" type="color" style="width:44px;height:36px;border:1px solid #e2e8f0;border-radius:6px;padding:2px;cursor:pointer;" />
+                  <code style="font-size:11px;color:#64748b;">{{ shiftForm.color }}</code>
+                </div>
+              </div>
             </div>
             <div class="form-group">
               <label>Shift Group</label>
@@ -702,37 +1142,20 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
               </select>
             </div>
             <div class="form-row">
-              <div class="form-group">
-                <label>Start Time *</label>
-                <input v-model="shiftForm.start_time" type="time" class="form-input" />
-              </div>
-              <div class="form-group">
-                <label>End Time *</label>
-                <input v-model="shiftForm.end_time" type="time" class="form-input" />
-              </div>
+              <div class="form-group"><label>Start Time *</label><input v-model="shiftForm.start_time" type="time" class="form-input" /></div>
+              <div class="form-group"><label>End Time *</label><input v-model="shiftForm.end_time" type="time" class="form-input" /></div>
             </div>
             <div class="form-row">
-              <div class="form-group">
-                <label>Break Start</label>
-                <input v-model="shiftForm.break_start" type="time" class="form-input" />
-              </div>
-              <div class="form-group">
-                <label>Break Duration (minutes)</label>
-                <input v-model.number="shiftForm.break_duration_minutes" type="number" min="0" max="480" class="form-input" />
-              </div>
+              <div class="form-group"><label>Break Start</label><input v-model="shiftForm.break_start" type="time" class="form-input" /></div>
+              <div class="form-group"><label>Break Duration (min)</label><input v-model.number="shiftForm.break_duration_minutes" type="number" min="0" max="480" class="form-input" /></div>
             </div>
             <div class="form-group">
-              <label class="checkbox-label">
-                <input v-model="shiftForm.is_active" type="checkbox" />
-                Active
-              </label>
+              <label class="checkbox-label"><input v-model="shiftForm.is_active" type="checkbox" /> Active</label>
             </div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-outline" @click="showShiftForm = false">Cancel</button>
-            <button class="btn btn-primary" :disabled="shiftSaving" @click="saveShift">
-              {{ shiftSaving ? "Saving…" : "Save" }}
-            </button>
+            <button class="btn btn-primary" :disabled="shiftSaving" @click="saveShift">{{ shiftSaving ? "Saving…" : "Save" }}</button>
           </div>
         </div>
       </div>
@@ -746,55 +1169,36 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
         <span></span>
         <button class="btn btn-primary" @click="openGroupForm()">+ Add Shift Group</button>
       </div>
-
       <p v-if="groupsLoading" class="status">Loading…</p>
       <p v-if="groupsError" class="error">{{ groupsError }}</p>
-
       <div class="table-wrapper" v-if="!groupsLoading">
         <table class="data-table">
-          <thead>
-            <tr><th>Name</th><th>Description</th><th>Created</th><th></th></tr>
-          </thead>
+          <thead><tr><th>Name</th><th>Description</th><th>Created</th><th></th></tr></thead>
           <tbody>
-            <tr v-if="groups.length === 0">
-              <td colspan="4" class="empty-row">No shift groups yet.</td>
-            </tr>
+            <tr v-if="groups.length === 0"><td colspan="4" class="empty-row">No shift groups yet.</td></tr>
             <tr v-for="g in groups" :key="g.id">
               <td><strong>{{ g.name }}</strong></td>
               <td>{{ g.description ?? '—' }}</td>
               <td>{{ new Date(g.created_at).toLocaleDateString() }}</td>
               <td class="actions-cell">
-                <button class="btn-icon" title="Edit" @click="openGroupForm(g)">✏️</button>
-                <button class="btn-icon" title="Delete" @click="deleteGroup(g.id)">🗑️</button>
+                <button class="btn-icon" @click="openGroupForm(g)">✏️</button>
+                <button class="btn-icon" @click="deleteGroup(g.id)">🗑️</button>
               </td>
             </tr>
           </tbody>
         </table>
       </div>
-
-      <!-- Shift Group Modal -->
       <div v-if="showGroupForm" class="modal-overlay" @click.self="showGroupForm = false">
         <div class="modal">
-          <div class="modal-header">
-            <h3>{{ editingGroupId ? 'Edit Shift Group' : 'Add Shift Group' }}</h3>
-            <button class="modal-close" @click="showGroupForm = false">×</button>
-          </div>
+          <div class="modal-header"><h3>{{ editingGroupId ? 'Edit' : 'Add' }} Shift Group</h3><button class="modal-close" @click="showGroupForm = false">×</button></div>
           <div class="modal-body">
             <p v-if="groupFormError" class="error">{{ groupFormError }}</p>
-            <div class="form-group">
-              <label>Group Name *</label>
-              <input v-model="groupForm.name" class="form-input" placeholder="e.g. Clinical, Operations" />
-            </div>
-            <div class="form-group">
-              <label>Description</label>
-              <textarea v-model="groupForm.description" class="form-input" rows="2"></textarea>
-            </div>
+            <div class="form-group"><label>Group Name *</label><input v-model="groupForm.name" class="form-input" placeholder="e.g. Team 1, SOC Team" /></div>
+            <div class="form-group"><label>Description</label><textarea v-model="groupForm.description" class="form-input" rows="2"></textarea></div>
           </div>
           <div class="modal-footer">
             <button class="btn btn-outline" @click="showGroupForm = false">Cancel</button>
-            <button class="btn btn-primary" :disabled="groupSaving" @click="saveGroup">
-              {{ groupSaving ? "Saving…" : "Save" }}
-            </button>
+            <button class="btn btn-primary" :disabled="groupSaving" @click="saveGroup">{{ groupSaving ? "Saving…" : "Save" }}</button>
           </div>
         </div>
       </div>
@@ -814,50 +1218,28 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
           <option value="cancelled">Cancelled</option>
         </select>
       </div>
-
       <p v-if="swapsLoading" class="status">Loading…</p>
       <p v-if="swapsError" class="error">{{ swapsError }}</p>
-
       <div class="table-wrapper" v-if="!swapsLoading">
         <table class="data-table">
-          <thead>
-            <tr>
-              <th>Requester</th>
-              <th>Their Shift</th>
-              <th>Co-worker</th>
-              <th>Co-worker's Shift</th>
-              <th>Status</th>
-              <th>Requested</th>
-              <th></th>
-            </tr>
-          </thead>
+          <thead><tr><th>Requester</th><th>Their Shift</th><th>Co-worker</th><th>Co-worker's Shift</th><th>Status</th><th>Requested</th><th></th></tr></thead>
           <tbody>
-            <tr v-if="swaps.length === 0">
-              <td colspan="7" class="empty-row">No swap requests.</td>
-            </tr>
+            <tr v-if="swaps.length === 0"><td colspan="7" class="empty-row">No swap requests.</td></tr>
             <tr v-for="sw in swaps" :key="sw.id">
               <td>{{ sw.requester?.full_name ?? '—' }}</td>
               <td>
-                <span v-if="sw.requester_assignment">
-                  {{ sw.requester_assignment.shift_name ?? 'Shift' }} · {{ sw.requester_assignment.assignment_date }}
-                </span>
+                <span v-if="sw.requester_assignment">{{ sw.requester_assignment.shift_name ?? 'Shift' }} · {{ sw.requester_assignment.assignment_date }}</span>
                 <span v-else>—</span>
               </td>
               <td>{{ sw.requested_employee?.full_name ?? '—' }}</td>
               <td>
-                <span v-if="sw.requested_assignment">
-                  {{ sw.requested_assignment.shift_name ?? 'Shift' }} · {{ sw.requested_assignment.assignment_date }}
-                </span>
+                <span v-if="sw.requested_assignment">{{ sw.requested_assignment.shift_name ?? 'Shift' }} · {{ sw.requested_assignment.assignment_date }}</span>
                 <span v-else>—</span>
               </td>
               <td><span :class="['badge', swapStatusBadge(sw.status)]">{{ sw.status }}</span></td>
               <td>{{ new Date(sw.created_at).toLocaleDateString() }}</td>
               <td class="actions-cell">
-                <button
-                  v-if="sw.status === 'accepted'"
-                  class="btn btn-sm btn-primary"
-                  @click="approveSwap(sw.id)"
-                >Approve</button>
+                <button v-if="sw.status === 'accepted'" class="btn btn-sm btn-primary" @click="approveSwap(sw.id)">Approve</button>
               </td>
             </tr>
           </tbody>
@@ -871,11 +1253,9 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
     <template v-if="tab === 'config'">
       <div class="config-card">
         <h3 class="config-section-title">General Configuration</h3>
-
         <p v-if="configLoading" class="status">Loading…</p>
         <p v-if="configError"   class="error">{{ configError }}</p>
         <p v-if="configSuccess" class="success">{{ configSuccess }}</p>
-
         <template v-if="!configLoading">
           <div class="form-group" style="max-width:400px;">
             <label>Primary Detail Shown with Employee Name</label>
@@ -885,7 +1265,6 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
               <option value="allocated_hours">Allocated Hours (includes leave)</option>
             </select>
           </div>
-
           <div class="config-toggle-group">
             <div class="config-toggle-row">
               <div>
@@ -897,7 +1276,6 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
                 <span class="toggle-track"><span class="toggle-thumb"></span></span>
               </label>
             </div>
-
             <div class="config-toggle-row">
               <div>
                 <p class="toggle-label">Manager Approval for Shift Swaps</p>
@@ -909,11 +1287,8 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
               </label>
             </div>
           </div>
-
           <div style="margin-top:24px;">
-            <button class="btn btn-primary" :disabled="configSaving" @click="saveConfig">
-              {{ configSaving ? "Saving…" : "Save Configuration" }}
-            </button>
+            <button class="btn btn-primary" :disabled="configSaving" @click="saveConfig">{{ configSaving ? "Saving…" : "Save Configuration" }}</button>
           </div>
         </template>
       </div>
@@ -923,232 +1298,228 @@ watch(swapFilter, () => { if (tab.value === "swaps") void loadSwaps(); });
 
 <style scoped>
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
-.tab-bar {
-  display: flex;
-  gap: 4px;
-  border-bottom: 2px solid var(--color-border);
-  margin-bottom: 24px;
-}
-.tab-btn {
-  padding: 8px 16px;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--color-text-muted);
-  border-bottom: 2px solid transparent;
-  margin-bottom: -2px;
-  transition: color 0.15s, border-color 0.15s;
-}
-.tab-btn:hover { color: var(--color-text); }
-.tab-btn.active { color: var(--color-brand-base); border-bottom-color: var(--color-brand-base); }
+.tab-bar { display:flex; gap:4px; border-bottom:2px solid var(--color-border); margin-bottom:24px; overflow-x:auto; }
+.tab-btn { padding:8px 16px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:var(--color-text-muted); border-bottom:2px solid transparent; margin-bottom:-2px; transition:color 0.15s,border-color 0.15s; white-space:nowrap; }
+.tab-btn:hover { color:var(--color-text); }
+.tab-btn.active { color:var(--color-brand-base); border-bottom-color:var(--color-brand-base); }
+
+/* ── Sub tabs (inside Reports) ─────────────────────────────────────────── */
+.report-sub-tabs { display:flex; gap:0; margin-bottom:20px; border-bottom:2px solid var(--color-border); }
+.sub-tab-btn { padding:7px 18px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:var(--color-text-muted); border-bottom:2px solid transparent; margin-bottom:-2px; transition:color 0.15s; }
+.sub-tab-btn:hover { color:var(--color-text); }
+.sub-tab-btn.active { color:var(--color-brand-base); border-bottom-color:var(--color-brand-base); }
 
 /* ── Toolbar ───────────────────────────────────────────────────────────── */
-.roster-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-.roster-schedule-list {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.schedule-pill {
-  padding: 4px 12px;
-  border-radius: 20px;
-  border: 1px solid var(--color-border);
-  background: var(--color-surface);
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--color-text-muted);
-  transition: all 0.15s;
-  display: flex;
-  align-items: center;
-}
-.schedule-pill:hover { background: var(--color-neutral-100); }
-.schedule-pill.active { border-color: var(--color-brand-base); color: var(--color-brand-base); background: var(--color-brand-light); }
-
-.section-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
+.roster-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
+.roster-schedule-list { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.schedule-pill { padding:4px 12px; border-radius:20px; border:1px solid var(--color-border); background:var(--color-surface); cursor:pointer; font-size:13px; color:var(--color-text-muted); transition:all 0.15s; display:flex; align-items:center; }
+.schedule-pill:hover { background:var(--color-neutral-100); }
+.schedule-pill.active { border-color:var(--color-brand-base); color:var(--color-brand-base); background:var(--color-brand-light); }
+.section-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
 
 /* ── Roster week nav ───────────────────────────────────────────────────── */
-.roster-week-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
-}
+.roster-week-nav { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px; }
 
-/* ── Roster Grid ───────────────────────────────────────────────────────── */
-.roster-grid-wrapper {
-  overflow-x: auto;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-}
-.roster-grid {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--color-surface);
-  min-width: 800px;
-}
-.roster-grid thead tr {
-  background: var(--color-neutral-100);
-}
-.roster-grid th, .roster-grid td {
-  padding: 8px 10px;
-  border: 1px solid var(--color-border);
-  font-size: 12px;
-}
-.roster-grid th { font-weight: 600; text-align: center; }
-.roster-emp-col { min-width: 160px; text-align: left !important; }
-.roster-hours-cell { text-align: center; font-size: 12px; color: var(--color-text-muted); }
-.roster-day-col { min-width: 130px; }
-.roster-today { background: var(--color-brand-light) !important; }
-.roster-emp-cell {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 500;
-}
-.emp-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--color-brand-subtle);
-  color: var(--color-brand-base);
+/* ── Excel-style Roster Grid ───────────────────────────────────────────── */
+.roster-grid-wrapper { overflow-x:auto; border:1px solid var(--color-border); border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.roster-grid { width:100%; border-collapse:collapse; background:var(--color-surface); min-width:700px; }
+.roster-grid thead tr { background:#1e293b; }
+.roster-grid th { padding:10px 8px; font-size:11px; font-weight:700; text-align:center; color:#f1f5f9; letter-spacing:0.04em; text-transform:uppercase; border-right:1px solid rgba(255,255,255,.08); }
+.col-emp { min-width:160px; text-align:left !important; }
+.col-hrs { min-width:80px; }
+.col-day { min-width:110px; }
+.col-today { background:#003a75 !important; }
+
+/* Team header row */
+.team-header-row { }
+.team-header-cell { background:#334155; color:#94a3b8; font-size:10px; font-weight:700; letter-spacing:0.08em; text-transform:uppercase; padding:5px 12px; border-top:2px solid #475569; }
+
+/* Employee rows */
+.emp-row { transition:background 0.1s; }
+.emp-row:hover { background:#f8fafc; }
+.cell-emp { display:flex; align-items:center; gap:8px; padding:8px 10px; border-right:1px solid var(--color-border); border-bottom:1px solid #f1f5f9; }
+.emp-avatar { width:26px; height:26px; border-radius:50%; background:var(--color-brand-subtle); color:var(--color-brand-base); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; }
+.emp-name { font-size:12px; font-weight:600; color:#1e293b; white-space:nowrap; }
+.cell-hrs { text-align:center; font-size:11px; color:var(--color-text-muted); font-weight:600; padding:8px; border-right:1px solid var(--color-border); border-bottom:1px solid #f1f5f9; }
+
+/* Slot cells – colored full background */
+.cell-slot { text-align:center; cursor:pointer; vertical-align:middle; height:52px; padding:0; border:1px solid rgba(0,0,0,.06); transition:opacity 0.1s; }
+.cell-slot:hover { opacity:0.88; }
+.cell-inner { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; padding:4px 2px; position:relative; gap:1px; }
+.cell-main-label { font-size:11px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; line-height:1.2; }
+.cell-sub-label { font-size:9px; opacity:0.8; line-height:1.2; }
+.cell-del { position:absolute; top:2px; right:2px; width:14px; height:14px; border-radius:50%; border:none; background:rgba(0,0,0,.25); color:#fff; font-size:10px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity 0.15s; }
+.cell-slot:hover .cell-del { opacity:1; }
+.cell-empty { color:#d1d5db; font-size:16px; line-height:1; }
+.grid-empty { text-align:center; padding:40px; color:var(--color-text-muted); }
+
+/* Legend */
+.shift-legend { display:flex; align-items:center; gap:10px; margin-top:12px; flex-wrap:wrap; }
+.legend-label { font-size:11px; font-weight:600; color:var(--color-text-muted); }
+.legend-items { display:flex; gap:6px; flex-wrap:wrap; }
+.legend-chip { font-size:10px; font-weight:700; padding:3px 10px; border-radius:20px; letter-spacing:0.04em; }
+
+/* ── Color swatch in table ─────────────────────────────────────────────── */
+.color-swatch { display:inline-block; width:20px; height:20px; border-radius:4px; border:1px solid rgba(0,0,0,.1); vertical-align:middle; }
+
+/* ── Reports ───────────────────────────────────────────────────────────── */
+.report-section { }
+.report-section-title { font-size:14px; font-weight:600; margin:0 0 12px; color:var(--color-text); }
+.report-empty { text-align:center; color:var(--color-text-muted); padding:32px; font-size:13px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; }
+
+.coverage-table .cov-count-cell { text-align:center; }
+.cov-type-badge { font-size:10px; font-weight:700; padding:2px 8px; border-radius:20px; white-space:nowrap; }
+.cov-count { font-size:13px; font-weight:700; padding:2px 10px; border-radius:20px; display:inline-block; }
+.cov-zero { color:#d1d5db; font-size:12px; }
+.row-today { background:var(--color-brand-light) !important; }
+
+/* My Schedule cards */
+.my-schedule-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
+.my-sched-card { background:#fff; border:1px solid var(--color-border); border-left:4px solid #3B82F6; border-radius:8px; padding:14px 16px; }
+.my-sched-date { font-size:11px; font-weight:600; color:var(--color-text-muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px; }
+.my-sched-type { font-size:15px; font-weight:700; margin-bottom:4px; }
+.my-sched-time { font-size:12px; color:#64748b; display:flex; align-items:center; gap:6px; }
+.my-sched-note { font-size:11px; color:#94a3b8; margin-top:6px; font-style:italic; }
+.overnight-badge { font-size:9px; font-weight:600; background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:20px; }
+
+/* ── Handover Reports ──────────────────────────────────────────────────── */
+.handover-form-card { background:#fff; border:1px solid var(--color-border); border-radius:10px; padding:24px; margin-bottom:20px; }
+.handover-form-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+.handover-form-header h4 { margin:0; font-size:15px; font-weight:600; }
+.handover-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:4px; }
+.handover-form-footer { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; padding-top:16px; border-top:1px solid var(--color-border); }
+
+.handover-list { display:flex; flex-direction:column; gap:8px; }
+.handover-card { background:#fff; border:1px solid var(--color-border); border-radius:10px; overflow:hidden; }
+.handover-card-header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; cursor:pointer; transition:background 0.1s; gap:12px; flex-wrap:wrap; }
+.handover-card-header:hover { background:#f8fafc; }
+.handover-meta { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.handover-date { font-size:13px; font-weight:700; color:#0f172a; }
+.handover-shift-badge { font-size:10px; font-weight:700; padding:2px 8px; border-radius:20px; }
+.handover-people { display:flex; align-items:center; gap:6px; font-size:12px; color:#475569; }
+.handover-people strong { color:#0f172a; }
+.expand-icon { font-size:18px; color:#94a3b8; transition:transform 0.2s; display:inline-block; }
+
+.handover-detail { padding:16px 18px; border-top:1px solid var(--color-border); background:#fafafa; }
+.handover-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
+.handover-field { }
+.handover-field-issues { background:#fff7ed; border:1px solid #fed7aa; border-radius:6px; padding:10px; }
+.handover-field-label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#94a3b8; margin-bottom:4px; }
+.handover-field-body { font-size:12px; color:#374151; white-space:pre-wrap; line-height:1.55; }
+.handover-ack-notice { background:#f0fdf4; border:1px solid #86efac; border-radius:6px; padding:8px 12px; font-size:12px; color:#15803d; font-weight:500; margin-bottom:8px; }
+.handover-submitted { font-size:11px; color:#94a3b8; }
+
+/* ── Config card ───────────────────────────────────────────────────────── */
+.config-card { background:var(--color-surface); border:1px solid var(--color-border); border-radius:10px; padding:28px 32px; max-width:600px; }
+.config-section-title { font-size:15px; font-weight:600; margin-bottom:20px; color:var(--color-text); }
+.field-hint { font-size:12px; color:var(--color-text-muted); margin-bottom:6px; }
+.config-toggle-group { display:flex; flex-direction:column; gap:20px; margin-top:24px; }
+.config-toggle-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:16px 0; border-top:1px solid var(--color-border); }
+.toggle-label { font-weight:500; font-size:13px; margin-bottom:4px; }
+.toggle-desc { font-size:12px; color:var(--color-text-muted); max-width:380px; }
+.toggle-switch { display:flex; align-items:center; cursor:pointer; flex-shrink:0; }
+.toggle-switch input { position:absolute; opacity:0; width:0; height:0; }
+.toggle-track { width:40px; height:22px; background:var(--color-neutral-300); border-radius:11px; position:relative; transition:background 0.2s; }
+.toggle-track.disabled { opacity:0.4; cursor:not-allowed; }
+.toggle-switch input:checked + .toggle-track { background:var(--color-brand-base); }
+.toggle-thumb { position:absolute; top:3px; left:3px; width:16px; height:16px; background:white; border-radius:50%; transition:transform 0.2s; box-shadow:0 1px 3px rgba(0,0,0,.2); }
+.toggle-switch input:checked + .toggle-track .toggle-thumb { transform:translateX(18px); }
+
+/* ── Shared utilities ──────────────────────────────────────────────────── */
+.view-subtitle { font-size:13px; color:var(--color-text-muted); margin-top:2px; }
+.text-muted { color:var(--color-text-muted); }
+.status  { color:var(--color-text-muted); margin:16px 0; font-size:13px; }
+.error   { color:var(--color-error); font-size:13px; margin:8px 0; }
+.success { color:var(--color-success); font-size:13px; margin:8px 0; }
+.empty-row { text-align:center; color:var(--color-text-muted); padding:24px; }
+.actions-cell { white-space:nowrap; }
+.btn-icon { background:none; border:none; cursor:pointer; padding:2px 4px; font-size:14px; }
+.badge-muted { background:#F3F4F6; color:#6B7280; }
+.badge-red   { background:#FEE2E2; color:var(--color-error); }
+.checkbox-label { display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; }
+.checkbox-label input { width:15px; height:15px; }
+
+/* ── Modal overlay & dialog ────────────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
+  z-index: 1000;
+  padding: 16px;
 }
-.roster-slot {
-  text-align: center;
-  cursor: pointer;
-  vertical-align: middle;
-  min-height: 40px;
+.modal {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.22), 0 4px 16px rgba(0,0,0,.12);
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modal-in 0.18s cubic-bezier(.22,.68,0,1.2);
 }
-.roster-slot:hover { background: var(--color-neutral-50); }
-.roster-slot-empty {
-  color: var(--color-neutral-300);
-  font-size: 18px;
-  line-height: 1;
+.modal.modal-lg { max-width: 600px; }
+
+@keyframes modal-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
 }
-.shift-chip {
+
+.modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 4px;
-  border-radius: 4px;
-  padding: 3px 6px;
-  font-size: 11px;
-  font-weight: 500;
+  padding: 20px 24px 0;
+  flex-shrink: 0;
 }
-.shift-chip-label { flex: 1; text-align: left; }
-.shift-chip-del {
-  background: none;
+.modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.modal-close {
+  background: #f1f5f9;
   border: none;
-  cursor: pointer;
-  color: var(--color-text-muted);
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 2px;
-}
-.shift-chip-del:hover { color: var(--color-error); }
-
-/* ── Config card ───────────────────────────────────────────────────────── */
-.config-card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  padding: 28px 32px;
-  max-width: 600px;
-}
-.config-section-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 20px;
-  color: var(--color-text);
-}
-.field-hint {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  margin-bottom: 6px;
-}
-.config-toggle-group {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  margin-top: 24px;
-}
-.config-toggle-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 16px 0;
-  border-top: 1px solid var(--color-border);
-}
-.toggle-label {
-  font-weight: 500;
-  font-size: 13px;
-  margin-bottom: 4px;
-}
-.toggle-desc {
-  font-size: 12px;
-  color: var(--color-text-muted);
-  max-width: 380px;
-}
-
-/* Toggle switch */
-.toggle-switch { display: flex; align-items: center; cursor: pointer; flex-shrink: 0; }
-.toggle-switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.toggle-track {
-  width: 40px; height: 22px;
-  background: var(--color-neutral-300);
-  border-radius: 11px;
-  position: relative;
-  transition: background 0.2s;
-}
-.toggle-track.disabled { opacity: 0.4; cursor: not-allowed; }
-.toggle-switch input:checked + .toggle-track { background: var(--color-brand-base); }
-.toggle-thumb {
-  position: absolute;
-  top: 3px; left: 3px;
-  width: 16px; height: 16px;
-  background: white;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+  cursor: pointer;
+  font-size: 16px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  line-height: 1;
 }
-.toggle-switch input:checked + .toggle-track .toggle-thumb { transform: translateX(18px); }
+.modal-close:hover { background: #e2e8f0; color: #0f172a; }
 
-/* ── Shared utilities ──────────────────────────────────────────────────── */
-.view-subtitle { font-size: 13px; color: var(--color-text-muted); margin-top: 2px; }
-.text-muted { color: var(--color-text-muted); }
-.status  { color: var(--color-text-muted); margin: 16px 0; font-size: 13px; }
-.error   { color: var(--color-error); font-size: 13px; margin: 8px 0; }
-.success { color: var(--color-success); font-size: 13px; margin: 8px 0; }
-.empty-row { text-align: center; color: var(--color-text-muted); padding: 24px; }
-.actions-cell { white-space: nowrap; }
-.btn-icon { background: none; border: none; cursor: pointer; padding: 2px 4px; font-size: 14px; }
+.modal-body {
+  padding: 20px 24px;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal-footer {
+  padding: 16px 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid #f1f5f9;
+  flex-shrink: 0;
+  background: #fafbfc;
+}
 
-/* badge extras */
-.badge-muted { background: #F3F4F6; color: #6B7280; }
-.badge-red   { background: #FEE2E2; color: var(--color-error); }
-
-.checkbox-label { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
-.checkbox-label input { width: 15px; height: 15px; }
+@media (max-width: 640px) {
+  .modal { max-width: 100%; border-radius: 16px 16px 0 0; align-self: flex-end; max-height: 95vh; }
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .handover-form-grid { grid-template-columns: 1fr; }
+  .handover-detail-grid { grid-template-columns: 1fr; }
+}
 </style>

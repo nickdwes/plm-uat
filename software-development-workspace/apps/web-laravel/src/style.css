@@ -70,8 +70,6 @@ html {
   height: auto;
   object-fit: contain;
 }
-  letter-spacing: -0.5px;
-}
 
 .logo-text {
   font-size: var(--font-size-base);
@@ -426,6 +424,8 @@ input[type="text"],
 input[type="email"],
 input[type="password"],
 input[type="date"],
+input[type="time"],
+input[type="url"],
 input[type="search"],
 input[type="number"],
 input[type="tel"],
@@ -442,6 +442,24 @@ textarea {
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   line-height: var(--line-height-base);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* Restore native arrow on selects */
+select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23687280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
+
+/* Restore native calendar/clock icon on date+time inputs */
+input[type="date"],
+input[type="time"] {
+  appearance: auto;
+  -webkit-appearance: auto;
 }
 
 input:focus, select:focus, textarea:focus {
@@ -451,6 +469,60 @@ input:focus, select:focus, textarea:focus {
 
 input::placeholder, textarea::placeholder {
   color: var(--color-text-light);
+}
+
+input:disabled, select:disabled, textarea:disabled {
+  background: var(--color-neutral-100);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  border-color: var(--color-neutral-200);
+}
+
+/* ── .form-input — utility alias used throughout views ─────────────────── */
+.form-input {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+  color: var(--color-text);
+  background: var(--color-surface);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  line-height: var(--line-height-base);
+  appearance: none;
+  -webkit-appearance: none;
+}
+.form-input::placeholder { color: var(--color-text-light); }
+.form-input:focus {
+  border-color: var(--color-brand-base);
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
+}
+.form-input:disabled {
+  background: var(--color-neutral-100);
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  border-color: var(--color-neutral-200);
+}
+.form-input.is-error { border-color: var(--color-error); }
+.form-input.is-error:focus { box-shadow: 0 0 0 3px rgba(211,47,47,.12); }
+
+/* Restore arrow on select.form-input */
+select.form-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23687280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+  cursor: pointer;
+}
+
+/* Restore native picker icon on date/time inputs using .form-input */
+input[type="date"].form-input,
+input[type="time"].form-input {
+  appearance: auto;
+  -webkit-appearance: auto;
 }
 
 .field-hint {
@@ -565,6 +637,71 @@ input::placeholder, textarea::placeholder {
 }
 
 .btn-sm { padding: 6px 12px; font-size: var(--font-size-sm); }
+
+/* btn-outline — bordered button, used widely across views */
+.btn-outline {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 9px var(--space-5);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  white-space: nowrap;
+  line-height: 1;
+  text-decoration: none;
+}
+.btn-outline:hover:not(:disabled) {
+  background: var(--color-neutral-100);
+  border-color: var(--color-neutral-300);
+  box-shadow: var(--shadow-xs);
+}
+.btn-outline:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-sm.btn-outline { padding: 6px 12px; font-size: var(--font-size-sm); }
+
+/* ── Table utilities used in roster, recruitment, training etc. ─────────── */
+.table-wrapper {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-base);
+}
+.data-table th {
+  background: var(--color-neutral-100);
+  text-align: left;
+  padding: 10px var(--space-4);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 12px var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+  color: var(--color-text);
+}
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr { transition: background var(--transition-fast); }
+.data-table tbody tr:hover { background: var(--color-neutral-100); }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
@@ -718,6 +855,49 @@ input::placeholder, textarea::placeholder {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
+}
+
+/* Microsoft SSO button */
+.btn-microsoft {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e293b;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  margin-bottom: var(--space-3);
+}
+.btn-microsoft:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #9ca3af;
+  box-shadow: 0 1px 4px rgba(0,0,0,.08);
+}
+.btn-microsoft:disabled { opacity: 0.6; cursor: not-allowed; }
+.ms-icon { width: 20px; height: 20px; flex-shrink: 0; }
+
+/* Divider between SSO and email login */
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
 }
 
 /* ── Quick actions ─────────────────────────────────────────────────────── */
