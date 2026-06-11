@@ -1,5 +1,6 @@
 # VS Code Server
 .vscode-server/
+.vscode-server-insiders/
 
 # Copilot
 .copilot/
@@ -8,8 +9,16 @@
 .cache/
 .dotnet/
 .net/
+.npm/
+.docker/
+.local/
+.config/
 .lesshst
 .sudo_as_admin_successful
+
+# Claude Code config (may contain credentials)
+.claude/
+.claude.json
 
 # Shell history
 .bash_history
