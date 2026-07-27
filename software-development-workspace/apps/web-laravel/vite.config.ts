@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 
 // Laravel backend URL — defaults to local Sail / artisan serve port.
@@ -7,7 +8,7 @@ import path from "path";
 const backendTarget = process.env.VITE_LARAVEL_API_URL || "http://localhost:9090";
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [vue(), tailwindcss()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

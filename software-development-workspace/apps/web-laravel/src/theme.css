@@ -1,0 +1,154 @@
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  Konvergenz Design System — Tailwind v4 theme bridge
+ *
+ *  Maps the semantic tokens in tokens.css onto Tailwind utilities so that
+ *  `bg-surface`, `text-muted`, `border-default` etc. resolve to the SAME
+ *  custom properties the hand-written CSS uses. One source of truth, two
+ *  ways to consume it — which is what makes an incremental migration safe.
+ *
+ *  `@theme inline` (rather than plain `@theme`) is deliberate: it emits the
+ *  var() reference at the use site instead of snapshotting the value, so a
+ *  utility re-resolves when [data-theme] flips. Plain `@theme` would bake in
+ *  the light value and dark mode would silently not work.
+ *
+ *  Load order in main.ts: tokens.css → theme.css → style.css
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/*  PREFLIGHT IS DELIBERATELY OFF.
+ *
+ *  `@import "tailwindcss"` would pull in Preflight, whose reset includes
+ *  `h1..h6 { font-size: inherit; font-weight: inherit }`. This app has 213
+ *  heading tags, 89 of them unclassed, and style.css sizes headings in only
+ *  two places — so enabling Preflight before the components are migrated
+ *  flattens headings on nearly every screen.
+ *
+ *  Turn it on by adding this line back once migration is complete:
+ *      @import "tailwindcss/preflight.css" layer(base);
+ *  and re-verify the views in the same pass.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Drive dark utilities from the same attribute tokens.css switches on, so
+   `dark:` variants and semantic tokens can never disagree. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme inline {
+
+  /* ── Brand ───────────────────────────────────────────────────────────── */
+  --color-brand:        var(--color-brand-base);
+  --color-brand-hover:  var(--color-brand-hover);
+  --color-brand-dark:   var(--color-brand-dark);
+  --color-brand-light:  var(--color-brand-light);
+  --color-brand-subtle: var(--color-brand-subtle);
+  --color-on-brand:     var(--color-on-brand);
+
+  /* ── Neutral ─────────────────────────────────────────────────────────── */
+  --color-neutral-900: var(--color-neutral-900);
+  --color-neutral-800: var(--color-neutral-800);
+  --color-neutral-700: var(--color-neutral-700);
+  --color-neutral-500: var(--color-neutral-500);
+  --color-neutral-300: var(--color-neutral-300);
+  --color-neutral-200: var(--color-neutral-200);
+  --color-neutral-100: var(--color-neutral-100);
+  --color-neutral-50:  var(--color-neutral-50);
+
+  /* ── Surfaces & borders ──────────────────────────────────────────────── */
+  --color-canvas:         var(--color-bg);
+  --color-surface:        var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-border-default: var(--color-border);
+  --color-border-strong:  var(--color-border-strong);
+  --color-overlay:        var(--color-overlay);
+
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --color-content:         var(--color-text);
+  --color-content-muted:   var(--color-text-muted);
+  --color-content-light:   var(--color-text-light);
+  --color-content-inverse: var(--color-text-inverse);
+
+  /* ── Feedback ────────────────────────────────────────────────────────── */
+  --color-success:       var(--color-success);
+  --color-success-light: var(--color-success-light);
+  --color-warning:       var(--color-warning);
+  --color-warning-light: var(--color-warning-light);
+  --color-error:         var(--color-error);
+  --color-error-light:   var(--color-error-light);
+  --color-info:          var(--color-info);
+  --color-info-light:    var(--color-info-light);
+
+  /* ── Accent ──────────────────────────────────────────────────────────── */
+  --color-teal:   var(--color-teal);
+  --color-indigo: var(--color-indigo);
+  --color-amber:  var(--color-amber);
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  --font-sans: var(--font-family);
+  --font-mono: var(--font-family-mono);
+
+  --font-weight-normal:   var(--font-weight-regular);
+  --font-weight-medium:   var(--font-weight-medium);
+  --font-weight-semibold: var(--font-weight-semibold);
+  --font-weight-bold:     var(--font-weight-bold);
+
+  /* Product text scale — `text-sm` is the app default */
+  --text-xs:           var(--text-xs-size);
+  --text-xs--line-height: var(--text-xs-line);
+  --text-sm:           var(--text-sm-size);
+  --text-sm--line-height: var(--text-sm-line);
+  --text-md:           var(--text-md-size);
+  --text-md--line-height: var(--text-md-line);
+  --text-lg:           var(--text-lg-size);
+  --text-lg--line-height: var(--text-lg-line);
+  --text-xl:           var(--text-xl-size);
+  --text-xl--line-height: var(--text-xl-line);
+  --text-2xl:          var(--text-2xl-size);
+  --text-2xl--line-height: var(--text-2xl-line);
+  --text-6xl:          var(--text-6xl-size);
+  --text-6xl--line-height: var(--text-6xl-line);
+  --text-6xl--letter-spacing: var(--tracking-display);
+
+  /* Display scale — `text-display-lg` etc. Tracking baked in at -2%. */
+  --text-display-xs:  var(--display-xs-size);
+  --text-display-xs--line-height: var(--display-xs-line);
+  --text-display-sm:  var(--display-sm-size);
+  --text-display-sm--line-height: var(--display-sm-line);
+  --text-display-md:  var(--display-md-size);
+  --text-display-md--line-height: var(--display-md-line);
+  --text-display-md--letter-spacing: var(--tracking-display);
+  --text-display-lg:  var(--display-lg-size);
+  --text-display-lg--line-height: var(--display-lg-line);
+  --text-display-lg--letter-spacing: var(--tracking-display);
+  --text-display-xl:  var(--display-xl-size);
+  --text-display-xl--line-height: var(--display-xl-line);
+  --text-display-xl--letter-spacing: var(--tracking-display);
+  --text-display-2xl: var(--display-2xl-size);
+  --text-display-2xl--line-height: var(--display-2xl-line);
+  --text-display-2xl--letter-spacing: var(--tracking-display);
+
+  /* ── Radii ───────────────────────────────────────────────────────────── */
+  --radius-sm:  var(--radius-sm);
+  --radius-md:  var(--radius-md);
+  --radius-lg:  var(--radius-lg);
+  --radius-xl:  var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+  --radius-3xl: var(--radius-3xl);
+
+  /* ── Elevation ───────────────────────────────────────────────────────── */
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  /* ── Layout ──────────────────────────────────────────────────────────── */
+  --spacing-sidebar: var(--sidebar-width);
+  --spacing-header:  var(--header-height);
+}
+
+/* Tailwind's default spacing scale already matches the Figma spacing table
+   (4/8/12/16/20/24/32/40/48/64/80/96/128/160/192/224/256px), so it is left
+   untouched — p-4 is 16px, gap-6 is 24px, and so on. */

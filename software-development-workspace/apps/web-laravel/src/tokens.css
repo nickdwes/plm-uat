@@ -1,66 +1,298 @@
 /*
  * ═══════════════════════════════════════════════════════════════════════════
  *  Konvergenz Design System — CSS Design Tokens
- *  Single source of truth for all colours, spacing, typography, and radii.
- *  Import this file FIRST, before any component styles.
+ *  Single source of truth for colour, type, spacing, radii and elevation.
+ *
+ *  Layered in three tiers:
+ *    1. PRIMITIVES  raw ramp values. Never reference these in components.
+ *    2. SEMANTIC    role-named tokens that swap between light and dark.
+ *    3. ALIASES     legacy names kept alive during the Tailwind migration.
+ *
+ *  Components and tailwind theme.css consume tier 2 only.
+ *  Imported before style.css — see main.ts.
  * ═══════════════════════════════════════════════════════════════════════════
  */
 
+/* ─────────────────────────────────────────────────────────────────────────
+   TIER 1 — PRIMITIVES
+   Fixed ramp values. Identical in every theme; only their *mapping* changes.
+   ───────────────────────────────────────────────────────────────────────── */
+
 :root {
 
-  /* ── Brand Primary ─────────────────────────────────────────────────────── */
-  --color-brand-base:   #004C97;
-  --color-brand-hover:  #1565C0;
-  --color-brand-dark:   #0A3573;
-  --color-brand-light:  #DBEAFE;
+  /* ── Brand ramp ──────────────────────────────────────────────────────── */
+  --ramp-brand-900: #0A3573;
+  --ramp-brand-700: #004C97;   /* Konvergenz primary */
+  --ramp-brand-500: #1565C0;
+  --ramp-brand-400: #3B82F6;
+  --ramp-brand-300: #60A5FA;
+  --ramp-brand-100: #DBEAFE;
+
+  /* ── Neutral ramp ────────────────────────────────────────────────────── */
+  --ramp-neutral-900: #101828;
+  --ramp-neutral-800: #1E293B;
+  --ramp-neutral-700: #4B5563;
+  --ramp-neutral-600: #64748B;
+  --ramp-neutral-500: #6B7280;
+  --ramp-neutral-400: #94A3B8;
+  --ramp-neutral-300: #D1D5DB;
+  --ramp-neutral-200: #E5E7EB;
+  --ramp-neutral-100: #F3F4F6;
+  --ramp-neutral-50:  #F9FAFB;
+  --ramp-neutral-0:   #FFFFFF;
+
+  /* Dark-surface ramp — deep slate tones used only as dark-mode canvas */
+  --ramp-slate-950: #0B1220;
+  --ramp-slate-900: #0F172A;
+  --ramp-slate-800: #1E293B;
+  --ramp-slate-700: #334155;
+  --ramp-slate-600: #475569;
+
+  /* ── Feedback ramps ──────────────────────────────────────────────────── */
+  --ramp-success-500: #10B981;
+  --ramp-success-400: #34D399;
+  --ramp-success-100: #D1FAE5;
+  --ramp-success-900: #064E3B;
+
+  --ramp-warning-500: #ED6C02;
+  --ramp-warning-400: #FBBF24;
+  --ramp-warning-100: #FEF3C7;
+  --ramp-warning-900: #78350F;
+
+  --ramp-error-500: #D32F2F;
+  --ramp-error-400: #F87171;
+  --ramp-error-100: #FEE2E2;
+  --ramp-error-900: #7F1D1D;
+
+  --ramp-info-500: #0288D1;
+  --ramp-info-400: #60A5FA;
+  --ramp-info-100: #E0F2FE;
+  --ramp-info-900: #1E40AF;
+
+  /* ── Accent ramps ────────────────────────────────────────────────────── */
+  --ramp-teal-500:   #0D9488;
+  --ramp-teal-400:   #2DD4BF;
+  --ramp-indigo-500: #6366F1;
+  --ramp-indigo-400: #818CF8;
+  --ramp-amber-500:  #F59E0B;
+  --ramp-amber-400:  #FCD34D;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TIER 2 — SEMANTIC TOKENS  ·  LIGHT (default)
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme="light"] {
+
+  color-scheme: light;
+
+  /* ── Brand ───────────────────────────────────────────────────────────── */
+  --color-brand-base:   var(--ramp-brand-700);
+  --color-brand-hover:  var(--ramp-brand-500);
+  --color-brand-dark:   var(--ramp-brand-900);
+  --color-brand-light:  var(--ramp-brand-100);
   --color-brand-subtle: rgba(0, 76, 151, 0.08);
+  /* Text/icon colour when brand is used as a foreground on a plain surface */
+  --color-brand-on-surface: var(--ramp-brand-700);
+  /* Foreground that sits ON a brand-filled element */
+  --color-on-brand:     #FFFFFF;
 
-  /* ── Neutral ───────────────────────────────────────────────────────────── */
-  --color-neutral-900: #101828;
-  --color-neutral-700: #485563;
-  --color-neutral-500: #687280;
-  --color-neutral-300: #D1D5DB;
-  --color-neutral-200: #E5E7EB;
-  --color-neutral-100: #F5F7FB;
-  --color-neutral-50:  #FAFBFD;
+  /* ── Neutral ─────────────────────────────────────────────────────────── */
+  --color-neutral-900: var(--ramp-neutral-900);
+  --color-neutral-800: var(--ramp-neutral-800);
+  --color-neutral-700: var(--ramp-neutral-700);
+  --color-neutral-500: var(--ramp-neutral-500);
+  --color-neutral-300: var(--ramp-neutral-300);
+  --color-neutral-200: var(--ramp-neutral-200);
+  --color-neutral-100: var(--ramp-neutral-100);
+  --color-neutral-50:  var(--ramp-neutral-50);
 
-  /* ── Feedback ──────────────────────────────────────────────────────────── */
-  --color-success:       #108981;
-  --color-success-light: #D1FAE5;
-  --color-warning:       #ED6C02;
-  --color-warning-light: #FEF3C7;
-  --color-error:         #D32F2F;
-  --color-error-light:   #FEE2E2;
-  --color-info:          #0288D1;
-  --color-info-light:    #E0F2FE;
+  /* ── Surfaces ────────────────────────────────────────────────────────── */
+  --color-bg:            var(--ramp-neutral-50);
+  --color-surface:       var(--ramp-neutral-0);
+  --color-surface-raised:var(--ramp-neutral-0);
+  --color-surface-sunken:var(--ramp-neutral-100);
+  --color-border:        var(--ramp-neutral-200);
+  --color-border-strong: var(--ramp-neutral-300);
+  --color-overlay:       rgba(16, 24, 40, 0.48);
 
-  /* ── Accent ────────────────────────────────────────────────────────────── */
-  --color-teal:   #0D9488;
-  --color-indigo: #6366F1;
-  --color-amber:  #F59E08;
+  /* ── Text ────────────────────────────────────────────────────────────── */
+  --color-text:          var(--ramp-neutral-900);
+  --color-text-muted:    var(--ramp-neutral-700);
+  --color-text-light:    var(--ramp-neutral-500);
+  --color-text-inverse:  var(--ramp-neutral-0);
 
-  /* ── Surface ───────────────────────────────────────────────────────────── */
-  --color-bg:      #F5F7FB;
-  --color-surface: #FFFFFF;
-  --color-border:  #E5E7EB;
+  /* ── Feedback ────────────────────────────────────────────────────────── */
+  --color-success:       var(--ramp-success-500);
+  --color-success-light: var(--ramp-success-100);
+  --color-warning:       var(--ramp-warning-500);
+  --color-warning-light: var(--ramp-warning-100);
+  --color-error:         var(--ramp-error-500);
+  --color-error-light:   var(--ramp-error-100);
+  --color-info:          var(--ramp-info-500);
+  --color-info-light:    var(--ramp-info-100);
 
-  /* ── Text ──────────────────────────────────────────────────────────────── */
-  --color-text:       #101828;
-  --color-text-muted: #485563;
-  --color-text-light: #687280;
+  /* ── Accent ──────────────────────────────────────────────────────────── */
+  --color-teal:   var(--ramp-teal-500);
+  --color-indigo: var(--ramp-indigo-500);
+  --color-amber:  var(--ramp-amber-500);
 
-  /* ── Sidebar ───────────────────────────────────────────────────────────── */
-  --color-sidebar-bg:             #0D1B2A;
-  --color-sidebar-active-bg:      rgba(0, 76, 151, 0.18);
-  --color-sidebar-active-border:  #004C97;
-  --color-sidebar-hover-bg:       rgba(255, 255, 255, 0.06);
-  --color-sidebar-text:           rgba(255, 255, 255, 0.60);
-  --color-sidebar-text-hover:     rgba(255, 255, 255, 0.90);
-  --color-sidebar-text-active:    #FFFFFF;
-  --color-sidebar-divider:        rgba(255, 255, 255, 0.08);
+  /* ── Sidebar (always dark, in both themes) ───────────────────────────── */
+  --color-sidebar-bg:            #0D1B2A;
+  --color-sidebar-active-bg:     rgba(0, 76, 151, 0.18);
+  --color-sidebar-active-border: var(--ramp-brand-700);
+  --color-sidebar-hover-bg:      rgba(255, 255, 255, 0.06);
+  --color-sidebar-text:          rgba(255, 255, 255, 0.60);
+  --color-sidebar-text-hover:    rgba(255, 255, 255, 0.90);
+  --color-sidebar-text-active:   #FFFFFF;
+  --color-sidebar-divider:       rgba(255, 255, 255, 0.08);
+  /* Accent for active/expanded nav labels. The sidebar is dark in BOTH themes,
+     so it needs the dark-mode brand tone: --color-brand-base (#004C97) measures
+     2.05:1 against #0D1B2A, making the active item less legible than the idle
+     one. This is 6.84:1. */
+  --color-sidebar-accent:        var(--ramp-brand-300);
 
-  /* ── Typography ────────────────────────────────────────────────────────── */
-  --font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* ── Elevation ───────────────────────────────────────────────────────── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.10), 0 4px 8px rgba(0, 0, 0, 0.06);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TIER 2 — SEMANTIC TOKENS  ·  DARK
+   Only role mappings change. Every token name above is redefined here, so a
+   component written against semantic tokens themes itself with no extra CSS.
+   ───────────────────────────────────────────────────────────────────────── */
+
+[data-theme="dark"] {
+
+  color-scheme: dark;
+
+  /* Brand — lightened for legibility on dark canvas. #004C97 on #0F172A is
+     ~1.9:1 and fails WCAG AA badly, so the dark theme steps up the ramp.
+     Fills keep enough saturation to read as Konvergenz blue. */
+  --color-brand-base:   var(--ramp-brand-400);
+  --color-brand-hover:  var(--ramp-brand-300);
+  --color-brand-dark:   var(--ramp-brand-500);
+  --color-brand-light:  rgba(96, 165, 250, 0.16);
+  --color-brand-subtle: rgba(96, 165, 250, 0.10);
+  --color-brand-on-surface: var(--ramp-brand-300);
+  --color-on-brand:     #06121F;
+
+  /* Neutral — ramp inverts: 900 is now the *lightest* (highest-contrast) tone */
+  --color-neutral-900: #E5E7EB;
+  --color-neutral-800: #CBD5E1;
+  --color-neutral-700: #94A3B8;
+  --color-neutral-500: #64748B;
+  --color-neutral-300: var(--ramp-slate-700);
+  --color-neutral-200: var(--ramp-slate-800);
+  --color-neutral-100: var(--ramp-slate-900);
+  --color-neutral-50:  var(--ramp-slate-950);
+
+  /* Surfaces */
+  --color-bg:            var(--ramp-slate-950);
+  --color-surface:       var(--ramp-slate-900);
+  --color-surface-raised:var(--ramp-slate-800);
+  --color-surface-sunken:#080D17;
+  --color-border:        var(--ramp-slate-700);
+  --color-border-strong: var(--ramp-slate-600);
+  --color-overlay:       rgba(0, 0, 0, 0.64);
+
+  /* Text */
+  --color-text:         #E5E7EB;
+  --color-text-muted:   #94A3B8;
+  --color-text-light:   #64748B;
+  --color-text-inverse: var(--ramp-neutral-900);
+
+  /* Feedback — base tones lighten, "light" tones become deep tinted fills */
+  --color-success:       var(--ramp-success-400);
+  --color-success-light: var(--ramp-success-900);
+  --color-warning:       var(--ramp-warning-400);
+  --color-warning-light: var(--ramp-warning-900);
+  --color-error:         var(--ramp-error-400);
+  --color-error-light:   var(--ramp-error-900);
+  --color-info:          var(--ramp-info-400);
+  --color-info-light:    var(--ramp-info-900);
+
+  /* Accent */
+  --color-teal:   var(--ramp-teal-400);
+  --color-indigo: var(--ramp-indigo-400);
+  --color-amber:  var(--ramp-amber-400);
+
+  /* Sidebar — already dark; deepen slightly so it still separates from bg */
+  --color-sidebar-bg:            #080D17;
+  --color-sidebar-active-bg:     rgba(96, 165, 250, 0.18);
+  --color-sidebar-active-border: var(--ramp-brand-300);
+
+  /* Elevation — shadows read poorly on dark; deepen and lean on borders */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.50), 0 1px 2px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.40);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.65), 0 4px 8px rgba(0, 0, 0, 0.45);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TYPOGRAPHY  ·  theme-independent
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+
+  /* Google Sans ships 400/500/600/700 only — there is no 800 weight.
+     Requesting one yields browser-synthesised faux bold. */
+  --font-family: 'Google Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                 Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+                      'Liberation Mono', monospace;
+
+  --font-weight-regular:  400;
+  --font-weight-medium:   500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:     700;
+
+  /* ── Display scale — marketing, page titles, empty states ────────────── */
+  --display-2xl-size: 4.5rem;    /* 72px */
+  --display-2xl-line: 5.625rem;  /* 90px */
+  --display-xl-size:  3.75rem;   /* 60px */
+  --display-xl-line:  4.5rem;    /* 72px */
+  --display-lg-size:  3rem;      /* 48px */
+  --display-lg-line:  3.75rem;   /* 60px */
+  --display-md-size:  2.25rem;   /* 36px */
+  --display-md-line:  2.75rem;   /* 44px */
+  --display-sm-size:  1.875rem;  /* 30px */
+  --display-sm-line:  2.375rem;  /* 38px */
+  --display-xs-size:  1.5rem;    /* 24px */
+  --display-xs-line:  2rem;      /* 32px */
+
+  /* Display sizes carry -2% tracking; smaller display steps sit at 0 */
+  --tracking-display: -0.02em;
+  --tracking-normal:  0;
+
+  /* ── Text scale — product UI ─────────────────────────────────────────── */
+  --text-6xl-size: 3.75rem;   /* 60px */
+  --text-6xl-line: 4.625rem;  /* 74px */
+  --text-2xl-size: 1.5rem;    /* 24px */
+  --text-2xl-line: 2rem;      /* 32px */
+  --text-xl-size:  1.25rem;   /* 20px */
+  --text-xl-line:  1.875rem;  /* 30px */
+  --text-lg-size:  1.125rem;  /* 18px */
+  --text-lg-line:  1.75rem;   /* 28px */
+  --text-md-size:  1rem;      /* 16px */
+  --text-md-line:  1.5rem;    /* 24px */
+  --text-sm-size:  0.875rem;  /* 14px — product default */
+  --text-sm-line:  1.25rem;   /* 20px */
+  --text-xs-size:  0.75rem;   /* 12px */
+  --text-xs-line:  1.125rem;  /* 18px */
+
+  --line-height-tight:   1.25;
+  --line-height-base:    1.5;
+  --line-height-relaxed: 1.75;
+
+  /* ── Legacy px type sizes — retained until component migration lands ─── */
   --font-size-xs:   11px;
   --font-size-sm:   12px;
   --font-size-base: 14px;
@@ -70,29 +302,27 @@
   --font-size-2xl:  24px;
   --font-size-3xl:  30px;
 
-  --font-weight-regular:  400;
-  --font-weight-medium:   500;
-  --font-weight-semibold: 600;
-  --font-weight-bold:     700;
-  --font-weight-extrabold:800;
 
-  --line-height-tight:  1.25;
-  --line-height-base:   1.5;
-  --line-height-relaxed:1.75;
+  /* ── Spacing — 4px base grid, matches Tailwind's default scale ───────── */
+  --space-1:  0.25rem;  /*   4px */
+  --space-2:  0.5rem;   /*   8px */
+  --space-3:  0.75rem;  /*  12px */
+  --space-4:  1rem;     /*  16px */
+  --space-5:  1.25rem;  /*  20px */
+  --space-6:  1.5rem;   /*  24px */
+  --space-8:  2rem;     /*  32px */
+  --space-10: 2.5rem;   /*  40px */
+  --space-12: 3rem;     /*  48px */
+  --space-16: 4rem;     /*  64px */
+  --space-20: 5rem;     /*  80px */
+  --space-24: 6rem;     /*  96px */
+  --space-32: 8rem;     /* 128px */
+  --space-40: 10rem;    /* 160px */
+  --space-48: 12rem;    /* 192px */
+  --space-56: 14rem;    /* 224px */
+  --space-64: 16rem;    /* 256px */
 
-  /* ── Spacing (4px base grid) ───────────────────────────────────────────── */
-  --space-1:  4px;
-  --space-2:  8px;
-  --space-3:  12px;
-  --space-4:  16px;
-  --space-5:  20px;
-  --space-6:  24px;
-  --space-8:  32px;
-  --space-10: 40px;
-  --space-12: 48px;
-  --space-16: 64px;
-
-  /* ── Border Radii ──────────────────────────────────────────────────────── */
+  /* ── Radii ───────────────────────────────────────────────────────────── */
   --radius-sm:   4px;
   --radius-md:   6px;
   --radius-lg:   8px;
@@ -101,42 +331,100 @@
   --radius-3xl:  16px;
   --radius-full: 9999px;
 
-  /* ── Shadows ───────────────────────────────────────────────────────────── */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
-  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.10), 0 4px 8px rgba(0, 0, 0, 0.06);
-
-  /* ── Layout ────────────────────────────────────────────────────────────── */
+  /* ── Layout ──────────────────────────────────────────────────────────── */
   --sidebar-width: 240px;
   --header-height: 60px;
 
-  /* ── Transitions ───────────────────────────────────────────────────────── */
+  /* ── Motion ──────────────────────────────────────────────────────────── */
   --transition-fast: 120ms ease;
   --transition-base: 200ms ease;
   --transition-slow: 300ms ease;
+}
 
-  /* ──────────────────────────────────────────────────────────────────────── */
-  /*  Backward-compatible aliases — keeps all existing view inline styles     */
-  /*  and CSS class references working without modification.                  */
-  /* ──────────────────────────────────────────────────────────────────────── */
-  --blue:        var(--color-brand-base);
-  --blue-dark:   var(--color-brand-hover);
-  --blue-light:  var(--color-brand-light);
-  --green:       var(--color-success);
-  --green-light: var(--color-success-light);
-  --red:         var(--color-error);
-  --red-light:   var(--color-error-light);
-  --yellow:      var(--color-warning);
-  --yellow-light:var(--color-warning-light);
-  --gray:        var(--color-text-light);
-  --border:      var(--color-border);
-  --bg:          var(--color-bg);
-  --sidebar-bg:  var(--color-sidebar-bg);
-  --sidebar-w:   var(--sidebar-width);
-  --header-h:    var(--header-height);
-  --text:        var(--color-text);
-  --text-muted:  var(--color-text-muted);
-  --radius:      var(--radius-xl);
-  --shadow:      var(--shadow-md);
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TIER 3 — LEGACY ALIASES
+   Keeps the 40 components already written against the old names rendering
+   correctly. Delete this block once the Tailwind migration is complete.
+   ───────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --blue:         var(--color-brand-base);
+  --blue-dark:    var(--color-brand-hover);
+  --blue-light:   var(--color-brand-light);
+  --green:        var(--color-success);
+  --green-light:  var(--color-success-light);
+  --red:          var(--color-error);
+  --red-light:    var(--color-error-light);
+  --yellow:       var(--color-warning);
+  --yellow-light: var(--color-warning-light);
+  --gray:         var(--color-text-light);
+  --border:       var(--color-border);
+  --bg:           var(--color-bg);
+  --sidebar-bg:   var(--color-sidebar-bg);
+  --sidebar-w:    var(--sidebar-width);
+  --header-h:     var(--header-height);
+  --text:         var(--color-text);
+  --text-muted:   var(--color-text-muted);
+  --radius:       var(--radius-xl);
+  --shadow:       var(--shadow-md);
+
+  /* Superseded: Google Sans has no 800 weight. Maps to bold so existing
+     references stop triggering faux-bold synthesis. */
+  --font-weight-extrabold: 700;
+}
+
+
+/* Honour OS preference when no explicit theme has been chosen. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+
+    --color-brand-base:   var(--ramp-brand-400);
+    --color-brand-hover:  var(--ramp-brand-300);
+    --color-brand-dark:   var(--ramp-brand-500);
+    --color-brand-light:  rgba(96, 165, 250, 0.16);
+    --color-brand-subtle: rgba(96, 165, 250, 0.10);
+    --color-brand-on-surface: var(--ramp-brand-300);
+    --color-on-brand:     #06121F;
+
+    --color-neutral-900: #E5E7EB;
+    --color-neutral-800: #CBD5E1;
+    --color-neutral-700: #94A3B8;
+    --color-neutral-500: #64748B;
+    --color-neutral-300: var(--ramp-slate-700);
+    --color-neutral-200: var(--ramp-slate-800);
+    --color-neutral-100: var(--ramp-slate-900);
+    --color-neutral-50:  var(--ramp-slate-950);
+
+    --color-bg:             var(--ramp-slate-950);
+    --color-surface:        var(--ramp-slate-900);
+    --color-surface-raised: var(--ramp-slate-800);
+    --color-surface-sunken: #080D17;
+    --color-border:         var(--ramp-slate-700);
+    --color-border-strong:  var(--ramp-slate-600);
+    --color-overlay:        rgba(0, 0, 0, 0.64);
+
+    --color-text:         #E5E7EB;
+    --color-text-muted:   #94A3B8;
+    --color-text-light:   #64748B;
+    --color-text-inverse: var(--ramp-neutral-900);
+
+    --color-success:       var(--ramp-success-400);
+    --color-success-light: var(--ramp-success-900);
+    --color-warning:       var(--ramp-warning-400);
+    --color-warning-light: var(--ramp-warning-900);
+    --color-error:         var(--ramp-error-400);
+    --color-error-light:   var(--ramp-error-900);
+    --color-info:          var(--ramp-info-400);
+    --color-info-light:    var(--ramp-info-900);
+
+    --color-teal:   var(--ramp-teal-400);
+    --color-indigo: var(--ramp-indigo-400);
+    --color-amber:  var(--ramp-amber-400);
+
+    --color-sidebar-bg:            #080D17;
+    --color-sidebar-active-bg:     rgba(96, 165, 250, 0.18);
+    --color-sidebar-active-border: var(--ramp-brand-300);
+  }
 }
