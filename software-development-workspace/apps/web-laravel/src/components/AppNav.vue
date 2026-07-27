@@ -28,19 +28,21 @@ async function logout(): Promise<void> {
 
 // ── Collapsible groups ────────────────────────────────────────────────────────
 // Each group auto-opens when a child route is active
-const employeesOpen  = ref(isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll'));
-const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals'));
-const performanceOpen = ref(isActive('performance') || isActive('goals'));
+const employeesOpen  = ref(isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info');
+const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin');
+const performanceOpen = ref(isActive('performance') || isActive('goals') || route.name === 'okr-cycles');
 const trainingOpen   = ref(isActive('training'));
 const vendorOpen     = ref(isActive('vendor'));
+const orgOpen        = ref(isActive('org'));
 
 // Re-expand groups when navigating to a child route directly
 watch(() => route.name, () => {
-  if (isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll')) employeesOpen.value = true;
-  if (route.name === 'leave' || isActive('leave-approvals')) leaveOpen.value = true;
-  if (isActive('performance') || isActive('goals')) performanceOpen.value = true;
+  if (isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info') employeesOpen.value = true;
+  if (route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin') leaveOpen.value = true;
+  if (isActive('performance') || isActive('goals') || route.name === 'okr-cycles') performanceOpen.value = true;
   if (isActive('training')) trainingOpen.value = true;
   if (isActive('vendor')) vendorOpen.value = true;
+  if (isActive('org')) orgOpen.value = true;
 });
 </script>
 
@@ -61,7 +63,7 @@ watch(() => route.name, () => {
 
       <!-- ── Employees ──────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') }]"
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info' }]"
         @click="employeesOpen = !employeesOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -73,6 +75,12 @@ watch(() => route.name, () => {
         </svg>
       </button>
       <div class="nav-group-children" :class="{ open: employeesOpen }">
+        <router-link :to="{ name: 'my-info' }" :class="['nav-item', 'nav-child', { active: route.name === 'my-info' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clip-rule="evenodd" />
+          </svg>
+          My Info
+        </router-link>
         <router-link :to="{ name: 'employees' }" :class="['nav-item', 'nav-child', { active: isActive('employee') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zm8 0a3 3 0 11-6 0 3 3 0 016 0zM.458 18C1.64 14.435 5.08 12 9 12s7.36 2.435 8.542 6H.458z" />
@@ -109,7 +117,7 @@ watch(() => route.name, () => {
 
       <!-- ── Leave ──────────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': route.name === 'leave' || isActive('leave-approvals') }]"
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin' }]"
         @click="leaveOpen = !leaveOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -133,11 +141,17 @@ watch(() => route.name, () => {
           </svg>
           Approvals
         </router-link>
+        <router-link :to="{ name: 'leave-admin' }" :class="['nav-item', 'nav-child', { active: route.name === 'leave-admin' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+          </svg>
+          Leave Admin
+        </router-link>
       </div>
 
       <!-- ── Performance ────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('performance') || isActive('goals') }]"
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('performance') || isActive('goals') || route.name === 'okr-cycles' }]"
         @click="performanceOpen = !performanceOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -163,7 +177,21 @@ watch(() => route.name, () => {
           </svg>
           Goals
         </router-link>
+        <router-link :to="{ name: 'okr-cycles' }" :class="['nav-item', 'nav-child', { active: route.name === 'okr-cycles' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
+          </svg>
+          OKR Cycles
+        </router-link>
       </div>
+
+      <!-- ── Notifications ─────────────────────────────────────────────────────── -->
+      <router-link :to="{ name: 'notifications' }" :class="['nav-item', { active: route.name === 'notifications' }]">
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zm0 16a2 2 0 001.732-1H8.268A2 2 0 0010 18z" />
+        </svg>
+        Notifications
+      </router-link>
 
       <!-- ── Recruitment ─────────────────────────────────────────────────────── -->
       <router-link :to="{ name: 'recruitment' }" :class="['nav-item', { active: isActive('recruitment') || isActive('vacanc') || isActive('candidate') }]">
@@ -238,12 +266,39 @@ watch(() => route.name, () => {
       <!-- Divider before settings -->
       <div class="sidebar-divider" style="margin-top: auto;"></div>
 
-      <router-link :to="{ name: 'org' }" :class="['nav-item', { active: isActive('org') }]">
+      <!-- ── Organisation ──────────────────────────────────────────────────────── -->
+      <button
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('org') }]"
+        @click="orgOpen = !orgOpen"
+      >
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd" />
         </svg>
-        Organisation
-      </router-link>
+        <span>Organisation</span>
+        <svg class="chevron" :class="{ open: orgOpen }" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+        </svg>
+      </button>
+      <div class="nav-group-children" :class="{ open: orgOpen }">
+        <router-link :to="{ name: 'org' }" :class="['nav-item', 'nav-child', { active: route.name === 'org' || isActive('org-profile') }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd" />
+          </svg>
+          Organisation
+        </router-link>
+        <router-link :to="{ name: 'benefit-plans' }" :class="['nav-item', 'nav-child', { active: route.name === 'benefit-plans' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd" />
+          </svg>
+          Benefit Plans
+        </router-link>
+        <router-link :to="{ name: 'public-holidays' }" :class="['nav-item', 'nav-child', { active: route.name === 'public-holidays' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd" />
+          </svg>
+          Public Holidays
+        </router-link>
+      </div>
     </nav>
 
     <div class="sidebar-footer">

@@ -19,7 +19,9 @@ import OrgView             from "../views/OrgView.vue";
 import OrgProfileView      from "../views/OrgProfileView.vue";
 import PerformanceView     from "../views/PerformanceView.vue";
 import GoalsView           from "../views/GoalsView.vue";
-import BenefitPlansView   from "../views/BenefitPlansView.vue";
+import BenefitPlansView    from "../views/BenefitPlansView.vue";
+import PublicHolidaysView  from "../views/PublicHolidaysView.vue";
+import OkrCyclesView       from "../views/OkrCyclesView.vue";
 
 // Recruitment
 import RecruitmentView      from "../views/Recruitment/RecruitmentView.vue";
@@ -83,10 +85,12 @@ const routes: RouteRecordRaw[] = [
   { path: "/payroll",         name: "payroll",          component: PayrollView },
   { path: "/org",             name: "org",              component: OrgView },
   { path: "/org/profile/:slug", name: "org-profile",    component: OrgProfileView, props: true },
-  { path: "/org/benefit-plans",name: "benefit-plans",   component: BenefitPlansView },
-  { path: "/org/payroll-config", name: "payroll-config",  component: PayrollConfigView },
-  { path: "/performance",     name: "performance",      component: PerformanceView },
-  { path: "/goals",           name: "goals",            component: GoalsView },
+  { path: "/org/benefit-plans",    name: "benefit-plans",    component: BenefitPlansView },
+  { path: "/org/public-holidays",  name: "public-holidays",  component: PublicHolidaysView },
+  { path: "/org/payroll-config",   name: "payroll-config",   component: PayrollConfigView },
+  { path: "/performance",          name: "performance",      component: PerformanceView },
+  { path: "/goals",                name: "goals",            component: GoalsView },
+  { path: "/okr/cycles",           name: "okr-cycles",       component: OkrCyclesView },
   // ── Recruitment ──────────────────────────────────────────────────────────
   { path: "/recruitment",                   name: "recruitment",      component: RecruitmentView },
   { path: "/recruitment/vacancies",         name: "vacancies",        component: VacanciesView },

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, authStore } from "../stores/auth";
+import type { TeamLocationEntry, WorkLocationType } from "../lib/types";
 
 interface EmploymentType { type: string; count: number }
 interface GenderRow      { gender: string; count: number }
@@ -28,6 +29,8 @@ const summary = ref<DashboardSummary | null>(null);
 const loading = ref(false);
 const error   = ref("");
 
+const teamLocations = ref<TeamLocationEntry[] | null>(null);
+
 function org(): string | null { return currentOrgSlug.value; }
 
 async function load(): Promise<void> {
@@ -45,8 +48,18 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load);
-watch(currentOrgSlug, load);
+async function loadTeamLocations(): Promise<void> {
+  if (!org()) { teamLocations.value = null; return; }
+  try {
+    const res = await api<{ data: TeamLocationEntry[] }>("GET", "/api/v1/work-location/team", { org: org() });
+    teamLocations.value = res.data;
+  } catch {
+    teamLocations.value = null; // non-managers get a 403 — hide the card silently
+  }
+}
+
+onMounted(() => { load(); loadTeamLocations(); });
+watch(currentOrgSlug, () => { load(); loadTeamLocations(); });
 
 // ── Computed helpers ──────────────────────────────────────────────────────────
 
@@ -104,6 +117,26 @@ function genderColour(g: string): string {
 function formatMonth(ym: string): string {
   const [y, m] = ym.split("-");
   return new Date(Number(y), Number(m) - 1).toLocaleString("default", { month: "short", year: "2-digit" });
+}
+
+function fmtTime(d: string | null | undefined): string {
+  if (!d) return "—";
+  try { return new Date(d).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" }); }
+  catch { return d; }
+}
+
+function teamInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
+}
+
+function teamWlBadgeClass(type: WorkLocationType): string {
+  return { office: "badge-blue", home: "badge-teal", customer_site: "badge-amber" }[type] ?? "badge-gray";
+}
+
+function teamWlLabel(c: { location_type: WorkLocationType; customer_name: string | null }): string {
+  const base = { office: "Office", home: "Work From Home", customer_site: "Customer Site" }[c.location_type] ?? c.location_type;
+  return c.location_type === "customer_site" && c.customer_name ? `${base}: ${c.customer_name}` : base;
 }
 
 const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -390,6 +423,31 @@ const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "nu
         </div>
       </div>
 
+      <!-- ── Team Work Locations (managers/HR only) ─────────────────────── -->
+      <div v-if="teamLocations" class="card dash-team-loc-card">
+        <div class="card-head">
+          <h3 class="card-title">Team Work Locations — Today</h3>
+          <span class="card-badge">{{ teamLocations.length }} member{{ teamLocations.length === 1 ? "" : "s" }}</span>
+        </div>
+        <div v-if="teamLocations.length" class="team-loc-list">
+          <div v-for="entry in teamLocations" :key="entry.employee.id" class="team-loc-row">
+            <div class="team-loc-avatar">{{ teamInitials(entry.employee.full_name) }}</div>
+            <div class="team-loc-meta">
+              <p class="team-loc-name">{{ entry.employee.full_name }}</p>
+              <p class="team-loc-num">{{ entry.employee.employee_number }}</p>
+            </div>
+            <div class="team-loc-status">
+              <span v-if="entry.check_in" :class="['badge', teamWlBadgeClass(entry.check_in.location_type)]">
+                {{ teamWlLabel(entry.check_in) }}
+              </span>
+              <span v-else class="badge badge-gray">Not checked in</span>
+              <span v-if="entry.check_in" class="team-loc-time">since {{ fmtTime(entry.check_in.checked_in_at) }}</span>
+            </div>
+          </div>
+        </div>
+        <p v-else class="dash-empty">No team members found.</p>
+      </div>
+
       <!-- ── HR Modules quick-access ────────────────────────────────────── -->
       <div class="dash-modules-section">
         <p class="section-title">HR Modules</p>
@@ -635,6 +693,25 @@ const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "nu
   min-height: 4px;
 }
 .trend-month { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; white-space: nowrap; }
+
+/* ── Team work locations ───────────────────────────────────────────────────── */
+.dash-team-loc-card { margin-bottom: 24px; }
+.team-loc-list { display: flex; flex-direction: column; gap: 10px; }
+.team-loc-row  { display: flex; align-items: center; gap: 12px; }
+
+.team-loc-avatar {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--color-neutral-100); color: var(--color-brand-base);
+  font-size: 12px; font-weight: 700;
+}
+
+.team-loc-meta { flex: 1; min-width: 0; }
+.team-loc-name { font-size: 13px; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.team-loc-num  { font-size: 11px; color: var(--color-text-muted); margin-top: 1px; }
+
+.team-loc-status { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.team-loc-time   { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; }
 
 /* ── Modules ───────────────────────────────────────────────────────────────── */
 .dash-modules-section { margin-top: 8px; }
