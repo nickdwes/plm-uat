@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Payroll;
 
 use App\Http\Controllers\Controller;
+use App\Models\PayrollPeriod;
 use App\Services\Payroll\PayrollService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +17,7 @@ class PayrollController extends Controller
     /** GET /api/v1/payroll */
     public function index(Request $request): JsonResponse
     {
+        $this->authorize('viewAny', PayrollPeriod::class);
         $orgId   = app('current.organization_id');
         $periods = $this->service->listPeriods($orgId, $request->integer('per_page', 20));
         return response()->json($periods);
@@ -24,6 +26,7 @@ class PayrollController extends Controller
     /** POST /api/v1/payroll */
     public function store(Request $request): JsonResponse
     {
+        $this->authorize('create', PayrollPeriod::class);
         $data = $request->validate([
             'name'         => 'required|string|max:80',
             'start_date'   => 'required|date',
@@ -38,6 +41,7 @@ class PayrollController extends Controller
     /** GET /api/v1/payroll/{payrollPeriod} */
     public function show(int $payrollPeriod): JsonResponse
     {
+        $this->authorize('view', PayrollPeriod::class);
         $period = $this->service->getPeriod($payrollPeriod);
         return response()->json($period);
     }
@@ -45,6 +49,7 @@ class PayrollController extends Controller
     /** POST /api/v1/payroll/{payrollPeriod}/process */
     public function process(int $payrollPeriod): JsonResponse
     {
+        $this->authorize('process', PayrollPeriod::class);
         $period = $this->service->processPeriod($payrollPeriod);
         return response()->json($period);
     }
@@ -52,6 +57,7 @@ class PayrollController extends Controller
     /** POST /api/v1/payroll/{payrollPeriod}/approve */
     public function approve(int $payrollPeriod): JsonResponse
     {
+        $this->authorize('approve', PayrollPeriod::class);
         $period = $this->service->approvePeriod($payrollPeriod);
         return response()->json($period);
     }
@@ -59,6 +65,7 @@ class PayrollController extends Controller
     /** POST /api/v1/payroll/{payrollPeriod}/mark-paid */
     public function markPaid(int $payrollPeriod): JsonResponse
     {
+        $this->authorize('process', PayrollPeriod::class);
         $period = $this->service->markPaid($payrollPeriod);
         return response()->json($period);
     }
@@ -68,6 +75,7 @@ class PayrollController extends Controller
     /** GET /api/v1/payroll/{payrollPeriod}/slip/{employee} */
     public function slip(int $payrollPeriod, int $employee): JsonResponse
     {
+        $this->authorize('view', PayrollPeriod::class);
         $run = $this->service->getSlip($payrollPeriod, $employee);
         return response()->json($run);
     }

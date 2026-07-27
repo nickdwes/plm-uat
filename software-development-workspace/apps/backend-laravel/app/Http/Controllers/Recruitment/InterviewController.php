@@ -470,7 +470,7 @@ class InterviewController extends Controller
         $search = $request->query('q', '');
 
         $query = Employee::where('primary_organization_id', $orgId)
-            ->where('employment_status', 'active')
+            ->where('status', 'active')
             ->select('id', 'first_name', 'last_name', 'work_email', 'designation_id')
             ->with('designation:id,title');
 

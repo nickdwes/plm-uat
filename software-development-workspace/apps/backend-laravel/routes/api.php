@@ -404,10 +404,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::prefix('catalog')->group(function () {
             Route::get('/',                [TrainingItemController::class, 'index']);
             Route::post('/',               [TrainingItemController::class, 'store']);
+            Route::get('/stats',           [TrainingItemController::class, 'stats']);
             Route::get('/{trainingItem}',  [TrainingItemController::class, 'show']);
             Route::put('/{trainingItem}',  [TrainingItemController::class, 'update']);
             Route::delete('/{trainingItem}', [TrainingItemController::class, 'destroy']);
-            Route::get('/stats',           [TrainingItemController::class, 'stats']);
         });
 
         // Competencies & Role Profiles

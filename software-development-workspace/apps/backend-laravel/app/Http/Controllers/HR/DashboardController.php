@@ -29,9 +29,10 @@ class DashboardController extends Controller
             ->whereMonth('date_hired', now()->month)
             ->count();
 
+        $lastMonth = now()->subMonthNoOverflow();
         $newHiresLastMonth = Employee::where('primary_organization_id', $orgId)
-            ->whereYear('date_hired', now()->subMonth()->year)
-            ->whereMonth('date_hired', now()->subMonth()->month)
+            ->whereYear('date_hired', $lastMonth->year)
+            ->whereMonth('date_hired', $lastMonth->month)
             ->count();
 
         // ── Leave statistics ──────────────────────────────────────────────────

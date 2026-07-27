@@ -27,6 +27,13 @@
 .bashrc
 .profile
 
+# Git / tool config living in $HOME
+.gitconfig
+.wget-hsts
+
+# Database dumps (contain production HR data)
+backups/
+
 # Nested repos (managed separately)
 PLM-Rebuild/
 frappe_docker/

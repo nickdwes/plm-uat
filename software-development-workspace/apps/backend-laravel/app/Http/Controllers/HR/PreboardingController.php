@@ -307,7 +307,7 @@ class PreboardingController extends Controller
         ], fn($v) => $v !== null);
 
         if (isset($data['enabled_sections'])) {
-            $updates['form_config'] = ['enabled_sections' => $data['enabled_sections']];
+            $updates['form_config'] = array_merge($record->form_config ?? [], ['enabled_sections' => $data['enabled_sections']]);
         }
 
         $record->update($updates);
