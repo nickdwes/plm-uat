@@ -161,6 +161,32 @@ export interface Employee {
 
 
 // ---------------------------------------------------------------------------
+// Work Location Check-In
+// ---------------------------------------------------------------------------
+
+export type WorkLocationType = "office" | "home" | "customer_site";
+
+export interface WorkLocationCheckIn {
+  id: number;
+  location_type: WorkLocationType;
+  customer_name: string | null;
+  notes: string | null;
+  checked_in_at: string;
+  checked_out_at: string | null;
+  duration_minutes: number | null;
+}
+
+export interface WorkLocationToday {
+  current: WorkLocationCheckIn | null;
+  today: WorkLocationCheckIn[];
+}
+
+export interface TeamLocationEntry {
+  employee: { id: number; full_name: string; employee_number: string; photo_url: string | null };
+  check_in: WorkLocationCheckIn | null;
+}
+
+// ---------------------------------------------------------------------------
 // Leave
 // ---------------------------------------------------------------------------
 

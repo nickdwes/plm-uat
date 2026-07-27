@@ -5,6 +5,7 @@ namespace App\Http\Controllers\HR;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Employee\CreateEmployeeRequest;
 use App\Http\Requests\Employee\ExitEmployeeRequest;
+use App\Http\Requests\Employee\UpdateContactDetailsRequest;
 use App\Http\Requests\Employee\UpdateEmployeeRequest;
 use App\Http\Resources\EmployeeResource;
 use App\Models\Employee;
@@ -41,6 +42,34 @@ class EmployeeController extends Controller
         );
 
         return new EmployeeResource($employee->load(['primaryOrganization', 'department', 'designation', 'jobGrade']));
+    }
+
+    /** GET /api/v1/employees/me — the logged-in user's own employee record */
+    public function me(Request $request): EmployeeResource
+    {
+        $employee = $request->user()->employee;
+        abort_if(!$employee, 404, 'No employee record linked to your account.');
+
+        $employee->load([
+            'primaryOrganization', 'department', 'designation', 'jobGrade',
+            'manager', 'emergencyContacts',
+            'directReports.designation',
+            'qualifications',
+            'secondments',
+        ]);
+
+        return new EmployeeResource($employee);
+    }
+
+    /** PUT /api/v1/employees/me/contact — self-service contact details edit */
+    public function updateOwnContact(UpdateContactDetailsRequest $request): EmployeeResource
+    {
+        $employee = $request->user()->employee;
+        abort_if(!$employee, 404, 'No employee record linked to your account.');
+
+        $employee->update($request->validated());
+
+        return new EmployeeResource($employee->fresh());
     }
 
     public function show(int $employee): EmployeeResource

@@ -211,6 +211,11 @@ class Employee extends Model
         return $this->hasMany(EmployeeVehicle::class);
     }
 
+    public function workLocationCheckIns(): HasMany
+    {
+        return $this->hasMany(WorkLocationCheckIn::class);
+    }
+
     public function onboardingInductions(): HasMany
     {
         return $this->hasMany(OnboardingInduction::class);

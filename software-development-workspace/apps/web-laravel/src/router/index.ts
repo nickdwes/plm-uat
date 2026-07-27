@@ -8,6 +8,7 @@ import EmployeesView       from "../views/EmployeesView.vue";
 import EmployeeDetailView  from "../views/EmployeeDetailView.vue";
 import EmployeeDependentsView from "../views/EmployeeDependentsView.vue";
 import EmployeeVehiclesView   from "../views/EmployeeVehiclesView.vue";
+import MyInfoView          from "../views/MyInfoView.vue";
 import OnboardingView      from "../views/OnboardingView.vue";
 import LeaveView           from "../views/LeaveView.vue";
 import LeaveApprovalsView  from "../views/LeaveApprovalsView.vue";
@@ -75,6 +76,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/employees/:id/dependents", name: "employee-dependents", component: EmployeeDependentsView, props: true },
   { path: "/employees/:id/vehicles",   name: "employee-vehicles",   component: EmployeeVehiclesView,   props: true },
   { path: "/employees/:id",   name: "employee-detail",  component: EmployeeDetailView, props: true },
+  { path: "/my-info",         name: "my-info",          component: MyInfoView },
   { path: "/leave",           name: "leave",            component: LeaveView },
   { path: "/leave/approvals", name: "leave-approvals",  component: LeaveApprovalsView },
   { path: "/leave/admin",     name: "leave-admin",      component: LeaveAdminView },

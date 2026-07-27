@@ -33,6 +33,7 @@ use App\Http\Controllers\Training\VendorComplianceController;
 use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Goals\GoalController;
 use App\Http\Controllers\Roster\HandoverController;
 use App\Http\Controllers\Roster\RosterConfigController;
@@ -94,6 +95,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     Route::prefix('employees')->group(function () {
         Route::get('/',                  [EmployeeController::class, 'index']);
         Route::post('/',                 [EmployeeController::class, 'store']);
+
+        // Self-service "My Info" (must be registered before /{employee} to avoid shadowing)
+        Route::get('/me',                [EmployeeController::class, 'me']);
+        Route::put('/me/contact',        [EmployeeController::class, 'updateOwnContact']);
+
         Route::get('/{employee}',        [EmployeeController::class, 'show']);
         Route::put('/{employee}',        [EmployeeController::class, 'update']);
         Route::post('/{employee}/exit',  [EmployeeController::class, 'exit']);
@@ -136,6 +142,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{employee}/documents',                         [DocumentController::class, 'store']);
         Route::get('/{employee}/documents/{document}/download',      [DocumentController::class, 'download']);
         Route::delete('/{employee}/documents/{document}',            [DocumentController::class, 'destroy']);
+    });
+
+    // ── Work Location Check-In (self-service + team view) ────────────────────
+    Route::prefix('work-location')->group(function () {
+        Route::get('/today',      [WorkLocationController::class, 'today']);
+        Route::get('/history',    [WorkLocationController::class, 'history']);
+        Route::get('/team',       [WorkLocationController::class, 'team']);
+        Route::post('/check-in',  [WorkLocationController::class, 'checkIn']);
+        Route::post('/check-out', [WorkLocationController::class, 'checkOut']);
     });
 
     // ── Pre-Onboarding (Preboarding) ──────────────────────────────────────────
