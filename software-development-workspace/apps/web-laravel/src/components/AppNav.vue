@@ -319,91 +319,200 @@ watch(() => route.name, () => {
 </template>
 
 <style scoped>
-/* Group toggle button — same visual as nav-item but is a <button> */
-.nav-group-toggle {
-  width: 100%;
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  display: flex;
-  align-items: center;
-  gap: 0.625rem;
-  padding: 0.5rem 0.875rem;
-  border-radius: 0.5rem;
+/*
+ * Migrated to the Konvergenz design system — see docs/design-system.md.
+ * All sidebar styling now lives here rather than in the global style.css;
+ * AppNav is the only consumer of these classes.
+ *
+ * `@reference` gives this scoped block access to the theme so `@apply` can
+ * resolve token-backed utilities. Repeated patterns (.nav-item, .nav-child)
+ * stay as named classes — the nav renders 30+ of them, and inlining a dozen
+ * utilities per row would obscure the markup rather than clarify it.
+ */
+@reference "../theme.css";
+
+/* ── Shell ─────────────────────────────────────────────────────────────── */
+.app-sidebar {
+  @apply flex flex-col shrink-0 overflow-hidden;
+  width: var(--sidebar-width);
+  background: var(--color-sidebar-bg);
+}
+
+.sidebar-logo {
+  @apply flex items-center p-4;
+  min-height: var(--header-height);
+  border-bottom: 1px solid var(--color-sidebar-divider);
+}
+
+.sidebar-logo-img {
+  @apply h-auto object-contain;
+  width: 140px;
+}
+
+.sidebar-nav {
+  @apply flex flex-1 flex-col gap-0.5 overflow-y-auto p-3;
+}
+
+.sidebar-section {
+  @apply px-3 pt-3 pb-2 mt-2 font-semibold uppercase;
+  font-size: var(--text-xs-size);
+  letter-spacing: 0.08em;
   color: var(--color-sidebar-text);
-  font-size: inherit;
+  opacity: 0.5;
+}
+
+.sidebar-divider {
+  @apply mx-3 my-2 h-px;
+  background: var(--color-sidebar-divider);
+}
+
+/* ── Nav items ─────────────────────────────────────────────────────────── */
+.nav-item {
+  @apply relative flex items-center gap-3 rounded-lg border-l-[3px] border-transparent px-3 py-[9px] font-medium no-underline;
+  font-size: var(--text-sm-size);
+  color: var(--color-sidebar-text);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.nav-item svg {
+  @apply size-4 shrink-0 opacity-80;
+}
+
+.nav-item:hover {
+  background: var(--color-sidebar-hover-bg);
+  color: var(--color-sidebar-text-hover);
+}
+
+.nav-item.active {
+  @apply font-semibold;
+  background: var(--color-sidebar-active-bg);
+  color: var(--color-sidebar-text-active);
+  border-left-color: var(--color-sidebar-active-border);
+}
+
+.nav-item.active svg {
+  @apply opacity-100;
+}
+
+.nav-item:focus-visible {
+  @apply outline-2 outline-offset-[-2px];
+  outline-color: var(--color-sidebar-accent);
+}
+
+/* ── Collapsible groups ────────────────────────────────────────────────── */
+.nav-group-toggle {
+  @apply w-full cursor-pointer border-none bg-transparent text-left;
   font-family: inherit;
-  line-height: 1.4;
-  transition: background 0.15s;
+  font-size: inherit;
 }
 
-.nav-group-toggle:hover {
-  background: rgba(255, 255, 255, 0.07);
-}
-
+/* Active group label. Uses the sidebar accent, not --color-brand-base: the
+   brand blue measures 2.05:1 on this ground, which made the active state less
+   legible than the idle state. */
 .nav-group-toggle.group-active {
-  color: var(--color-brand-base, #e63946);
-  font-weight: 600;
+  @apply font-semibold;
+  color: var(--color-sidebar-accent);
 }
 
-/* Chevron icon — pushed to the right, rotates when open */
-.nav-group-toggle span {
-  flex: 1;
-}
-
-.nav-group-toggle svg:first-child {
-  width: 1.1rem;
-  height: 1.1rem;
-  flex-shrink: 0;
+.nav-group-toggle > span {
+  @apply flex-1;
 }
 
 .chevron {
-  width: 0.9rem;
-  height: 0.9rem;
-  flex-shrink: 0;
-  transition: transform 0.2s ease;
-  opacity: 0.6;
+  @apply size-3.5 shrink-0 opacity-60;
+  transition: transform var(--transition-base);
 }
 
 .chevron.open {
-  transform: rotate(180deg);
+  @apply rotate-180;
 }
 
-/* Children container — slides open/closed */
 .nav-group-children {
-  overflow: hidden;
-  max-height: 0;
-  transition: max-height 0.25s ease;
+  @apply max-h-0 overflow-hidden;
+  transition: max-height 250ms ease;
 }
 
 .nav-group-children.open {
   max-height: 400px;
 }
 
-/* Child items — indented with a subtle left track line */
+/* ── Child items ───────────────────────────────────────────────────────── */
 .nav-child {
-  padding-left: 2.25rem !important;
+  @apply relative pl-9;
   font-size: 0.85em;
-  position: relative;
 }
 
 .nav-child::before {
+  @apply absolute top-1/2 size-1 -translate-y-1/2 rounded-full opacity-35;
   content: '';
-  position: absolute;
   left: 1.1rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
   background: currentColor;
-  opacity: 0.35;
 }
 
 .nav-child.active::before {
-  opacity: 1;
-  background: var(--color-brand-base, #e63946);
+  @apply opacity-100;
+  background: var(--color-sidebar-accent);
+}
+
+/* ── Footer ────────────────────────────────────────────────────────────── */
+.sidebar-footer {
+  @apply px-4 py-3;
+  border-top: 1px solid var(--color-sidebar-divider);
+}
+
+.sidebar-user {
+  @apply flex items-center gap-3;
+}
+
+.user-avatar {
+  @apply flex size-8 shrink-0 items-center justify-center rounded-full font-bold;
+  font-size: var(--text-xs-size);
+  background: var(--color-brand-base);
+  color: var(--color-on-brand);
+}
+
+.user-info {
+  @apply min-w-0 flex-1;
+}
+
+.user-name {
+  @apply truncate font-semibold;
+  font-size: var(--text-xs-size);
+  color: var(--color-sidebar-text-active);
+}
+
+.user-role {
+  @apply truncate opacity-60;
+  font-size: var(--text-xs-size);
+  color: var(--color-sidebar-text);
+}
+
+.logout-btn {
+  @apply flex shrink-0 cursor-pointer items-center rounded-md border-none bg-transparent p-1;
+  color: var(--color-sidebar-text);
+  transition: color var(--transition-fast);
+}
+
+.logout-btn:hover {
+  color: var(--color-sidebar-text-hover);
+}
+
+.logout-btn:focus-visible {
+  @apply outline-2 outline-offset-2;
+  outline-color: var(--color-sidebar-accent);
+}
+
+.logout-btn svg {
+  @apply size-4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chevron,
+  .nav-group-children,
+  .nav-item,
+  .logout-btn {
+    transition: none;
+  }
 }
 </style>
 
