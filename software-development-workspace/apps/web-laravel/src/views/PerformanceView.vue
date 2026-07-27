@@ -636,7 +636,7 @@ watch(tab, (v) => {
 .okr-subtabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:2px solid #e2e8f0; }
 .okr-stab { background:none; border:none; border-bottom:2px solid transparent; margin-bottom:-2px; padding:8px 18px; font-size:0.88rem; font-weight:500; color:#64748b; cursor:pointer; transition:all 0.15s; }
 .okr-stab:hover { color:#1e293b; }
-.okr-stab-active { color:var(--color-brand-base,#004C97); border-bottom-color:var(--color-brand-base,#004C97); font-weight:700; }
+.okr-stab-active { color:var(--color-brand-base); border-bottom-color:var(--color-brand-base); font-weight:700; }
 
 .okr-section { display:flex; flex-direction:column; gap:16px; }
 .okr-toolbar { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
@@ -694,7 +694,7 @@ watch(tab, (v) => {
 .okr-editable   { cursor:pointer; position:relative; }
 .okr-editable:hover .okr-edit-hint { opacity:1; }
 .okr-edit-hint  { font-size:0.65rem; color:#94a3b8; margin-left:4px; opacity:0; transition:opacity 0.15s; }
-.okr-inline-input { width:70px; border:1px solid var(--color-brand-base,#004C97); border-radius:4px; padding:2px 6px; font-size:0.8rem; text-align:center; font-family:ui-monospace,monospace; outline:none; }
+.okr-inline-input { width:70px; border:1px solid var(--color-brand-base); border-radius:4px; padding:2px 6px; font-size:0.8rem; text-align:center; font-family:ui-monospace,monospace; outline:none; }
 
 @media (max-width:768px) {
   .okr-summary-grid { grid-template-columns:1fr; }

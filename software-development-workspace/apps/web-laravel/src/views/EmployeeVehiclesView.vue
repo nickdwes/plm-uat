@@ -210,7 +210,7 @@ onMounted(load);
 <style scoped>
 .veh-root { padding: 24px; max-width: 1100px; }
 .veh-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #94a3b8; margin-bottom: 20px; }
-.veh-bc-link { cursor: pointer; color: var(--color-brand-base, #004C97); font-weight: 500; }
+.veh-bc-link { cursor: pointer; color: var(--color-brand-base); font-weight: 500; }
 .veh-bc-link:hover { text-decoration: underline; }
 .veh-bc-current { color: #475569; font-weight: 500; }
 
@@ -235,7 +235,7 @@ onMounted(load);
 .veh-table td { padding: 12px 14px; border-bottom: 1px solid #f8fafc; vertical-align: middle; color: #0f172a; }
 .veh-table tr:last-child td { border-bottom: none; }
 .veh-table tr:hover td { background: #f8fafc; }
-.veh-reg { font-family: ui-monospace, monospace; font-weight: 700; font-size: 0.88rem; color: var(--color-brand-base, #004C97); text-transform: uppercase; }
+.veh-reg { font-family: ui-monospace, monospace; font-weight: 700; font-size: 0.88rem; color: var(--color-brand-base); text-transform: uppercase; }
 .veh-slot-badge { background: #f0fdf4; border: 1px solid #86efac; color: #166534; font-size: 0.78rem; font-weight: 600; padding: 2px 10px; border-radius: 20px; font-family: ui-monospace, monospace; }
 .veh-notes { color: #64748b; font-size: 0.82rem; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .veh-actions { display: flex; gap: 4px; }

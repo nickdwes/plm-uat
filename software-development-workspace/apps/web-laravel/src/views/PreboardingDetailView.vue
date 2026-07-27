@@ -1228,7 +1228,7 @@ function goConvert() {
 .pb-org-pill.selected .pb-org-radio { color: var(--color-brand-base); }
 
 .pb-secondment-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-.pb-secondment-row { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 14px; margin-bottom: 10px; background: var(--color-neutral-50, #fafafa); }
+.pb-secondment-row { border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 14px; margin-bottom: 10px; background: var(--color-neutral-50); }
 .pb-secondment-grid { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; }
 .pb-hint { font-size: 12px; color: var(--color-text-muted); font-weight: 400; margin-left: 4px; }
 @media (max-width: 600px) { .pb-secondment-grid { grid-template-columns: 1fr; } }
@@ -1240,11 +1240,11 @@ function goConvert() {
 
 /* Scope Modal */
 .pb-modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 9999; display: flex; align-items: center; justify-content: center; padding: 16px; }
-.pb-modal { background: var(--color-surface, #fff); border-radius: var(--radius-lg, 12px); width: 100%; max-width: 520px; box-shadow: 0 20px 60px rgba(0,0,0,.25); display: flex; flex-direction: column; max-height: 90vh; overflow: hidden; }
+.pb-modal { background: var(--color-surface); border-radius: var(--radius-lg, 12px); width: 100%; max-width: 520px; box-shadow: 0 20px 60px rgba(0,0,0,.25); display: flex; flex-direction: column; max-height: 90vh; overflow: hidden; }
 .pb-modal-header { display: flex; justify-content: space-between; align-items: center; padding: 18px 20px 12px; border-bottom: 1px solid var(--color-border); }
 .pb-modal-header h3 { margin: 0; font-size: 16px; font-weight: 700; }
 .pb-modal-close { background: none; border: none; cursor: pointer; font-size: 18px; color: var(--color-text-muted); padding: 2px 6px; border-radius: 4px; }
-.pb-modal-close:hover { background: var(--color-neutral-100, #f1f5f9); }
+.pb-modal-close:hover { background: var(--color-neutral-100); }
 .pb-modal-body { padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
 .pb-modal-sub { margin: 0 0 4px; font-size: 13px; color: var(--color-text-muted); }
 .pb-modal-footer { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--color-border); }

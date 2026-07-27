@@ -166,8 +166,8 @@ async function moveStage(stageId: number) {
 /* Tab bar */
 .modal-tab-bar { display: flex; border-bottom: 1px solid var(--color-border); padding: 0 var(--space-6); }
 .modal-tab { position: relative; padding: 10px 14px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-size: var(--font-size-sm); color: var(--color-text-muted); margin-bottom: -1px; display: flex; align-items: center; gap: 6px; }
-.modal-tab.active { border-bottom-color: var(--color-brand-base, #004C97); color: var(--color-brand-base, #004C97); font-weight: 600; }
-.tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-brand-base, #004C97); display: inline-block; }
+.modal-tab.active { border-bottom-color: var(--color-brand-base); color: var(--color-brand-base); font-weight: 600; }
+.tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-brand-base); display: inline-block; }
 
 .modal-body { padding: var(--space-5) var(--space-6); display: flex; flex-direction: column; gap: var(--space-6); }
 .panel-section { display: flex; flex-direction: column; gap: var(--space-3); }
@@ -176,20 +176,20 @@ async function moveStage(stageId: number) {
 /* Stage tab */
 .stage-buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .stage-btn { padding: 5px 12px; border-radius: 20px; border: 1px solid var(--color-border); background: var(--color-bg); font-size: var(--font-size-sm); cursor: pointer; transition: background 0.15s; }
-.stage-btn:hover:not(:disabled) { background: var(--color-brand-light, rgba(0,76,151,0.1)); border-color: var(--color-brand-base, #004C97); }
-.stage-btn.active { background: var(--color-brand-base, #004C97); color: #fff; border-color: var(--color-brand-base, #004C97); }
+.stage-btn:hover:not(:disabled) { background: var(--color-brand-light, rgba(0,76,151,0.1)); border-color: var(--color-brand-base); }
+.stage-btn.active { background: var(--color-brand-base); color: #fff; border-color: var(--color-brand-base); }
 .stage-btn:disabled { opacity: 0.55; cursor: not-allowed; }
 .form-input { padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: var(--font-size-base); width: 100%; resize: vertical; }
 .cand-info { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-size-sm); color: var(--color-text-muted); }
 
 /* Document cards */
 .doc-card { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg); }
-.doc-icon { flex-shrink: 0; width: 36px; height: 36px; background: rgba(0,76,151,0.08); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--color-brand-base, #004C97); }
+.doc-icon { flex-shrink: 0; width: 36px; height: 36px; background: rgba(0,76,151,0.08); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--color-brand-base); }
 .doc-svg { width: 18px; height: 18px; }
 .doc-details { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .doc-name { font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .doc-label { font-size: 11px; color: var(--color-text-muted); }
-.doc-btn { flex-shrink: 0; padding: 5px 12px; border-radius: var(--radius-sm); background: var(--color-brand-base, #004C97); color: #fff; font-size: var(--font-size-xs); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.doc-btn { flex-shrink: 0; padding: 5px 12px; border-radius: var(--radius-sm); background: var(--color-brand-base); color: #fff; font-size: var(--font-size-xs); font-weight: 600; text-decoration: none; white-space: nowrap; }
 .doc-btn:hover { opacity: 0.85; }
 
 /* Cover letter */
@@ -197,7 +197,7 @@ async function moveStage(stageId: number) {
 
 .empty-state { font-size: var(--font-size-sm); color: var(--color-text-muted); font-style: italic; }
 
-.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: capitalize; background: rgba(0,76,151,0.1); color: var(--color-brand-base, #004C97); }
+.badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: capitalize; background: rgba(0,76,151,0.1); color: var(--color-brand-base); }
 .badge.hired    { background: rgba(16,185,129,0.1); color: #059669; }
 .badge.rejected { background: rgba(239,68,68,0.1); color: #dc2626; }
 .badge.shortlisted { background: rgba(245,158,11,0.1); color: #d97706; }
@@ -205,5 +205,5 @@ async function moveStage(stageId: number) {
 .error-msg { color: #dc2626; font-size: var(--font-size-sm); }
 .keywords { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .keyword-chip { padding: 2px 8px; border-radius: 10px; background: var(--color-bg); border: 1px solid var(--color-border); font-size: 11px; color: var(--color-text-muted); }
-.link { color: var(--color-brand-base, #004C97); font-size: var(--font-size-sm); }
+.link { color: var(--color-brand-base); font-size: var(--font-size-sm); }
 </style>

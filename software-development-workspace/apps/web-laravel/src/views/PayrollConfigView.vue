@@ -581,9 +581,9 @@ function formatRate(r: StatutoryRate) {
 
 .btn-seed     { background: #7c3aed; color: #fff; border: none; border-radius: var(--radius-md); padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .btn-seed:disabled { opacity: .6; }
-.btn-primary  { background: var(--color-brand-base, #4f46e5); color: #fff; border: none; border-radius: var(--radius-md); padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.btn-primary  { background: var(--color-brand-base); color: #fff; border: none; border-radius: var(--radius-md); padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .btn-primary:disabled { opacity: .6; }
-.btn-secondary { background: var(--color-neutral-100, #f1f5f9); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 7px 14px; font-size: 13px; cursor: pointer; }
+.btn-secondary { background: var(--color-neutral-100); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 7px 14px; font-size: 13px; cursor: pointer; }
 
 .alert-error   { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 10px 14px; border-radius: var(--radius-md); font-size: 13px; }
 .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #16a34a; padding: 10px 14px; border-radius: var(--radius-md); font-size: 13px; }
@@ -591,7 +591,7 @@ function formatRate(r: StatutoryRate) {
 
 .pc-tabs { display: flex; gap: 2px; margin-bottom: 20px; border-bottom: 2px solid var(--color-border); }
 .pc-tab  { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 10px 18px; cursor: pointer; font-size: 14px; color: var(--color-text-muted); font-weight: 500; transition: all .15s; }
-.pc-tab.active  { color: var(--color-brand-base, #4f46e5); border-bottom-color: var(--color-brand-base, #4f46e5); font-weight: 700; }
+.pc-tab.active  { color: var(--color-brand-base); border-bottom-color: var(--color-brand-base); font-weight: 700; }
 .pc-tab:hover:not(.active) { color: var(--color-text); }
 
 .pc-card        { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 24px; }
@@ -603,18 +603,18 @@ function formatRate(r: StatutoryRate) {
 .pc-field-inline label { color: var(--color-text-muted); white-space: nowrap; }
 
 .pc-table  { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
-.pc-table th { text-align: left; padding: 8px 10px; background: var(--color-neutral-50, #f8fafc); border-bottom: 1px solid var(--color-border); font-weight: 600; font-size: 12px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.pc-table th { text-align: left; padding: 8px 10px; background: var(--color-neutral-50); border-bottom: 1px solid var(--color-border); font-weight: 600; font-size: 12px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .04em; }
 .pc-table td { padding: 9px 10px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
 .pc-th-center { text-align: center !important; }
 .pc-td-center { text-align: center; }
 .pc-td-num    { text-align: center; color: var(--color-text-muted); width: 36px; }
 .pc-td-actions { white-space: nowrap; text-align: right; display: flex; gap: 6px; justify-content: flex-end; }
-.pc-tr-hover:hover td { background: var(--color-neutral-50, #f8fafc); }
+.pc-tr-hover:hover td { background: var(--color-neutral-50); }
 .pc-tr-editing td { background: #fffbeb; }
 .pc-empty  { text-align: center; color: var(--color-text-muted); padding: 24px; font-style: italic; }
 
 .pc-input    { border: 1px solid var(--color-border); border-radius: var(--radius-sm, 6px); padding: 6px 10px; font-size: 13px; width: 100%; background: var(--color-surface); color: var(--color-text); }
-.pc-input:focus { outline: 2px solid var(--color-brand-base, #4f46e5); outline-offset: 1px; }
+.pc-input:focus { outline: 2px solid var(--color-brand-base); outline-offset: 1px; }
 .pc-input-sm { width: 110px; }
 .pc-input-xs { min-width: 80px; }
 .pc-select   { padding: 6px 8px; }
@@ -634,7 +634,7 @@ function formatRate(r: StatutoryRate) {
 
 .pc-btn-edit   { font-size: 12px; background: none; border: 1px solid var(--color-border); border-radius: 4px; padding: 3px 10px; cursor: pointer; }
 .pc-btn-del    { font-size: 12px; background: none; border: 1px solid #fecaca; color: #dc2626; border-radius: 4px; padding: 3px 8px; cursor: pointer; }
-.pc-btn-save   { font-size: 12px; background: var(--color-brand-base, #4f46e5); color: #fff; border: none; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
+.pc-btn-save   { font-size: 12px; background: var(--color-brand-base); color: #fff; border: none; border-radius: 4px; padding: 3px 10px; cursor: pointer; }
 .pc-btn-cancel { font-size: 12px; background: none; border: 1px solid var(--color-border); border-radius: 4px; padding: 3px 8px; cursor: pointer; }
 
 /* Rates tab */

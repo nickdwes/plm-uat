@@ -181,8 +181,8 @@ watch(currentOrgSlug, loadOptions);
 .back-btn { background: none; border: none; cursor: pointer; color: var(--color-text-muted); font-size: var(--font-size-sm); margin-bottom: 4px; display: block; }
 .steps { display: flex; gap: var(--space-2); align-items: center; }
 .step-dot { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--color-border); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--color-text-muted); }
-.step-dot.active { border-color: var(--color-brand-base, #004C97); color: var(--color-brand-base, #004C97); }
-.step-dot.done { background: var(--color-brand-base, #004C97); border-color: var(--color-brand-base, #004C97); color: #fff; }
+.step-dot.active { border-color: var(--color-brand-base); color: var(--color-brand-base); }
+.step-dot.done { background: var(--color-brand-base); border-color: var(--color-brand-base); color: #fff; }
 .wizard-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); max-width: 720px; }
 .step-title { font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); margin-bottom: var(--space-4); }
 .step-desc { font-size: var(--font-size-sm); color: var(--color-text-muted); margin-bottom: var(--space-4); }

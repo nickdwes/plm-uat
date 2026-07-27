@@ -244,7 +244,7 @@ onMounted(load);
 <style scoped>
 .dep-root { padding: 24px; max-width: 1100px; }
 .dep-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #94a3b8; margin-bottom: 20px; }
-.dep-bc-link { cursor: pointer; color: var(--color-brand-base, #004C97); font-weight: 500; }
+.dep-bc-link { cursor: pointer; color: var(--color-brand-base); font-weight: 500; }
 .dep-bc-link:hover { text-decoration: underline; }
 .dep-bc-current { color: #475569; font-weight: 500; }
 

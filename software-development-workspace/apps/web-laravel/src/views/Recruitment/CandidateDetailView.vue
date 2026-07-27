@@ -368,7 +368,7 @@ const SOURCES = ["LinkedIn","Referral","Job Portal","Website","Internal","Agency
 .cd-hero-info { flex: 1; min-width: 0; }
 .cd-name { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--color-text); }
 .cd-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.cd-email { font-size: 13px; color: var(--color-brand-base, #004C97); text-decoration: none; }
+.cd-email { font-size: 13px; color: var(--color-brand-base); text-decoration: none; }
 .cd-email:hover { text-decoration: underline; }
 .cd-phone { font-size: 13px; color: var(--color-text-muted); }
 .cd-sep { color: var(--color-text-muted); }

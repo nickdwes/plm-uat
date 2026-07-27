@@ -235,7 +235,7 @@ watch(currentOrgSlug, () => { selected.value = null; load(); });
 .wf-list { display: flex; flex-direction: column; gap: var(--space-1); }
 .wf-item { padding: var(--space-3); border-radius: var(--radius-md); cursor: pointer; border: 1px solid transparent; }
 .wf-item:hover { background: var(--color-bg); }
-.wf-item.active { background: var(--color-bg); border-color: var(--color-brand-base, #004C97); }
+.wf-item.active { background: var(--color-bg); border-color: var(--color-brand-base); }
 .wf-name { font-weight: 600; font-size: var(--font-size-sm); }
 .wf-meta { font-size: 11px; color: var(--color-text-muted); }
 .empty-msg { padding: var(--space-4); color: var(--color-text-muted); font-size: var(--font-size-sm); text-align: center; }
@@ -244,7 +244,7 @@ watch(currentOrgSlug, () => { selected.value = null; load(); });
 .editor-header h3 { font-weight: 600; font-size: var(--font-size-lg); }
 .stages-list { display: flex; flex-direction: column; gap: var(--space-2); }
 .stage-row { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-md); }
-.stage-row.drag-over { border-color: var(--color-brand-base, #004C97); background: rgba(0,76,151,0.04); }
+.stage-row.drag-over { border-color: var(--color-brand-base); background: rgba(0,76,151,0.04); }
 .stage-row.dragging { opacity: 0.4; }
 .stage-drag-handle { cursor: grab; color: var(--color-text-muted); font-size: 18px; user-select: none; }
 .stage-badge { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; flex-shrink: 0; }
@@ -254,6 +254,6 @@ watch(currentOrgSlug, () => { selected.value = null; load(); });
 .icon-btn.danger:hover { color: #dc2626; }
 .empty-stages { text-align: center; padding: var(--space-5); color: var(--color-text-muted); font-size: var(--font-size-sm); }
 .add-stage-btn { align-self: flex-start; padding: 7px 16px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); background: none; cursor: pointer; font-size: var(--font-size-sm); color: var(--color-text-muted); margin-top: var(--space-2); }
-.add-stage-btn:hover { border-color: var(--color-brand-base, #004C97); color: var(--color-brand-base, #004C97); }
+.add-stage-btn:hover { border-color: var(--color-brand-base); color: var(--color-brand-base); }
 .no-selection { display: flex; align-items: center; justify-content: center; color: var(--color-text-muted); font-size: var(--font-size-sm); }
 </style>

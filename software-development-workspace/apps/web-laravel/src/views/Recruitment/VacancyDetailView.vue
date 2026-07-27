@@ -585,7 +585,7 @@ watch(currentOrgSlug, loadVacancy);
 
 .tab-bar { display: flex; gap: var(--space-2); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-5); }
 .tab-btn { padding: 8px 16px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-size: var(--font-size-sm); color: var(--color-text-muted); }
-.tab-btn.active { border-bottom-color: var(--color-brand-base, #004C97); color: var(--color-brand-base, #004C97); font-weight: 600; }
+.tab-btn.active { border-bottom-color: var(--color-brand-base); color: var(--color-brand-base); font-weight: 600; }
 .tab-panel { padding: var(--space-2) 0; }
 .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--space-5); }
 .detail-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-5); }

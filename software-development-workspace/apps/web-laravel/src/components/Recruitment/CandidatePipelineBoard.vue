@@ -118,7 +118,7 @@ function stageColor(type: string) {
 <style scoped>
 .pipeline-board { display: flex; gap: var(--space-4); overflow-x: auto; padding-bottom: var(--space-3); min-height: 480px; }
 .pipeline-column { flex: 0 0 240px; background: var(--color-bg); border-radius: var(--radius-lg); border: 2px solid transparent; transition: border-color 0.15s; display: flex; flex-direction: column; }
-.pipeline-column.drag-over { border-color: var(--color-brand-base, #004C97); background: rgba(0,76,151,0.04); }
+.pipeline-column.drag-over { border-color: var(--color-brand-base); background: rgba(0,76,151,0.04); }
 .col-header { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2); }
 .col-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .col-title { font-weight: var(--font-weight-semibold); font-size: var(--font-size-sm); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -130,7 +130,7 @@ function stageColor(type: string) {
 .card-name { font-weight: var(--font-weight-semibold); font-size: var(--font-size-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-sub { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .score-bar-bg { display: inline-block; width: 60px; height: 5px; border-radius: 3px; background: var(--color-border); vertical-align: middle; }
-.score-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--color-brand-base, #004C97); }
+.score-bar-fill { display: block; height: 100%; border-radius: 3px; background: var(--color-brand-base); }
 .card-score { display: flex; align-items: center; gap: var(--space-2); }
 .score-label { font-size: 11px; color: var(--color-text-muted); }
 .card-footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }

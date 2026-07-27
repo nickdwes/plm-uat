@@ -67,5 +67,5 @@ function update(key: string, value: unknown) {
 .form-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .required-star { color: var(--color-red); margin-left: 2px; }
 .form-input { padding: 8px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-md); font-size: var(--font-size-base); width: 100%; background: var(--color-surface); }
-.form-input:focus { outline: none; border-color: var(--color-brand-base, #004C97); }
+.form-input:focus { outline: none; border-color: var(--color-brand-base); }
 </style>

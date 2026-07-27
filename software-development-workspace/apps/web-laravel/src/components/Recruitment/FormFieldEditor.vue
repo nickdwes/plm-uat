@@ -125,7 +125,7 @@ function setOptions(idx: number, text: string) {
 <style scoped>
 .field-editor { display: flex; flex-direction: column; gap: var(--space-2); }
 .field-row { display: flex; align-items: flex-start; gap: var(--space-2); background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); transition: border-color 0.15s; }
-.field-row.drag-over { border-color: var(--color-brand-base, #004C97); background: rgba(0,76,151,0.04); }
+.field-row.drag-over { border-color: var(--color-brand-base); background: rgba(0,76,151,0.04); }
 .field-row.dragging { opacity: 0.4; }
 .drag-handle { cursor: grab; font-size: 18px; color: var(--color-text-muted); padding-top: 4px; user-select: none; }
 .field-inputs { flex: 1; display: flex; flex-direction: column; gap: var(--space-2); }
@@ -138,5 +138,5 @@ function setOptions(idx: number, text: string) {
 .remove-btn:hover { color: #dc2626; }
 .empty-hint { text-align: center; color: var(--color-text-muted); font-size: var(--font-size-sm); padding: var(--space-4); }
 .add-btn { align-self: flex-start; padding: 7px 16px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); background: none; cursor: pointer; font-size: var(--font-size-sm); color: var(--color-text-muted); }
-.add-btn:hover { border-color: var(--color-brand-base, #004C97); color: var(--color-brand-base, #004C97); }
+.add-btn:hover { border-color: var(--color-brand-base); color: var(--color-brand-base); }
 </style>

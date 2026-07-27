@@ -517,7 +517,7 @@ async function sendPanelistInvites() {
 .ism-context-strip {
   display: flex;
   align-items: stretch;
-  background: var(--color-brand-base, #004C97);
+  background: var(--color-brand-base);
   border-radius: 10px;
   overflow: hidden;
   padding: 14px 20px;
@@ -554,15 +554,15 @@ async function sendPanelistInvites() {
 /* ── Copy scoring link button ────────────────────────────────────────────── */
 .ism-copy-btn {
   background: none;
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   padding: 2px 8px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted);
   cursor: pointer;
 }
-.ism-copy-btn:hover { background: var(--color-bg, #f3f4f6); color: var(--color-text, #374151); }
+.ism-copy-btn:hover { background: var(--color-bg); color: var(--color-text); }
 
 /* ── Overlay + panel ─────────────────────────────────────────────────────── */
 .ism-overlay {
@@ -576,7 +576,7 @@ async function sendPanelistInvites() {
   padding: 16px;
 }
 .ism-panel {
-  background: var(--color-surface, #fff);
+  background: var(--color-surface);
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
   width: 100%;
@@ -593,16 +593,16 @@ async function sendPanelistInvites() {
   align-items: center;
   justify-content: space-between;
   padding: 18px 24px;
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
-.ism-title { font-size: 17px; font-weight: 700; color: var(--color-text, #0f172a); margin: 0; }
+.ism-title { font-size: 17px; font-weight: 700; color: var(--color-text); margin: 0; }
 .ism-close {
   background: none; border: none; cursor: pointer;
-  font-size: 22px; line-height: 1; color: var(--color-text-muted, #9ca3af);
+  font-size: 22px; line-height: 1; color: var(--color-text-muted);
   padding: 0 4px; border-radius: 4px;
 }
-.ism-close:hover { color: var(--color-text, #374151); background: var(--color-bg, #f3f4f6); }
+.ism-close:hover { color: var(--color-text); background: var(--color-bg); }
 
 /* ── Body / footer ───────────────────────────────────────────────────────── */
 .ism-body {
@@ -615,7 +615,7 @@ async function sendPanelistInvites() {
 }
 .ism-footer {
   padding: 14px 24px;
-  border-top: 1px solid var(--color-border, #e5e7eb);
+  border-top: 1px solid var(--color-border);
   display: flex;
   justify-content: flex-end;
   gap: 10px;
@@ -625,21 +625,21 @@ async function sendPanelistInvites() {
 /* ── Form fields ─────────────────────────────────────────────────────────── */
 .ism-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .ism-field { display: flex; flex-direction: column; gap: 5px; }
-.ism-label { font-size: 12px; font-weight: 600; color: var(--color-text-muted, #6b7280); text-transform: uppercase; letter-spacing: 0.04em; }
+.ism-label { font-size: 12px; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .ism-input {
   padding: 9px 12px;
-  border: 1px solid var(--color-border, #d1d5db);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   font-size: 13px;
-  color: var(--color-text, #111827);
-  background: var(--color-bg, #fff);
+  color: var(--color-text);
+  background: var(--color-bg);
   width: 100%;
   box-sizing: border-box;
   outline: none;
   font-family: inherit;
   resize: vertical;
 }
-.ism-input:focus { border-color: var(--color-brand-base, #004C97); box-shadow: 0 0 0 2px rgba(0,76,151,0.12); }
+.ism-input:focus { border-color: var(--color-brand-base); box-shadow: 0 0 0 2px rgba(0,76,151,0.12); }
 .ism-role-select { width: 120px; padding: 6px 10px; flex-shrink: 0; }
 
 .ism-teams-check {
@@ -652,16 +652,16 @@ async function sendPanelistInvites() {
   border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
-  color: var(--color-brand-base, #004C97);
+  color: var(--color-brand-base);
   cursor: pointer;
   user-select: none;
 }
-.ism-teams-check input { width: 15px; height: 15px; accent-color: var(--color-brand-base, #004C97); flex-shrink: 0; }
+.ism-teams-check input { width: 15px; height: 15px; accent-color: var(--color-brand-base); flex-shrink: 0; }
 
 /* ── Employee search dropdown ────────────────────────────────────────────── */
 .ism-search-results {
   margin-top: 4px;
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   max-height: 160px;
   overflow-y: auto;
@@ -672,33 +672,33 @@ async function sendPanelistInvites() {
   padding: 9px 14px;
   background: none;
   border: none;
-  border-bottom: 1px solid var(--color-border, #f3f4f6);
+  border-bottom: 1px solid var(--color-border);
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
 .ism-search-item:last-child { border-bottom: none; }
-.ism-search-item:hover { background: var(--color-bg, #f9fafb); }
-.ism-search-name { font-size: 13px; font-weight: 500; color: var(--color-text, #111827); }
-.ism-search-sub { font-size: 11px; color: var(--color-text-muted, #9ca3af); }
+.ism-search-item:hover { background: var(--color-bg); }
+.ism-search-name { font-size: 13px; font-weight: 500; color: var(--color-text); }
+.ism-search-sub { font-size: 11px; color: var(--color-text-muted); }
 
 /* No results / add-by-email */
 .ism-no-results {
   margin-top: 6px;
   padding: 10px 14px;
-  border: 1px dashed var(--color-border, #d1d5db);
+  border: 1px dashed var(--color-border);
   border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
-.ism-no-results-msg { font-size: 12px; color: var(--color-text-muted, #9ca3af); }
+.ism-no-results-msg { font-size: 12px; color: var(--color-text-muted); }
 .ism-add-email-btn {
   background: none;
-  border: 1px solid var(--color-brand-base, #004C97);
-  color: var(--color-brand-base, #004C97);
+  border: 1px solid var(--color-brand-base);
+  color: var(--color-brand-base);
   border-radius: 6px;
   padding: 4px 12px;
   font-size: 12px;
@@ -725,7 +725,7 @@ async function sendPanelistInvites() {
 
 .ism-panelist-list {
   margin-top: 6px;
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -734,14 +734,14 @@ async function sendPanelistInvites() {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  border-bottom: 1px solid var(--color-border, #f3f4f6);
+  border-bottom: 1px solid var(--color-border);
 }
 .ism-panelist-entry:last-child { border-bottom: none; }
 .ism-panelist-entry-info { flex: 1; min-width: 0; }
-.ism-panelist-role-sub { display: block; font-size: 11px; color: var(--color-text-muted, #9ca3af); }
+.ism-panelist-role-sub { display: block; font-size: 11px; color: var(--color-text-muted); }
 .ism-remove { background: none; border: none; cursor: pointer; font-size: 18px; color: #f87171; line-height: 1; padding: 0 4px; }
 .ism-remove:hover { color: #dc2626; }
-.ism-hint { font-size: 12px; color: var(--color-text-muted, #9ca3af); margin-top: 4px; }
+.ism-hint { font-size: 12px; color: var(--color-text-muted); margin-top: 4px; }
 
 /* ── Post-save: Teams banner ─────────────────────────────────────────────── */
 .ism-teams-banner {
@@ -762,44 +762,44 @@ async function sendPanelistInvites() {
 /* ── Interview summary ───────────────────────────────────────────────────── */
 .ism-summary {
   padding: 12px 14px;
-  background: var(--color-bg, #f9fafb);
+  background: var(--color-bg);
   border-radius: 8px;
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 .ism-summary-row { display: flex; gap: 20px; flex-wrap: wrap; }
-.ism-summary-item { font-size: 13px; color: var(--color-text, #374151); }
+.ism-summary-item { font-size: 13px; color: var(--color-text); }
 
 /* ── Action cards ────────────────────────────────────────────────────────── */
 .ism-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .ism-action-card {
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.ism-action-card-title { font-size: 13px; font-weight: 700; color: var(--color-text, #111827); margin: 0; }
-.ism-action-card-desc { font-size: 12px; color: var(--color-text-muted, #6b7280); margin: 0; flex: 1; }
+.ism-action-card-title { font-size: 13px; font-weight: 700; color: var(--color-text); margin: 0; }
+.ism-action-card-desc { font-size: 12px; color: var(--color-text-muted); margin: 0; flex: 1; }
 .ism-sent-ok   { font-size: 12px; color: #059669; font-weight: 600; }
-.ism-sent-count { font-size: 12px; color: var(--color-text-muted, #9ca3af); }
+.ism-sent-count { font-size: 12px; color: var(--color-text-muted); }
 
 /* ── Panelist status table ───────────────────────────────────────────────── */
 .ism-panelist-table {
-  border: 1px solid var(--color-border, #e5e7eb);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   overflow: hidden;
 }
 .ism-panelist-header {
   padding: 8px 14px;
-  background: var(--color-bg, #f9fafb);
-  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
   font-size: 12px;
   font-weight: 600;
-  color: var(--color-text-muted, #6b7280);
+  color: var(--color-text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -808,18 +808,18 @@ async function sendPanelistInvites() {
   align-items: center;
   justify-content: space-between;
   padding: 9px 14px;
-  border-bottom: 1px solid var(--color-border, #f3f4f6);
+  border-bottom: 1px solid var(--color-border);
   gap: 10px;
 }
 .ism-panelist-row:last-child { border-bottom: none; }
 .ism-panelist-info { display: flex; flex-direction: column; gap: 1px; }
-.ism-panelist-name { font-size: 13px; font-weight: 500; color: var(--color-text, #111827); }
-.ism-panelist-role { font-size: 11px; color: var(--color-text-muted, #9ca3af); text-transform: capitalize; }
+.ism-panelist-name { font-size: 13px; font-weight: 500; color: var(--color-text); }
+.ism-panelist-role { font-size: 11px; color: var(--color-text-muted); text-transform: capitalize; }
 .ism-panelist-status { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .ism-status-ok      { color: #059669; font-weight: 600; }
 .ism-status-pending { color: #9ca3af; }
 .ism-score-badge    { background: #f0fdf4; color: #059669; border: 1px solid #bbf7d0; border-radius: 12px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
-.ism-form-link      { color: var(--color-brand-base, #004C97); border: 1px solid rgba(0,76,151,0.25); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-decoration: none; }
+.ism-form-link      { color: var(--color-brand-base); border: 1px solid rgba(0,76,151,0.25); border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 600; text-decoration: none; }
 .ism-form-link:hover { background: rgba(0,76,151,0.06); }
 
 /* ── Messages ────────────────────────────────────────────────────────────── */
@@ -847,7 +847,7 @@ async function sendPanelistInvites() {
   white-space: nowrap;
 }
 .ism-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.ism-btn-primary { background: var(--color-brand-base, #004C97); color: #fff; }
+.ism-btn-primary { background: var(--color-brand-base); color: #fff; }
 .ism-btn-primary:hover:not(:disabled) { opacity: 0.88; }
 .ism-btn-indigo  { background: #4f46e5; color: #fff; }
 .ism-btn-indigo:hover:not(:disabled) { opacity: 0.88; }
@@ -855,8 +855,8 @@ async function sendPanelistInvites() {
 .ism-btn-blue:hover:not(:disabled) { opacity: 0.88; }
 .ism-btn-green   { background: #059669; color: #fff; }
 .ism-btn-green:hover:not(:disabled) { opacity: 0.88; }
-.ism-btn-outline { background: transparent; color: var(--color-text, #374151); border: 1px solid var(--color-border, #d1d5db); }
-.ism-btn-outline:hover:not(:disabled) { background: var(--color-bg, #f9fafb); }
+.ism-btn-outline { background: transparent; color: var(--color-text); border: 1px solid var(--color-border); }
+.ism-btn-outline:hover:not(:disabled) { background: var(--color-bg); }
 
 @media (max-width: 560px) {
   .ism-field-grid  { grid-template-columns: 1fr; }
