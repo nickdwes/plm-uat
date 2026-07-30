@@ -1,176 +1,196 @@
 # Identity Unification Plan
 
-Merging `employees` and `users` into a single person identity, so one record
-both signs in and is attributed on every action — the Entra / Office 365 model.
+One person identity that both signs in and is attributed on every action — the
+Entra / Office 365 model — with sensitive HR data held separately from it.
 
-Four decisions, then a phased execution. Nothing here is implemented.
+Supersedes the earlier version of this plan. Nothing here is implemented.
 
-## Why now
+## What changed, and why
 
-The schema is large but the data is not: **1 employee, 2 users**. Every cost
-below is a code and schema refactor today. Once real staff records exist it
-becomes a data migration with downtime, and the FK repointing has to preserve
-live relationships instead of simply being redefined.
+The first version of this plan recommended `users` absorbing all ~70 columns of
+`employees`, and listed "users becomes a sensitive table" as a consequence to
+accept. That was wrong, for a reason worth recording so it is not re-proposed:
 
-## What has to move
+**`Employee` is a model nothing serializes by accident. `User` is a model
+Laravel serializes constantly** — `Auth::user()`, `$request->user()`, Sanctum's
+`tokenable`, notification `notifiable`, any `->with('user')`. Merging would put
+salary, national ID, tax numbers, medical conditions and disabilities onto the
+one object that leaks by convention.
 
-| | `employees` | `users` |
-| --- | --- | --- |
-| Columns | **~70** | 9 |
-| Content | employment, statutory (NSSF/NHIF/KRA), salary and allowances, benefits flags, medical, work permit, profile, contact | name, email, password, remember_token, azure_id, sso_only |
-| Referenced by | **35 tables, 44 FK columns** | 13 tables |
+The proposed mitigation was `$hidden` — a **denylist**, which fails open. Add a
+column six months from now, forget to hide it, and it is in every payload. On a
+79-column table where half is sensitive, that is the wrong default for the
+lifetime of the system.
 
-The 44 references break down as 31 columns literally named `employee_id`, plus
-13 role-named ones: `reports_to`, `approved_by`, `manager_id`, `reviewer_id`,
-`panelist_id`, `requester_id`, `incoming_employee_id`, `outgoing_employee_id`,
-`acknowledged_by_id`, `created_by_id`, `requested_employee_id`.
+**The Office 365 analogy argues against it.** Microsoft does not put salary in
+Entra. The directory object holds display name, job title, department, manager,
+mail and `employeeId`. Sensitive HR data lives in the HR system and syncs only
+the non-sensitive subset into the directory.
 
----
+So "do it the way Office 365 does" means **one identity, not one table**.
 
-# Decision 1 — Which table survives?
+## Target shape
 
-**Recommended: `users` absorbs `employees`.**
+One identity. Two tables. Same primary key.
 
-Laravel, Sanctum, Breeze and the existing SSO all assume a `users` table, and 13
-tables already point at it. Making `employees` the authenticatable model is
-possible — `config/auth.php` accepts any Authenticatable — but it means
-rewriting the auth provider, the Sanctum tokenable relation, the Azure SSO
-callback and every `Auth::user()` assumption, to arrive at the same place.
+```
+users                       the identity — credentials + directory attributes
+  └─ employee_profiles      the sensitive record, PK = FK = users.id
+```
 
-Result: one `users` table of roughly 79 columns. Large, but it is one person
-record, and it can be split into `users` + `user_profiles` later without
-touching foreign keys.
+All 44 foreign keys currently pointing at `employees` repoint to `users`. One
+record signs in, one record is attributed, one id throughout — the requirement
+in full. The sensitive half requires an explicit join, which makes it an
+**allowlist by construction** rather than a denylist somebody must maintain.
 
-## Two column collisions to settle
+### Column allocation
 
-**Email.** `users.email` is the unique login identity. `employees` carries
-`work_email` and `personal_email`. Keep all three: `email` stays the credential
-(the UPN, in Entra terms), the other two remain contact attributes. They will
-often duplicate, and that is acceptable — a login address and a contact address
-are different facts that happen to coincide.
+The split follows the classification **already encoded in
+`EmployeeResource`**, which gates fields behind `$canSensitive`. That is the
+team's existing judgement about what is sensitive; re-deriving it from scratch
+would risk disagreeing with the running system.
 
-**Name.** `users.name` is a single NOT NULL string; `employees` has
-`first_name`, `last_name`, `middle_name`, `preferred_name`. Keep the structured
-fields as the source of truth and maintain `name` as a derived display value,
-set on save. Laravel scaffolding and the SSO path both read `name`, so removing
-it invites avoidable breakage.
+**`users` — identity and directory.** Safe to return from a user lookup.
 
----
+| Group | Columns |
+| --- | --- |
+| Credentials | `email`, `password`, `remember_token`, `email_verified_at`, `azure_id`, `sso_only` |
+| Lifecycle | `account_status`, `status_changed_at` |
+| Name | `name` (derived display), `first_name`, `last_name`, `middle_name`, `preferred_name` |
+| Directory | `employee_number`, `work_email`, `photo_url` |
+| Placement | `primary_organization_id`, `department_id`, `designation_id`, `job_grade_id`, `reports_to` |
+| Employment | `employment_type`, `status`, `date_hired`, `probation_end_date`, `contract_end_date`, `date_exited`, `exit_reason`, `is_shared` |
+| Public profile | `professional_summary`, `about_me`, `hobbies_interests`, `job_description` |
 
-# Decision 2 — People who never sign in
+**`employee_profiles` — sensitive.** Never returned without an explicit
+permission check.
 
-This is where the Entra analogy needs care. Directory objects in Entra always
-exist as accounts. This system has people who are not accounts:
+| Group | Columns |
+| --- | --- |
+| Personal | `date_of_birth`, `gender`, `personal_email`, `phone`, `linkedin_profile`, `address`, `city`, `country`, `residential_address` |
+| Statutory | `national_id`, `passport_number`, `tax_id`, `nssf_number`, `nhif_number`, `sha_number` |
+| Registration | `nssf_registered`, `nhif_registered`, `kra_registered` |
+| Pay | `basic_salary`, `house_allowance`, `transport_allowance`, `medical_allowance`, `other_allowances`, `insurance_relief` |
+| Medical | `blood_group`, `allergies`, `known_conditions`, `disabilities`, `medical_plan` |
+| Benefits | `benefit_medical`, `benefit_life_insurance`, `benefit_pension`, `benefit_wiba`, `benefit_group_life`, `benefits_effective_date`, `pension_provider` |
+| Right to work | `has_work_permit`, `work_permit_number`, `work_permit_expiry` |
+
+### Why this is also faster
+
+Most queries never need salary or medical data. Narrower `users` rows mean
+smaller result sets and better cache locality on the hot path. Only payroll and
+the HR detail view pay the join. The split improves the common case rather than
+costing it.
+
+## Multi-tenancy — settled
+
+Plmv2 was built for a single organization, but is being taken multi-tenant so
+each tenant is served independently. So:
+
+- `users` keeps `primary_organization_id`, and org-scoped role assignments
+  already carry tenancy through `user_roles.organization_id`.
+- `employee_profiles` inherits tenancy from its owner — it has no
+  `organization_id` of its own, because a person belongs to one identity and
+  that identity is already placed.
+- **Every ported Plmv2 table gets `organization_id`** and the
+  `BelongsToOrganization` concern, matching every existing HRMS table.
+
+This also settles it for the module ports: Projects, Assets and Travel are all
+org-scoped.
+
+## People who never sign in
+
+Where the Entra analogy needs adapting. Directory objects in Entra are always
+accounts; this system has people who are not:
 
 - **Preboarding candidates** — `preboarding_records.employee_id` already points
-  at `employees`, so a person exists before they are hired
-- **Field or non-login staff** who need payroll and leave records but no credentials
+  at `employees`, so a person exists before hire
+- **Field or non-login staff** needing payroll and leave but no credentials
 
-After unification each of these needs a `users` row. Today that is impossible:
-`password`, `email` and `name` are all NOT NULL, and `email` is unique.
+After unification each needs a `users` row, which today is impossible:
+`password`, `email` and `name` are all `NOT NULL`, and `email` is unique.
 
-**Required changes:**
+Required:
 
-- `password` becomes nullable — an account that cannot sign in yet
-- `email` becomes nullable, with uniqueness enforced only where not null
-  (a partial unique index)
-- add an explicit `account_status`: `none` | `invited` | `active` | `disabled`
+- `password` nullable — an account that cannot sign in yet
+- `email` nullable, uniqueness enforced by a **partial unique index** on
+  non-null values
+- `account_status` distinguishes them — already built
 
-`sso_only` already exists and hints at this problem being half-solved.
-
-Making `email` nullable is the sharpest edge in this plan: it is the login
+**Nullable `email` is the sharpest edge in this plan.** It is the login
 identity, and Laravel's password-reset and unique-validation paths assume it is
-present. Every one of those needs to handle a person with no address.
+present. Each needs to handle a person with no address.
 
----
+## Already built
 
-# Decision 3 — Rename `employee_id` to `user_id`?
+Three pieces this plan depended on are done:
 
-**Recommended: rename, and accept the ripple.**
+- `account_status` on `users`, gating authorization and failing closed
+- Scoped, time-bound role assignments — `scope`, `valid_from`, `valid_until`,
+  `revoked_at`, `revoked_by`, `granted_by`
+- `deny_assignments`
 
-Leaving 31 columns named `employee_id` pointing at a `users` table is the kind
-of inconsistency that costs someone an afternoon every few months, indefinitely.
+So the lifecycle half of this work is in place. What remains is the data model.
 
-But it is not confined to the backend. `employee_id` appears **9 times in the
-frontend's `types.ts` and across 13 frontend files** — it is part of the API
-contract, so renaming means:
+## Phases
 
-- 31 column renames plus 13 role-named FK columns
-- API resources and request validation
-- Frontend TypeScript interfaces and every component reading them
+### A — Create `employee_profiles`
+New table, PK = FK to `users`. Nothing reads it yet. Reversible.
 
-**Alternative:** rename the columns but keep the API field names as
-`employee_id` via the resource layer. The database is consistent, the contract
-unbroken, the frontend untouched. The cost is a translation layer that must be
-remembered.
+### B — Widen `users`
+Add the directory columns, all nullable. Make `password` and `email` nullable
+with a partial unique index. Application still works throughout.
 
-Given the SPA is mid-migration to the design system already, keeping the API
-contract stable is worth considering — but it should be a deliberate choice,
-not drift.
+### C — Backfill and reconcile
+Copy the single existing employee into both tables. Derive `name` from the
+structured fields. Verify every employee has a user and vice versa — trivial at
+one record, and the last moment it will be.
 
----
+### D — Repoint foreign keys
+44 columns across 35 tables, in dependency order. **Each table its own commit
+and its own tests.** This is the bulk of the work and the part that must not be
+rushed.
 
-# Decision 4 — Sequencing
+### E — Retire `Employee`
+Keep it as a model aliasing `users` through a compatibility period so the 59
+referencing files migrate in batches. Drop the `employees` table only when
+nothing references it.
 
-**Recommended: five phases, each independently verifiable.** A single migration
-plus a 59-file code change is atomic but unreviewable, and unreviewable is how
-authorization and payroll bugs reach production.
+### F — Rename columns
+`employee_id` → `user_id`. Note this is **not backend-only**: `employee_id`
+appears 9 times in the frontend's `types.ts` and across 13 files, so it is part
+of the API contract. Either rename through to the SPA, or keep the contract
+stable via the resource layer — a deliberate choice, not drift.
 
-### Phase A — Widen `users`
-Add the ~70 employee columns to `users`, all nullable. Add `account_status`.
-Make `password` and `email` nullable with a partial unique index. Nothing reads
-them yet; `employees` is untouched and the application still works.
+## Safeguards beyond the split
 
-### Phase B — Backfill and reconcile
-Copy the single existing employee row onto its user. Derive `name`. Verify every
-employee has a user and vice versa — trivial at this size, and the last moment
-it will be.
+The table separation is the structural control. Four more, in order of value:
 
-### Phase C — Repoint foreign keys
-Table by table, in dependency order. 44 columns across 35 tables. Each table is
-its own commit and its own test. This is the bulk of the work and the part that
-must not be rushed.
+1. **Permission-gated resource layer.** Allowlist fields explicitly and gate on
+   `employees.view_sensitive`, not role names. The current gate is
+   `$isHR || $isSelf` using `isOrgHR()` — it predates the permission catalogue
+   and should move onto it.
+2. **Encrypted casts** for `national_id`, `tax_id`, `passport_number` and the
+   medical fields, so a database dump or backup leak does not expose them in
+   plaintext.
+3. **Audit sensitive reads** — who viewed salary, and when. Detection, because
+   prevention eventually fails. This also produces the access-review data the
+   role model assumes.
+4. **`$hidden` as defence-in-depth**, never as the primary control.
 
-### Phase D — Retire `Employee`
-Keep `Employee` as a model aliasing `users` through a compatibility period so
-the 59 referencing files can be updated in batches rather than at once. Drop the
-`employees` table only when nothing references it.
+## Consequences to accept knowingly
 
-### Phase E — Rename columns
-Per decision 3, with the API contract choice applied consistently.
-
----
-
-# Consequences worth accepting deliberately
-
-**ABAC changes shape.** `ResourceAttributes::reportsTo()` walks
-`employees.reports_to` and `isOwnedBy()` compares against `User::employeeId()`.
-After unification the reporting line is `users.reports_to` and ownership is a
-direct id comparison — simpler, but the authorization tests must be rewritten
-alongside, not after.
-
-**`users` becomes a sensitive table.** It will hold salary, allowances, national
-ID, tax and NSSF/NHIF numbers, medical conditions, allergies and disabilities —
-alongside credentials. Anything currently selecting `users.*` will begin
-returning that data. Every such query, resource and serialization needs an
-explicit column list, and `$hidden` needs to grow substantially. This is the
-most likely source of an accidental data exposure in the whole plan.
+**ABAC changes shape.** `reportsTo()` walks `employees.reports_to` and
+ownership compares `User::employeeId()`. Afterwards the reporting line is
+`users.reports_to` and ownership is a direct id comparison — simpler, but the
+authorization tests must be rewritten alongside, not after. The mutation-testing
+gate should be run over the change.
 
 **Soft deletes need reconciling.** `employees` has `deleted_at`; `users` does
-not. Decide whether deactivating a person soft-deletes the account or only sets
-`account_status`.
+not. A leaver should be `account_status = disabled`, not soft-deleted — their
+approvals and payroll runs must stay attributable. Decide whether `users` gains
+`deleted_at` at all, and resist using it for people who have merely left.
 
----
-
-# Recommendation on scope
-
-Phases A and B are small, safe and reversible. Phase C is the real work.
-
-Because Projects, Assets and Travel are about to be ported, there is a genuine
-argument for doing A–C **before** those modules land, so their foreign keys are
-written against the unified table once rather than repointed later. The ports
-add roughly 15 more tables referencing people; doing identity first avoids
-adding to the 44.
-
-The counter-argument is that this delays visible progress on the modules
-themselves, and unification ships nothing a user can see.
+**`employee_profiles` is the crown jewels in one table.** That is the point —
+it is far easier to protect one table you know is sensitive than forty columns
+scattered through the object every request already loads.
