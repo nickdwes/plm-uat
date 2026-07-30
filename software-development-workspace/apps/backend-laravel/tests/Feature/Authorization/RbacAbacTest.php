@@ -313,4 +313,49 @@ class RbacAbacTest extends TestCase
 
         $this->assertCount(1, \DB::getQueryLog(), 'Role assignments should be loaded exactly once.');
     }
+
+    // ── Account lifecycle (JML) ───────────────────────────────────────────────
+
+    public function test_disabled_account_is_denied_every_permission(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::ORG_HR, 'organization', ['*']), $org->id);
+
+        $this->assertTrue($user->hasPermission(Permission::PAYROLL_APPROVE, $org->id));
+
+        // A leaver: assignments retained for audit, account disabled.
+        $user->account_status = User::STATUS_DISABLED;
+
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_APPROVE, $org->id));
+        $this->assertFalse($user->hasPermission(Permission::EMPLOYEES_VIEW, $org->id));
+    }
+
+    public function test_suspended_and_pending_accounts_are_denied(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::ORG_HR, 'organization', ['*']), $org->id);
+
+        foreach ([User::STATUS_SUSPENDED, User::STATUS_PENDING] as $status) {
+            $user->account_status = $status;
+            $this->assertFalse(
+                $user->hasPermission(Permission::LEAVE_APPROVE, $org->id),
+                "[{$status}] must not authorise."
+            );
+        }
+    }
+
+    public function test_disabling_an_account_does_not_destroy_its_assignments(): void
+    {
+        // "Who had access last March" must remain answerable.
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::ORG_HR, 'organization', ['employees.*']), $org->id);
+
+        $user->account_status = User::STATUS_DISABLED;
+
+        $this->assertFalse($user->hasPermission(Permission::EMPLOYEES_VIEW, $org->id));
+        $this->assertNotEmpty($user->permissionsFor($org->id), 'Assignments must survive disabling.');
+    }
 }

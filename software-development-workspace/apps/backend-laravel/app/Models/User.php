@@ -183,12 +183,40 @@ class User extends Authenticatable
     {
         Permission::assertKnown($permission);
 
+        // Account state is checked before anything else, and fails closed.
+        // A leaver's role assignments are retained deliberately — deleting
+        // them would destroy the record of what they could do — so status is
+        // the only thing standing between a disabled account and every
+        // permission it held on its last day.
+        if (! $this->isAccountActive()) {
+            return false;
+        }
+
         $organizationId ??= app()->bound('current.organization_id')
             ? app('current.organization_id')
             : null;
 
         return Permission::anySatisfies($this->permissionsFor($organizationId), $permission);
     }
+
+    /**
+     * Can this account exercise any permission at all?
+     *
+     * Only `active` qualifies. `pending` covers a person who exists but has
+     * not started, `suspended` a temporary block, `disabled` a leaver — none
+     * of which should authorise anything.
+     */
+    public function isAccountActive(): bool
+    {
+        // Defaults to active when the column is absent, so the check is safe
+        // to deploy before the migration runs.
+        return ($this->account_status ?? self::STATUS_ACTIVE) === self::STATUS_ACTIVE;
+    }
+
+    public const STATUS_PENDING   = 'pending';
+    public const STATUS_ACTIVE    = 'active';
+    public const STATUS_SUSPENDED = 'suspended';
+    public const STATUS_DISABLED  = 'disabled';
 
     /** Does this user hold every one of these permissions? */
     public function hasAllPermissions(string ...$permissions): bool
