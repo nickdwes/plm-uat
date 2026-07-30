@@ -2,21 +2,27 @@
 import { ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { api, ApiError } from "../lib/api";
-import { setAuth } from "../stores/auth";
+import { setAuth, setPersistence } from "../stores/auth";
 import type { LoginResponse } from "../lib/types";
+import logoUrl from "../assets/logo.jpg";
 
 const router = useRouter();
 const route  = useRoute();
 
-const email    = ref("");
-const password = ref("");
-const loading  = ref(false);
-const ssoLoading = ref(false);
-const error    = ref((route.query.sso_error as string) ?? "");
+const email        = ref("");
+const password     = ref("");
+const remember     = ref(false);
+const showPassword = ref(false);
+const loading      = ref(false);
+const ssoLoading   = ref(false);
+const error        = ref((route.query.sso_error as string) ?? "");
+const showResetHelp = ref(false);
+
+const year = new Date().getFullYear();
 
 async function login(): Promise<void> {
   if (!email.value.trim() || !password.value) {
-    error.value = "Email and password are required.";
+    error.value = "Enter your email and password to continue.";
     return;
   }
   loading.value = true;
@@ -25,6 +31,8 @@ async function login(): Promise<void> {
     const res = await api<LoginResponse>("POST", "/api/login", {
       body: { email: email.value.trim(), password: password.value },
     });
+    // Decide where the session lives before writing it.
+    setPersistence(remember.value);
     setAuth(res.user, res.organizations, res.token);
     void router.push({ name: "dashboard" });
   } catch (err) {
@@ -62,66 +70,510 @@ async function signInWithMicrosoft(): Promise<void> {
 
 <template>
   <main class="login-shell">
-    <div class="login-card">
-      <!-- Logo -->
-      <div class="login-logo">
-        <img src="../assets/logo.jpg" alt="Konvergenz" class="login-logo-img" />
-      </div>
 
-      <h1>Welcome back</h1>
-      <p class="lead">Sign in to access your workspace.</p>
+    <!-- ── Left: credentials ───────────────────────────────────────────── -->
+    <section class="login-pane">
+      <img :src="logoUrl" alt="Konvergenz" class="login-logo" />
 
-      <!-- Microsoft SSO -->
-      <button
-        class="btn-microsoft"
-        :disabled="ssoLoading || loading"
-        @click="signInWithMicrosoft"
-        type="button"
-      >
-        <svg class="ms-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21">
-          <rect x="1"  y="1"  width="9" height="9" fill="#f25022"/>
-          <rect x="11" y="1"  width="9" height="9" fill="#7fba00"/>
-          <rect x="1"  y="11" width="9" height="9" fill="#00a4ef"/>
-          <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-        </svg>
-        {{ ssoLoading ? "Redirecting…" : "Sign in with Microsoft" }}
-      </button>
+      <div class="login-body">
+        <h1>Welcome Back</h1>
+        <p class="lead">Enter your credentials to proceed to the system</p>
 
-      <div class="login-divider">
-        <span>or sign in with email</span>
-      </div>
-
-      <form class="login-form" @submit.prevent="login">
-        <label>
-          Email address
-          <input
-            v-model="email"
-            type="email"
-            class="input"
-            placeholder="you@example.com"
-            autocomplete="email"
-            required
-          />
-        </label>
-
-        <label>
-          Password
-          <input
-            v-model="password"
-            type="password"
-            class="input"
-            placeholder="••••••••"
-            autocomplete="current-password"
-            required
-          />
-        </label>
-
-        <p v-if="error" class="error">{{ error }}</p>
-
-        <button type="submit" class="btn btn-primary" :disabled="loading || ssoLoading" style="width:100%">
-          {{ loading ? "Signing in…" : "Sign in" }}
+        <button
+          class="btn-microsoft"
+          type="button"
+          :disabled="ssoLoading || loading"
+          @click="signInWithMicrosoft"
+        >
+          <svg class="ms-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 21 21" aria-hidden="true">
+            <rect x="1"  y="1"  width="9" height="9" fill="#f25022" />
+            <rect x="11" y="1"  width="9" height="9" fill="#7fba00" />
+            <rect x="1"  y="11" width="9" height="9" fill="#00a4ef" />
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+          </svg>
+          {{ ssoLoading ? "Redirecting…" : "Sign in with Microsoft" }}
         </button>
-      </form>
-    </div>
+
+        <div class="login-divider"><span>or</span></div>
+
+        <form class="login-form" @submit.prevent="login">
+          <div class="field">
+            <label for="login-email">Email</label>
+            <input
+              id="login-email"
+              v-model="email"
+              type="email"
+              class="control"
+              placeholder="Email Address"
+              autocomplete="email"
+              required
+            />
+          </div>
+
+          <div class="field">
+            <label for="login-password">Password</label>
+            <div class="control-wrap">
+              <input
+                id="login-password"
+                v-model="password"
+                :type="showPassword ? 'text' : 'password'"
+                class="control has-affix"
+                placeholder="Password"
+                autocomplete="current-password"
+                required
+              />
+              <button
+                type="button"
+                class="affix"
+                :aria-label="showPassword ? 'Hide password' : 'Show password'"
+                :aria-pressed="showPassword"
+                @click="showPassword = !showPassword"
+              >
+                <svg v-if="!showPassword" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+                  <path fill-rule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clip-rule="evenodd" />
+                </svg>
+                <svg v-else viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                  <path fill-rule="evenodd" d="M3.707 2.293a1 1 0 00-1.414 1.414l14 14a1 1 0 001.414-1.414l-1.473-1.473A10.014 10.014 0 0019.542 10C18.268 5.943 14.478 3 10 3a9.958 9.958 0 00-4.512 1.074l-1.78-1.781zm4.261 4.26l1.514 1.515a2.003 2.003 0 012.45 2.45l1.514 1.514a4 4 0 00-5.478-5.478z" clip-rule="evenodd" />
+                  <path d="M12.454 16.697L9.75 13.992a4 4 0 01-3.742-3.741L2.335 6.578A9.98 9.98 0 00.458 10c1.274 4.057 5.065 7 9.542 7 .847 0 1.669-.105 2.454-.303z" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="row-between">
+            <label class="remember">
+              <input v-model="remember" type="checkbox" />
+              <span>Remember me</span>
+            </label>
+            <button type="button" class="link" @click="showResetHelp = !showResetHelp">
+              Forgot Your Password?
+            </button>
+          </div>
+
+          <p v-if="showResetHelp" class="hint" role="status">
+            Self-service password reset isn't available yet. Ask your HR administrator
+            to reset it for you.
+          </p>
+
+          <p v-if="error" class="error" role="alert">{{ error }}</p>
+
+          <button type="submit" class="btn-submit" :disabled="loading || ssoLoading">
+            {{ loading ? "Signing in…" : "Log In" }}
+          </button>
+        </form>
+      </div>
+
+      <footer class="login-foot">
+        <span>Copyright © {{ year }} Konvergenz Networking Solutions</span>
+        <a href="https://konvergenz.co.ke/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>
+      </footer>
+    </section>
+
+    <!-- ── Right: brand panel ──────────────────────────────────────────── -->
+    <aside class="login-brand" aria-hidden="true">
+      <div class="brand-copy">
+        <h2>Effortlessly manage your people and operations</h2>
+        <p>Sign in to access your HR workspace and stay on top of your team.</p>
+      </div>
+
+      <!-- Illustrative preview of the dashboard. Static by design. -->
+      <div class="preview">
+        <div class="preview-head">
+          <span class="preview-title">Pending Approvals</span>
+          <span class="preview-pill">4 new</span>
+        </div>
+
+        <div class="preview-cards">
+          <article class="pcard">
+            <span class="flag flag-amber">Leave</span>
+            <h3>Annual leave request</h3>
+            <p>Awaiting line manager sign-off</p>
+            <div class="pmeta"><div class="pbar"><i style="width:62%"></i></div><span>62%</span></div>
+          </article>
+          <article class="pcard">
+            <span class="flag flag-teal">Onboarding</span>
+            <h3>New hire checklist</h3>
+            <p>Documents and induction pending</p>
+            <div class="pmeta"><div class="pbar"><i style="width:38%"></i></div><span>38%</span></div>
+          </article>
+        </div>
+
+        <div class="preview-tabs">
+          <span class="tab is-active">To Do</span>
+          <span class="tab">In progress</span>
+          <span class="tab">Completed</span>
+        </div>
+
+        <table class="preview-table">
+          <thead>
+            <tr><th>Task</th><th>Due</th><th>Owner</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Confirm probation review</td><td>21 Feb</td><td><span class="who">AM</span></td></tr>
+            <tr><td>Approve timesheet batch</td><td>22 Feb</td><td><span class="who">JK</span></td></tr>
+            <tr><td>Upload signed contract</td><td>24 Feb</td><td><span class="who">RW</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </aside>
   </main>
 </template>
+
+<style scoped>
+/*
+ * Split sign-in: credentials left, brand panel right.
+ * Built on the Konvergenz tokens — see docs/design-system.md. No literal
+ * colours except the Microsoft logo squares, which are brand assets of
+ * Microsoft and must not be re-tinted.
+ */
+@reference "../theme.css";
+
+.login-shell {
+  @apply grid min-h-screen;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  background: var(--color-surface);
+}
+
+/* ── Left pane ─────────────────────────────────────────────────────────── */
+.login-pane {
+  @apply flex flex-col justify-between;
+  padding: var(--space-8) var(--space-10);
+}
+
+.login-logo {
+  @apply h-auto object-contain;
+  width: 150px;
+}
+
+.login-body {
+  @apply mx-auto flex w-full flex-col justify-center;
+  max-width: 27rem;
+  flex: 1;
+  padding-block: var(--space-8);
+}
+
+.login-body h1 {
+  @apply font-semibold;
+  font-size: var(--display-xs-size);
+  line-height: var(--display-xs-line);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.lead {
+  font-size: var(--text-sm-size);
+  color: var(--color-text-light);
+  margin: var(--space-2) 0 var(--space-8);
+}
+
+/* ── Microsoft SSO ─────────────────────────────────────────────────────── */
+.btn-microsoft {
+  @apply flex w-full cursor-pointer items-center justify-center gap-3 font-medium;
+  font-size: var(--text-sm-size);
+  padding: 0.625rem var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btn-microsoft:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+  border-color: var(--color-text-light);
+}
+
+.btn-microsoft:disabled { @apply cursor-not-allowed opacity-60; }
+
+.ms-icon { @apply size-5 shrink-0; }
+
+.login-divider {
+  @apply flex items-center gap-3;
+  margin: var(--space-5) 0;
+  font-size: var(--text-xs-size);
+  color: var(--color-text-light);
+}
+
+.login-divider::before,
+.login-divider::after {
+  @apply h-px flex-1;
+  content: '';
+  background: var(--color-border);
+}
+
+/* ── Form ──────────────────────────────────────────────────────────────── */
+.login-form { @apply flex flex-col; gap: var(--space-4); }
+
+.field { @apply flex flex-col; gap: var(--space-2); }
+
+.field label {
+  @apply font-semibold;
+  font-size: var(--text-xs-size);
+  color: var(--color-text);
+}
+
+.control {
+  @apply w-full;
+  font-family: inherit;
+  font-size: var(--text-sm-size);
+  padding: 0.625rem var(--space-3);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.control::placeholder { color: var(--color-text-light); }
+
+.control:focus {
+  @apply outline-none;
+  border-color: var(--color-brand-base);
+  box-shadow: 0 0 0 3px var(--color-brand-subtle);
+}
+
+.control-wrap { @apply relative; }
+.has-affix { padding-right: var(--space-10); }
+
+.affix {
+  @apply absolute top-1/2 flex -translate-y-1/2 cursor-pointer items-center border-none bg-transparent p-1;
+  right: var(--space-2);
+  color: var(--color-text-light);
+  border-radius: var(--radius-sm);
+}
+
+.affix:hover { color: var(--color-text-muted); }
+.affix svg { @apply size-5; }
+
+.affix:focus-visible,
+.link:focus-visible,
+.remember input:focus-visible {
+  @apply outline-2 outline-offset-2;
+  outline-color: var(--color-brand-base);
+}
+
+.row-between { @apply flex items-center justify-between gap-3; }
+
+.remember {
+  @apply flex cursor-pointer items-center gap-2;
+  font-size: var(--text-xs-size);
+  color: var(--color-text-muted);
+}
+
+.remember input {
+  @apply size-4 cursor-pointer;
+  accent-color: var(--color-brand-base);
+}
+
+.link {
+  @apply cursor-pointer border-none bg-transparent p-0 font-medium underline-offset-2;
+  font-family: inherit;
+  font-size: var(--text-xs-size);
+  color: var(--color-brand-base);
+}
+
+.link:hover { @apply underline; color: var(--color-brand-hover); }
+
+.hint {
+  font-size: var(--text-xs-size);
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
+  border-left: 3px solid var(--color-info);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: var(--space-3);
+  margin: 0;
+}
+
+.error {
+  font-size: var(--text-xs-size);
+  color: var(--color-error);
+  background: var(--color-error-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin: 0;
+}
+
+.btn-submit {
+  @apply w-full cursor-pointer border-none font-semibold;
+  font-family: inherit;
+  font-size: var(--text-sm-size);
+  padding: 0.6875rem var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-brand-base);
+  color: var(--color-on-brand);
+  transition: background var(--transition-fast);
+  margin-top: var(--space-1);
+}
+
+.btn-submit:hover:not(:disabled) { background: var(--color-brand-hover); }
+.btn-submit:disabled { @apply cursor-not-allowed opacity-60; }
+
+.btn-submit:focus-visible {
+  @apply outline-2 outline-offset-2;
+  outline-color: var(--color-brand-hover);
+}
+
+.login-foot {
+  @apply flex flex-wrap items-center justify-between gap-2;
+  font-size: var(--text-xs-size);
+  color: var(--color-text-light);
+}
+
+.login-foot a { color: var(--color-text-light); text-decoration: none; }
+.login-foot a:hover { color: var(--color-brand-base); @apply underline; }
+
+/* ── Right brand panel ─────────────────────────────────────────────────── */
+.login-brand {
+  @apply relative flex flex-col justify-center overflow-hidden;
+  margin: var(--space-4) var(--space-4) var(--space-4) 0;
+  padding: var(--space-12) 0 var(--space-12) var(--space-12);
+  border-radius: var(--radius-3xl);
+  background: linear-gradient(150deg, var(--color-brand-hover), var(--color-brand-base) 70%);
+  color: var(--color-on-brand);
+}
+
+/* Soft depth — two oversized circles bled off the edges. */
+.login-brand::before,
+.login-brand::after {
+  @apply pointer-events-none absolute rounded-full;
+  content: '';
+  background: rgb(255 255 255 / 0.07);
+}
+.login-brand::before { width: 26rem; height: 26rem; top: -9rem; right: -7rem; }
+.login-brand::after  { width: 20rem; height: 20rem; bottom: -8rem; left: -6rem; }
+
+.brand-copy { @apply relative; padding-right: var(--space-12); }
+
+.brand-copy h2 {
+  @apply font-bold;
+  font-size: var(--display-sm-size);
+  line-height: var(--display-sm-line);
+  letter-spacing: var(--tracking-display);
+  text-wrap: balance;
+  margin: 0;
+}
+
+.brand-copy p {
+  font-size: var(--text-md-size);
+  color: rgb(255 255 255 / 0.82);
+  margin: var(--space-3) 0 0;
+  max-width: 34rem;
+}
+
+/* ── Dashboard preview ─────────────────────────────────────────────────── */
+.preview {
+  @apply relative;
+  margin-top: var(--space-10);
+  padding: var(--space-4);
+  border-radius: var(--radius-2xl) 0 0 var(--radius-2xl);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-lg);
+}
+
+.preview-head { @apply flex items-center justify-between; margin-bottom: var(--space-3); }
+
+.preview-title {
+  @apply font-semibold;
+  font-size: var(--text-sm-size);
+}
+
+.preview-pill {
+  @apply rounded-full font-semibold;
+  font-size: 0.6875rem;
+  padding: 2px var(--space-2);
+  background: var(--color-brand-light);
+  color: var(--color-brand-base);
+}
+
+.preview-cards { @apply grid grid-cols-2; gap: var(--space-3); }
+
+.pcard {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.flag {
+  @apply inline-block rounded font-semibold uppercase;
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+}
+.flag-amber { background: var(--color-warning-light); color: var(--color-warning); }
+.flag-teal  { background: var(--color-success-light); color: var(--color-success); }
+
+.pcard h3 {
+  @apply font-semibold;
+  font-size: var(--text-xs-size);
+  margin: var(--space-2) 0 2px;
+}
+
+.pcard p {
+  font-size: 0.6875rem;
+  color: var(--color-text-light);
+  margin: 0 0 var(--space-3);
+}
+
+.pmeta { @apply flex items-center gap-2; font-size: 0.625rem; color: var(--color-text-light); }
+
+.pbar { @apply h-1 flex-1 overflow-hidden rounded-full; background: var(--color-neutral-200); }
+.pbar i { @apply block h-full rounded-full; background: var(--color-brand-base); }
+
+.preview-tabs {
+  @apply flex gap-4;
+  margin: var(--space-4) 0 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  font-size: var(--text-xs-size);
+  color: var(--color-text-light);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid transparent;
+}
+
+.tab.is-active {
+  @apply font-semibold;
+  color: var(--color-brand-base);
+  border-bottom-color: var(--color-brand-base);
+}
+
+.preview-table { @apply w-full; border-collapse: collapse; }
+
+.preview-table th {
+  @apply text-left font-semibold uppercase;
+  font-size: 0.625rem;
+  letter-spacing: 0.06em;
+  color: var(--color-text-light);
+  padding: var(--space-3) 0 var(--space-2);
+}
+
+.preview-table td {
+  font-size: var(--text-xs-size);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.preview-table td:nth-child(2) { color: var(--color-text-light); }
+.preview-table td:last-child { @apply text-right; }
+
+.who {
+  @apply inline-flex size-6 items-center justify-center rounded-full font-semibold;
+  font-size: 0.625rem;
+  background: var(--color-brand-light);
+  color: var(--color-brand-base);
+}
+
+/* ── Responsive ────────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .login-shell { grid-template-columns: 1fr; }
+  .login-brand { @apply hidden; }
+  .login-pane { padding: var(--space-6); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-microsoft, .control, .btn-submit, .affix { transition: none; }
+}
+</style>

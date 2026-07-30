@@ -1,6 +1,10 @@
 /**
  * Reactive auth store for the Laravel HRMS SPA.
- * Persists to sessionStorage — cleared when the tab is closed.
+ *
+ * Persistence is chosen at sign-in via "Remember me":
+ *   unchecked → sessionStorage, cleared when the tab closes (the default)
+ *   checked   → localStorage, survives until sign-out
+ * Only ever one of the two holds a session; switching clears the other.
  */
 import { computed, reactive, readonly } from "vue";
 import type { AuthUser, Organization } from "../lib/types";
@@ -16,8 +20,18 @@ interface AuthState {
   token: string | null;
 }
 
+/** The store a persisted session was found in, or will be written to. */
+let backing: Storage = sessionStorage;
+
 function load(): Partial<AuthState> {
   try {
+    // localStorage first: a "remembered" session should win over a stale
+    // tab-scoped one left behind by an earlier sign-in.
+    const fromLocal = localStorage.getItem(STORAGE_KEY);
+    if (fromLocal) {
+      backing = localStorage;
+      return JSON.parse(fromLocal) as Partial<AuthState>;
+    }
     const raw = sessionStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as Partial<AuthState>) : {};
   } catch {
@@ -36,7 +50,20 @@ const state = reactive<AuthState>({
 
 function persist(): void {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    backing.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Choose where the session is kept. Call before setAuth() on sign-in.
+ * Clears the other store so a session can never exist in both.
+ */
+export function setPersistence(remember: boolean): void {
+  backing = remember ? localStorage : sessionStorage;
+  try {
+    (remember ? sessionStorage : localStorage).removeItem(STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -95,7 +122,10 @@ export function clearAuth(): void {
   state.organizations = [];
   state.currentOrg = null;
   state.token = null;
-  sessionStorage.removeItem(STORAGE_KEY);
+  // Clear both: sign-out must not leave a remembered session behind.
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  backing = sessionStorage;
 }
 
 /** Read-only view of the store for use in components. */
