@@ -230,7 +230,10 @@ async function signInWithMicrosoft(): Promise<void> {
 @reference "../theme.css";
 
 .login-shell {
-  @apply grid min-h-screen;
+  @apply grid;
+  /* dvh tracks mobile browser chrome as it collapses; vh is the fallback. */
+  min-height: 100vh;
+  min-height: 100dvh;
   grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
   background: var(--color-surface);
 }
@@ -238,25 +241,27 @@ async function signInWithMicrosoft(): Promise<void> {
 /* ── Left pane ─────────────────────────────────────────────────────────── */
 .login-pane {
   @apply flex flex-col justify-between;
-  padding: var(--space-8) var(--space-10);
+  /* Padding tracks the viewport so the form never crowds the edge on a
+     narrow laptop, nor drifts far from it on a wide display. */
+  padding: clamp(1.25rem, 3vh, 2rem) clamp(1.25rem, 4vw, 3.5rem);
+  gap: clamp(1rem, 4vh, 2.5rem);
 }
 
 .login-logo {
   @apply h-auto object-contain;
-  width: 150px;
+  width: clamp(120px, 11vw, 150px);
 }
 
 .login-body {
   @apply mx-auto flex w-full flex-col justify-center;
   max-width: 27rem;
   flex: 1;
-  padding-block: var(--space-8);
 }
 
 .login-body h1 {
   @apply font-semibold;
-  font-size: var(--display-xs-size);
-  line-height: var(--display-xs-line);
+  font-size: clamp(1.375rem, 1.9vw, 1.5rem);
+  line-height: 1.3;
   color: var(--color-text);
   margin: 0;
 }
@@ -264,7 +269,7 @@ async function signInWithMicrosoft(): Promise<void> {
 .lead {
   font-size: var(--text-sm-size);
   color: var(--color-text-light);
-  margin: var(--space-2) 0 var(--space-8);
+  margin: var(--space-2) 0 clamp(1.25rem, 3.5vh, 2rem);
 }
 
 /* ── Microsoft SSO ─────────────────────────────────────────────────────── */
@@ -290,7 +295,7 @@ async function signInWithMicrosoft(): Promise<void> {
 
 .login-divider {
   @apply flex items-center gap-3;
-  margin: var(--space-5) 0;
+  margin: clamp(0.875rem, 2.5vh, 1.25rem) 0;
   font-size: var(--text-xs-size);
   color: var(--color-text-light);
 }
@@ -303,7 +308,7 @@ async function signInWithMicrosoft(): Promise<void> {
 }
 
 /* ── Form ──────────────────────────────────────────────────────────────── */
-.login-form { @apply flex flex-col; gap: var(--space-4); }
+.login-form { @apply flex flex-col; gap: clamp(0.75rem, 2vh, 1rem); }
 
 .field { @apply flex flex-col; gap: var(--space-2); }
 
@@ -427,35 +432,47 @@ async function signInWithMicrosoft(): Promise<void> {
 .login-brand {
   @apply relative flex flex-col justify-center overflow-hidden;
   margin: var(--space-4) var(--space-4) var(--space-4) 0;
-  padding: var(--space-12) 0 var(--space-12) var(--space-12);
+  padding: clamp(2rem, 6vh, 4rem) clamp(1.75rem, 4vw, 3rem);
   border-radius: var(--radius-3xl);
   background: linear-gradient(150deg, var(--color-brand-hover), var(--color-brand-base) 70%);
   color: var(--color-on-brand);
 }
 
-/* Soft depth — two oversized circles bled off the edges. */
+/* Soft depth — two oversized circles bled off the edges. Sized in vw so
+   they stay proportional instead of dominating a narrow panel. */
 .login-brand::before,
 .login-brand::after {
   @apply pointer-events-none absolute rounded-full;
   content: '';
   background: rgb(255 255 255 / 0.07);
 }
-.login-brand::before { width: 26rem; height: 26rem; top: -9rem; right: -7rem; }
-.login-brand::after  { width: 20rem; height: 20rem; bottom: -8rem; left: -6rem; }
+.login-brand::before {
+  width: clamp(16rem, 26vw, 26rem);
+  height: clamp(16rem, 26vw, 26rem);
+  top: clamp(-9rem, -9vw, -5rem);
+  right: clamp(-7rem, -7vw, -4rem);
+}
+.login-brand::after {
+  width: clamp(12rem, 20vw, 20rem);
+  height: clamp(12rem, 20vw, 20rem);
+  bottom: clamp(-8rem, -8vw, -5rem);
+  left: clamp(-6rem, -6vw, -3rem);
+}
 
-.brand-copy { @apply relative; padding-right: var(--space-12); }
+.brand-copy { @apply relative; max-width: 44rem; }
 
 .brand-copy h2 {
   @apply font-bold;
-  font-size: var(--display-sm-size);
-  line-height: var(--display-sm-line);
+  /* Scales between display-xs and display-md across the panel's range. */
+  font-size: clamp(1.5rem, 2.6vw, 2.25rem);
+  line-height: 1.25;
   letter-spacing: var(--tracking-display);
   text-wrap: balance;
   margin: 0;
 }
 
 .brand-copy p {
-  font-size: var(--text-md-size);
+  font-size: clamp(0.875rem, 1.1vw, 1rem);
   color: rgb(255 255 255 / 0.82);
   margin: var(--space-3) 0 0;
   max-width: 34rem;
@@ -463,10 +480,14 @@ async function signInWithMicrosoft(): Promise<void> {
 
 /* ── Dashboard preview ─────────────────────────────────────────────────── */
 .preview {
-  @apply relative;
-  margin-top: var(--space-10);
-  padding: var(--space-4);
-  border-radius: var(--radius-2xl) 0 0 var(--radius-2xl);
+  @apply relative w-full;
+  /* Capped so the table's columns stay grouped. Unbounded, the card follows
+     the panel width and on a 1920 display the due/owner columns drift far
+     from the task they belong to. */
+  max-width: 44rem;
+  margin-top: clamp(1.5rem, 5vh, 2.5rem);
+  padding: clamp(0.875rem, 1.4vw, 1rem);
+  border-radius: var(--radius-2xl);
   background: var(--color-surface);
   color: var(--color-text);
   box-shadow: var(--shadow-lg);
@@ -567,10 +588,56 @@ async function signInWithMicrosoft(): Promise<void> {
 }
 
 /* ── Responsive ────────────────────────────────────────────────────────── */
+
+/* Wide displays: give the brand panel the extra room rather than
+   stretching the form, which has a fixed comfortable reading width. */
+@media (min-width: 1600px) {
+  .login-shell { grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); }
+}
+
+/* Small laptops: even the split, so neither column is starved. */
+@media (max-width: 1280px) {
+  .login-shell { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .preview-cards { @apply grid-cols-1; }
+  /* Two stacked cards plus a table is too tall here — one is enough to
+     convey the idea. */
+  .pcard:nth-child(2) { @apply hidden; }
+}
+
+/* Tablet and below: the brand panel is decorative, so it goes first. */
 @media (max-width: 1024px) {
   .login-shell { grid-template-columns: 1fr; }
   .login-brand { @apply hidden; }
-  .login-pane { padding: var(--space-6); }
+}
+
+@media (max-width: 640px) {
+  .login-pane { padding: 1.25rem; gap: 1.5rem; }
+  .login-body { max-width: none; }
+  .login-foot { @apply flex-col items-start; gap: 0.25rem; }
+}
+
+/* Short viewports — landscape phones, small laptops, split-screen windows.
+   Height-based rather than width-based: a 1440x700 laptop needs the same
+   vertical compression a phone in landscape does. */
+@media (max-height: 760px) {
+  .login-brand { padding-block: clamp(1.25rem, 3vh, 2rem); }
+  .preview { margin-top: 1.25rem; }
+  .preview-table tbody tr:last-child { @apply hidden; }
+}
+
+/* Note: min-height stays at 100dvh here. It is a floor, not a ceiling —
+   taller content already overflows and scrolls — and overriding it to 0 let
+   the shell end above the fold, exposing the wrapper background beneath. */
+@media (max-height: 620px) {
+  .login-pane { padding-block: 1rem; gap: 1rem; }
+  .preview { @apply hidden; }
+}
+
+/* Coarse pointers need a larger hit area than a mouse. */
+@media (pointer: coarse) {
+  .affix { @apply p-2; }
+  .remember input { @apply size-5; }
+  .link { padding-block: 0.25rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {

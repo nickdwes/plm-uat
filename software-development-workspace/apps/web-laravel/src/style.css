@@ -39,12 +39,19 @@ html {
   background: var(--color-bg);
 }
 
+/*
+ * Full-bleed container for routes rendered without the app shell: login,
+ * SSO callback, and the public preboarding / interview-scoring forms.
+ *
+ * Deliberately NOT a centering flex container. It used to be, which forced
+ * any grid child to shrink-to-fit rather than fill the viewport — the
+ * split login collapsed to the width of its form once the brand panel was
+ * hidden. Every view using this wrapper already centres its own content.
+ */
 .app-login-wrapper {
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--color-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 /* ── Sidebar ───────────────────────────────────────────────────────────── */
