@@ -37,3 +37,4 @@ backups/
 # Nested repos (managed separately)
 PLM-Rebuild/
 frappe_docker/
+old plm/
