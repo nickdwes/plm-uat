@@ -78,6 +78,46 @@ final class Permission
     public const AUDIT_VIEW   = 'audit.view';
     public const SETTINGS_MANAGE = 'settings.manage';
 
+    // ── Projects ──────────────────────────────────────────────────────────
+    public const PROJECTS_VIEW      = 'projects.view';
+    public const PROJECTS_VIEW_OWN  = 'projects.view_own';
+    public const PROJECTS_CREATE    = 'projects.create';
+    public const PROJECTS_UPDATE    = 'projects.update';
+    public const PROJECTS_DELETE    = 'projects.delete';
+    public const PROJECTS_ASSIGN    = 'projects.assign';
+
+    // ── Tasks ─────────────────────────────────────────────────────────────
+    public const TASKS_VIEW     = 'tasks.view';
+    public const TASKS_VIEW_OWN = 'tasks.view_own';
+    public const TASKS_CREATE   = 'tasks.create';
+    public const TASKS_UPDATE   = 'tasks.update';
+    public const TASKS_DELETE   = 'tasks.delete';
+    public const TASKS_ASSIGN   = 'tasks.assign';
+    public const TASKS_COMMENT  = 'tasks.comment';
+
+    // ── Assets ────────────────────────────────────────────────────────────
+    public const ASSETS_VIEW          = 'assets.view';
+    public const ASSETS_VIEW_OWN      = 'assets.view_own';
+    public const ASSETS_CREATE        = 'assets.create';
+    public const ASSETS_UPDATE        = 'assets.update';
+    public const ASSETS_DELETE        = 'assets.delete';
+    public const ASSETS_ASSIGN        = 'assets.assign';
+    public const ASSETS_REQUEST       = 'assets.request';
+    public const ASSETS_APPROVE       = 'assets.approve';
+    public const ASSETS_REPORT_ISSUE  = 'assets.report_issue';
+    public const ASSETS_RESOLVE_ISSUE = 'assets.resolve_issue';
+
+    // ── Travel ────────────────────────────────────────────────────────────
+    public const TRAVEL_VIEW      = 'travel.view';
+    public const TRAVEL_VIEW_OWN  = 'travel.view_own';
+    public const TRAVEL_VIEW_TEAM = 'travel.view_team';
+    public const TRAVEL_SUBMIT    = 'travel.submit';
+    public const TRAVEL_APPROVE   = 'travel.approve';
+    public const TRAVEL_REJECT    = 'travel.reject';
+    public const TRAVEL_MANAGE    = 'travel.manage';
+    /** Reserved for the finance stage added in the travel second pass. */
+    public const TRAVEL_RECONCILE = 'travel.reconcile';
+
     /**
      * Every permission the application recognises, grouped by resource.
      *
@@ -115,6 +155,26 @@ final class Permission
             'reports'       => [self::REPORTS_ORG, self::REPORTS_TEAM],
             'audit'         => [self::AUDIT_VIEW],
             'settings'      => [self::SETTINGS_MANAGE],
+            'projects'      => [
+                self::PROJECTS_VIEW, self::PROJECTS_VIEW_OWN, self::PROJECTS_CREATE,
+                self::PROJECTS_UPDATE, self::PROJECTS_DELETE, self::PROJECTS_ASSIGN,
+            ],
+            'tasks'         => [
+                self::TASKS_VIEW, self::TASKS_VIEW_OWN, self::TASKS_CREATE,
+                self::TASKS_UPDATE, self::TASKS_DELETE, self::TASKS_ASSIGN,
+                self::TASKS_COMMENT,
+            ],
+            'assets'        => [
+                self::ASSETS_VIEW, self::ASSETS_VIEW_OWN, self::ASSETS_CREATE,
+                self::ASSETS_UPDATE, self::ASSETS_DELETE, self::ASSETS_ASSIGN,
+                self::ASSETS_REQUEST, self::ASSETS_APPROVE,
+                self::ASSETS_REPORT_ISSUE, self::ASSETS_RESOLVE_ISSUE,
+            ],
+            'travel'        => [
+                self::TRAVEL_VIEW, self::TRAVEL_VIEW_OWN, self::TRAVEL_VIEW_TEAM,
+                self::TRAVEL_SUBMIT, self::TRAVEL_APPROVE, self::TRAVEL_REJECT,
+                self::TRAVEL_MANAGE, self::TRAVEL_RECONCILE,
+            ],
         ];
     }
 
