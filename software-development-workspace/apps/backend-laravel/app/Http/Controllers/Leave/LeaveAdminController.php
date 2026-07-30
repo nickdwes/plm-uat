@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Leave;
 
+use App\Support\Authorization\Permission;
+
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\LeaveBalance;
@@ -15,6 +17,8 @@ class LeaveAdminController extends Controller
 
     public function indexTypes(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $types = LeaveType::where('organization_id', $orgId)->orderBy('name')->get();
         return response()->json(['data' => $types]);
@@ -22,6 +26,8 @@ class LeaveAdminController extends Controller
 
     public function storeType(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_MANAGE), 403);
+
         $data = $request->validate([
             'name'              => 'required|string|max:100',
             'code'              => 'nullable|string|max:20',
@@ -44,6 +50,8 @@ class LeaveAdminController extends Controller
 
     public function updateType(Request $request, LeaveType $leaveType): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_MANAGE), 403);
+
         $data = $request->validate([
             'name'              => 'sometimes|string|max:100',
             'code'              => 'nullable|string|max:20',
@@ -65,6 +73,8 @@ class LeaveAdminController extends Controller
 
     public function destroyType(LeaveType $leaveType): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_MANAGE), 403);
+
         $leaveType->delete();
         return response()->json(null, 204);
     }
@@ -73,6 +83,8 @@ class LeaveAdminController extends Controller
 
     public function balances(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $year  = $request->integer('year', now()->year);
 
@@ -104,6 +116,8 @@ class LeaveAdminController extends Controller
      */
     public function initBalances(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_MANAGE), 403);
+
         $data  = $request->validate(['year' => 'required|integer|min:2020|max:2100']);
         $orgId = app('current.organization_id');
         $year  = $data['year'];
@@ -143,6 +157,8 @@ class LeaveAdminController extends Controller
 
     public function updateBalance(Request $request, LeaveBalance $leaveBalance): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::LEAVE_MANAGE), 403);
+
         $data = $request->validate([
             'entitled_days' => 'sometimes|numeric|min:0',
             'carried_days'  => 'sometimes|numeric|min:0',

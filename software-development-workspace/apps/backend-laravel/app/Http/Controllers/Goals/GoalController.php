@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Goals;
 
+use App\Support\Authorization\Permission;
+
 use App\Http\Controllers\Controller;
 use App\Models\Goal;
 use App\Models\GoalAssignment;
@@ -19,6 +21,8 @@ class GoalController extends Controller
     // ── List goals / objectives ───────────────────────────────────────────────
     public function index(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_VIEW), 403);
+
         $orgId  = $this->orgId();
         $isOkr  = filter_var($request->query('okr', 'false'), FILTER_VALIDATE_BOOLEAN);
         $view   = $request->query('view', 'list'); // list | mine | library
@@ -88,6 +92,8 @@ class GoalController extends Controller
     // ── Show single goal ──────────────────────────────────────────────────────
     public function show(Goal $goal): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_VIEW), 403);
+
         $this->authorizeOrg($goal);
         $goal->load([
             'assignees:id,first_name,last_name,employee_number,designation_id',
@@ -103,6 +109,8 @@ class GoalController extends Controller
     // ── Create ────────────────────────────────────────────────────────────────
     public function store(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_CREATE), 403);
+
         $data = $request->validate([
             'title'          => 'required|string|max:255',
             'description'    => 'nullable|string',
@@ -139,6 +147,8 @@ class GoalController extends Controller
     // ── Update ────────────────────────────────────────────────────────────────
     public function update(Request $request, Goal $goal): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_UPDATE), 403);
+
         $this->authorizeOrg($goal);
 
         $data = $request->validate([
@@ -177,6 +187,8 @@ class GoalController extends Controller
     // ── Delete ────────────────────────────────────────────────────────────────
     public function destroy(Goal $goal): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_DELETE), 403);
+
         $this->authorizeOrg($goal);
         $goal->delete();
         return response()->json(null, 204);
@@ -185,6 +197,8 @@ class GoalController extends Controller
     // ── Inline completion update ──────────────────────────────────────────────
     public function updateCompletion(Request $request, Goal $goal): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_UPDATE), 403);
+
         $this->authorizeOrg($goal);
         $data       = $request->validate(['completion' => 'required|numeric|min:0']);
         $completion = (float) $data['completion'];
@@ -196,6 +210,8 @@ class GoalController extends Controller
     // ── Inline status update ──────────────────────────────────────────────────
     public function updateStatus(Request $request, Goal $goal): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_UPDATE), 403);
+
         $this->authorizeOrg($goal);
         $data = $request->validate(['status' => 'required|in:pending,in_progress,achieved,not_achieved,on_hold']);
         $goal->update(['status' => $data['status']]);
@@ -205,6 +221,8 @@ class GoalController extends Controller
     // ── Key Results ───────────────────────────────────────────────────────────
     public function storeKeyResult(Request $request, Goal $goal): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_UPDATE), 403);
+
         $this->authorizeOrg($goal);
 
         $data = $request->validate([
@@ -234,6 +252,8 @@ class GoalController extends Controller
 
     public function updateKeyResult(Request $request, GoalKeyResult $keyResult): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_UPDATE), 403);
+
         $this->authorizeOrg($keyResult->goal);
         $data = $request->validate([
             'title'         => 'sometimes|string|max:255',
@@ -261,6 +281,8 @@ class GoalController extends Controller
 
     public function destroyKeyResult(GoalKeyResult $keyResult): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::GOALS_DELETE), 403);
+
         $this->authorizeOrg($keyResult->goal);
         $keyResult->delete();
         return response()->json(null, 204);

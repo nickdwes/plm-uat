@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Support\Authorization\Permission;
+
 use App\Http\Controllers\Controller;
 use App\Models\OrgComplianceDocument;
 use App\Models\Organization;
@@ -125,6 +127,8 @@ class ComplianceController extends Controller
 
     public function index(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_VIEW), 403);
+
         $orgId = $this->orgId();
         $this->seed($orgId);
 
@@ -140,6 +144,8 @@ class ComplianceController extends Controller
 
     public function update(Request $request, string $key): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $doc = OrgComplianceDocument::where('organization_id', $this->orgId())
             ->where('document_key', $key)->firstOrFail();
 
@@ -161,6 +167,8 @@ class ComplianceController extends Controller
 
     public function updateGuide(Request $request, string $key): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $doc = OrgComplianceDocument::where('organization_id', $this->orgId())
             ->where('document_key', $key)->firstOrFail();
 
@@ -173,6 +181,8 @@ class ComplianceController extends Controller
 
     public function updateReminder(Request $request, string $key): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $doc = OrgComplianceDocument::where('organization_id', $this->orgId())
             ->where('document_key', $key)->firstOrFail();
 
@@ -190,6 +200,8 @@ class ComplianceController extends Controller
 
     public function uploadFile(Request $request, string $key): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $doc = OrgComplianceDocument::where('organization_id', $this->orgId())
             ->where('document_key', $key)->firstOrFail();
 
@@ -231,6 +243,8 @@ class ComplianceController extends Controller
 
     public function deleteFile(Request $request, string $key): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $doc = OrgComplianceDocument::where('organization_id', $this->orgId())
             ->where('document_key', $key)->firstOrFail();
 

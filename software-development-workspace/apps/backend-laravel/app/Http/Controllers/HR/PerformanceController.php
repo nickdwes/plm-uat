@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Support\Authorization\Permission;
+
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\PerformanceReview;
@@ -17,6 +19,8 @@ class PerformanceController extends Controller
 
     public function reviews(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_VIEW), 403);
+
         $orgId = app('current.organization_id');
 
         $query = PerformanceReview::with(['employee:id,first_name,last_name,employee_number', 'reviewer:id,first_name,last_name'])
@@ -32,6 +36,8 @@ class PerformanceController extends Controller
 
     public function storeReview(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'employee_id'  => ['required', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
@@ -49,6 +55,8 @@ class PerformanceController extends Controller
 
     public function updateReview(Request $request, PerformanceReview $performanceReview): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         abort_unless(
             Employee::withoutGlobalScope('organization')
@@ -72,6 +80,8 @@ class PerformanceController extends Controller
 
     public function destroyReview(PerformanceReview $performanceReview): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         abort_unless(
             Employee::withoutGlobalScope('organization')
@@ -88,6 +98,8 @@ class PerformanceController extends Controller
 
     public function training(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_VIEW), 403);
+
         $orgId = app('current.organization_id');
 
         $query = TrainingRecord::with('employee:id,first_name,last_name,employee_number')
@@ -103,6 +115,8 @@ class PerformanceController extends Controller
 
     public function storeTraining(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'employee_id'      => ['required', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
@@ -118,6 +132,8 @@ class PerformanceController extends Controller
 
     public function destroyTraining(TrainingRecord $trainingRecord): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         abort_unless(
             Employee::withoutGlobalScope('organization')
@@ -134,6 +150,8 @@ class PerformanceController extends Controller
 
     public function promotions(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_VIEW), 403);
+
         $orgId = app('current.organization_id');
 
         $query = PromotionHistory::with([
@@ -155,6 +173,8 @@ class PerformanceController extends Controller
 
     public function storePromotion(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::PERFORMANCE_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'employee_id'         => ['required', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],

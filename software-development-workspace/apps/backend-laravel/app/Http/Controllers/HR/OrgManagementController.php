@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Support\Authorization\Permission;
+
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\Designation;
@@ -20,6 +22,8 @@ class OrgManagementController extends Controller
 
     public function designations(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $data  = Designation::where('organization_id', $orgId)
             ->orderBy('title')
@@ -29,6 +33,8 @@ class OrgManagementController extends Controller
 
     public function storeDesignation(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'title'       => 'required|string|max:120',
             'description' => 'nullable|string|max:500',
@@ -41,6 +47,8 @@ class OrgManagementController extends Controller
 
     public function updateDesignation(Request $request, Designation $designation): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'title'       => 'sometimes|string|max:120',
             'description' => 'nullable|string|max:500',
@@ -51,6 +59,8 @@ class OrgManagementController extends Controller
 
     public function destroyDesignation(Designation $designation): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $designation->delete();
         return response()->json(null, 204);
     }
@@ -59,6 +69,8 @@ class OrgManagementController extends Controller
 
     public function jobGrades(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $data  = JobGrade::where('organization_id', $orgId)
             ->orderBy('level')
@@ -68,6 +80,8 @@ class OrgManagementController extends Controller
 
     public function storeJobGrade(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'name'       => 'required|string|max:80',
             'level'      => 'required|integer|min:1',
@@ -82,6 +96,8 @@ class OrgManagementController extends Controller
 
     public function updateJobGrade(Request $request, JobGrade $jobGrade): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'name'       => 'sometimes|string|max:80',
             'level'      => 'sometimes|integer|min:1',
@@ -94,6 +110,8 @@ class OrgManagementController extends Controller
 
     public function destroyJobGrade(JobGrade $jobGrade): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $jobGrade->delete();
         return response()->json(null, 204);
     }
@@ -102,6 +120,8 @@ class OrgManagementController extends Controller
 
     public function jobCategories(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $data  = JobCategory::where('organization_id', $orgId)
             ->orderBy('name')
@@ -111,6 +131,8 @@ class OrgManagementController extends Controller
 
     public function storeJobCategory(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'name'        => 'required|string|max:120',
             'description' => 'nullable|string|max:500',
@@ -123,6 +145,8 @@ class OrgManagementController extends Controller
 
     public function updateJobCategory(Request $request, JobCategory $jobCategory): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'name'        => 'sometimes|string|max:120',
             'description' => 'nullable|string|max:500',
@@ -133,6 +157,8 @@ class OrgManagementController extends Controller
 
     public function destroyJobCategory(JobCategory $jobCategory): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $jobCategory->delete();
         return response()->json(null, 204);
     }
@@ -141,6 +167,8 @@ class OrgManagementController extends Controller
 
     public function orgStructure(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
         $orgId = app('current.organization_id');
 
         $units = OrgFunctionalUnit::where('organization_id', $orgId)
@@ -202,12 +230,16 @@ class OrgManagementController extends Controller
 
     public function functionalUnits(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
         $orgId = app('current.organization_id');
         return response()->json(['data' => OrgFunctionalUnit::where('organization_id', $orgId)->orderBy('name')->get()]);
     }
 
     public function storeFunctionalUnit(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'name'        => 'required|string|max:120',
             'code'        => 'nullable|string|max:20',
@@ -219,6 +251,8 @@ class OrgManagementController extends Controller
 
     public function updateFunctionalUnit(Request $request, OrgFunctionalUnit $functionalUnit): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $data = $request->validate([
             'name'        => 'sometimes|string|max:120',
             'code'        => 'nullable|string|max:20',
@@ -231,6 +265,8 @@ class OrgManagementController extends Controller
 
     public function destroyFunctionalUnit(OrgFunctionalUnit $functionalUnit): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $functionalUnit->delete();
         return response()->json(null, 204);
     }
@@ -239,6 +275,8 @@ class OrgManagementController extends Controller
 
     public function departments(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $data  = Department::where('organization_id', $orgId)
             ->withCount(['employees as headcount' => fn ($q) => $q->where('status', 'active')])
@@ -249,6 +287,8 @@ class OrgManagementController extends Controller
 
     public function storeDepartment(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'               => 'required|string|max:120',
@@ -263,6 +303,8 @@ class OrgManagementController extends Controller
 
     public function updateDepartment(Request $request, Department $department): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'               => 'sometimes|string|max:120',
@@ -277,6 +319,8 @@ class OrgManagementController extends Controller
 
     public function destroyDepartment(Department $department): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $department->delete();
         return response()->json(null, 204);
     }
@@ -285,6 +329,8 @@ class OrgManagementController extends Controller
 
     public function storeBusinessUnit(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'department_id'    => ['required', 'integer', Rule::exists('departments', 'id')->where('organization_id', $orgId)],
@@ -299,6 +345,8 @@ class OrgManagementController extends Controller
 
     public function updateBusinessUnit(Request $request, OrgBusinessUnit $businessUnit): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'             => 'sometimes|string|max:120',
@@ -313,6 +361,8 @@ class OrgManagementController extends Controller
 
     public function destroyBusinessUnit(OrgBusinessUnit $businessUnit): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $businessUnit->delete();
         return response()->json(null, 204);
     }
@@ -321,6 +371,8 @@ class OrgManagementController extends Controller
 
     public function storePractice(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'business_unit_id' => ['required', 'integer', Rule::exists('org_business_units', 'id')->where('organization_id', $orgId)],
@@ -335,6 +387,8 @@ class OrgManagementController extends Controller
 
     public function updatePractice(Request $request, OrgPractice $practice): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data = $request->validate([
             'name'             => 'sometimes|string|max:120',
@@ -349,6 +403,8 @@ class OrgManagementController extends Controller
 
     public function destroyPractice(OrgPractice $practice): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
+
         $practice->delete();
         return response()->json(null, 204);
     }

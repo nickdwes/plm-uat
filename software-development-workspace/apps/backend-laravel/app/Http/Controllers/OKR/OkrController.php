@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\OKR;
 
+use App\Support\Authorization\Permission;
+
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\OkrCycle;
@@ -20,6 +22,8 @@ class OkrController extends Controller
 
     public function indexCycles(): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_VIEW), 403);
+
         $orgId  = app('current.organization_id');
         $cycles = OkrCycle::where('organization_id', $orgId)
             ->withCount('objectives')
@@ -30,6 +34,8 @@ class OkrController extends Controller
 
     public function storeCycle(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         $data  = $request->validate([
             'name'   => 'required|string|max:120',
@@ -44,6 +50,8 @@ class OkrController extends Controller
     /** Full scorecard: cycle + objectives + KRs + dept scores + computed scores */
     public function showCycle(OkrCycle $okrCycle): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_VIEW), 403);
+
         $orgId = app('current.organization_id');
         if ($okrCycle->organization_id !== $orgId) abort(403);
 
@@ -64,6 +72,8 @@ class OkrController extends Controller
 
     public function updateCycle(Request $request, OkrCycle $okrCycle): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrCycle->organization_id !== $orgId) abort(403);
 
@@ -81,6 +91,8 @@ class OkrController extends Controller
 
     public function storeObjective(Request $request, OkrCycle $okrCycle): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrCycle->organization_id !== $orgId) abort(403);
 
@@ -105,6 +117,8 @@ class OkrController extends Controller
 
     public function updateObjective(Request $request, OkrObjective $okrObjective): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrObjective->organization_id !== $orgId) abort(403);
 
@@ -120,6 +134,8 @@ class OkrController extends Controller
 
     public function destroyObjective(OkrObjective $okrObjective): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrObjective->organization_id !== $orgId) abort(403);
         $okrObjective->delete();
@@ -130,6 +146,8 @@ class OkrController extends Controller
 
     public function storeKeyResult(Request $request, OkrObjective $okrObjective): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrObjective->organization_id !== $orgId) abort(403);
 
@@ -163,6 +181,8 @@ class OkrController extends Controller
 
     public function updateKeyResult(Request $request, OkrKeyResult $okrKeyResult): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrKeyResult->objective->organization_id !== $orgId) abort(403);
 
@@ -179,6 +199,8 @@ class OkrController extends Controller
 
     public function destroyKeyResult(OkrKeyResult $okrKeyResult): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_MANAGE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrKeyResult->objective->organization_id !== $orgId) abort(403);
         $okrKeyResult->delete();
@@ -188,6 +210,8 @@ class OkrController extends Controller
     /** Update achievement value → recompute score */
     public function updateAchievement(Request $request, OkrKeyResult $okrKeyResult): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_SCORE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrKeyResult->objective->organization_id !== $orgId) abort(403);
 
@@ -208,6 +232,8 @@ class OkrController extends Controller
     /** Bulk upsert department scores for a KR → recompute score */
     public function upsertDeptScores(Request $request, OkrKeyResult $okrKeyResult): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::OKR_SCORE), 403);
+
         $orgId = app('current.organization_id');
         if ($okrKeyResult->objective->organization_id !== $orgId) abort(403);
 

@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\Authorization\Permission;
+
 use App\Models\PublicHoliday;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -16,6 +18,8 @@ class PublicHolidayController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_VIEW), 403);
+
         $year  = $request->integer('year', now()->year);
         $orgId = app('current.organization_id');
 
@@ -30,6 +34,8 @@ class PublicHolidayController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $data = $request->validate([
             'name'         => 'required|string|max:150',
             'local_name'   => 'nullable|string|max:150',
@@ -52,6 +58,8 @@ class PublicHolidayController extends Controller
 
     public function update(Request $request, PublicHoliday $publicHoliday): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $data = $request->validate([
             'name'       => 'sometimes|string|max:150',
             'local_name' => 'nullable|string|max:150',
@@ -72,6 +80,8 @@ class PublicHolidayController extends Controller
 
     public function destroy(PublicHoliday $publicHoliday): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $publicHoliday->delete();
 
         return response()->json(null, 204);
@@ -82,6 +92,8 @@ class PublicHolidayController extends Controller
 
     public function import(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()?->hasPermission(Permission::ORGANIZATIONS_MANAGE), 403);
+
         $request->validate([
             'year'         => 'required|integer|min:2020|max:2100',
             'country_code' => 'nullable|string|size:2',

@@ -78,6 +78,25 @@ final class Permission
     public const AUDIT_VIEW   = 'audit.view';
     public const SETTINGS_MANAGE = 'settings.manage';
 
+    // ── Performance reviews ───────────────────────────────────────────────
+    public const PERFORMANCE_VIEW      = 'performance.view';
+    public const PERFORMANCE_VIEW_OWN  = 'performance.view_own';
+    public const PERFORMANCE_VIEW_TEAM = 'performance.view_team';
+    public const PERFORMANCE_MANAGE    = 'performance.manage';
+
+    // ── Goals ─────────────────────────────────────────────────────────────
+    public const GOALS_VIEW     = 'goals.view';
+    public const GOALS_VIEW_OWN = 'goals.view_own';
+    public const GOALS_CREATE   = 'goals.create';
+    public const GOALS_UPDATE   = 'goals.update';
+    public const GOALS_DELETE   = 'goals.delete';
+
+    // ── OKR ───────────────────────────────────────────────────────────────
+    public const OKR_VIEW   = 'okr.view';
+    public const OKR_MANAGE = 'okr.manage';
+    /** Recording progress against a key result, distinct from redefining it. */
+    public const OKR_SCORE  = 'okr.score';
+
     // ── Projects ──────────────────────────────────────────────────────────
     public const PROJECTS_VIEW      = 'projects.view';
     public const PROJECTS_VIEW_OWN  = 'projects.view_own';
@@ -155,6 +174,15 @@ final class Permission
             'reports'       => [self::REPORTS_ORG, self::REPORTS_TEAM],
             'audit'         => [self::AUDIT_VIEW],
             'settings'      => [self::SETTINGS_MANAGE],
+            'performance'   => [
+                self::PERFORMANCE_VIEW, self::PERFORMANCE_VIEW_OWN,
+                self::PERFORMANCE_VIEW_TEAM, self::PERFORMANCE_MANAGE,
+            ],
+            'goals'         => [
+                self::GOALS_VIEW, self::GOALS_VIEW_OWN, self::GOALS_CREATE,
+                self::GOALS_UPDATE, self::GOALS_DELETE,
+            ],
+            'okr'           => [self::OKR_VIEW, self::OKR_MANAGE, self::OKR_SCORE],
             'projects'      => [
                 self::PROJECTS_VIEW, self::PROJECTS_VIEW_OWN, self::PROJECTS_CREATE,
                 self::PROJECTS_UPDATE, self::PROJECTS_DELETE, self::PROJECTS_ASSIGN,

@@ -678,4 +678,28 @@ class RbacAbacTest extends TestCase
             implode(', ', array_keys(array_filter(array_count_values($flat), fn ($n) => $n > 1)))
         );
     }
+
+    // ── Role coverage ─────────────────────────────────────────────────────────
+
+    public function test_the_group_admin_role_reaches_every_permission(): void
+    {
+        // The invariant that would have caught a real lockout: three new
+        // permission families were added to the catalogue and gated in
+        // controllers while no role held them. group_admin listed
+        // resource-specific wildcards, so it gained nothing automatically and
+        // would have been denied its own administration screens.
+        //
+        // Anything added to the catalogue must be reachable by the top role,
+        // or shipping it is an outage.
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::GROUP_ADMIN, 'group', ['*']), null);
+
+        foreach (Permission::all() as $permission) {
+            $this->assertTrue(
+                $user->hasPermission($permission, $org->id),
+                "group_admin cannot reach [{$permission}] — gating it would lock out administrators."
+            );
+        }
+    }
 }
