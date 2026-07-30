@@ -702,4 +702,18 @@ class RbacAbacTest extends TestCase
             );
         }
     }
+
+    public function test_account_status_can_be_set_by_mass_assignment(): void
+    {
+        // Regression: account_status was missing from User::$fillable, so
+        // update(['account_status' => 'disabled']) was silently dropped and the
+        // account stayed active. Every existing test set the property directly,
+        // which bypasses mass-assignment protection and hid it.
+        $user = User::factory()->create();
+
+        $user->update(['account_status' => User::STATUS_DISABLED]);
+
+        $this->assertSame(User::STATUS_DISABLED, $user->fresh()->account_status);
+        $this->assertFalse($user->fresh()->isAccountActive());
+    }
 }

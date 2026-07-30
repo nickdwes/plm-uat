@@ -26,6 +26,11 @@ class User extends Authenticatable
         'password',
         'azure_id',
         'sso_only',
+        // Without these, update(['account_status' => 'disabled']) is silently
+        // dropped by mass-assignment protection and the account stays active —
+        // a disable that appears to succeed and does nothing.
+        'account_status',
+        'status_changed_at',
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────

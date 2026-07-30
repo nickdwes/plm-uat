@@ -34,6 +34,7 @@ use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\WorkLocationController;
+use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Goals\GoalController;
 use App\Http\Controllers\Roster\HandoverController;
 use App\Http\Controllers\Roster\RosterConfigController;
@@ -151,6 +152,20 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/team',       [WorkLocationController::class, 'team']);
         Route::post('/check-in',  [WorkLocationController::class, 'checkIn']);
         Route::post('/check-out', [WorkLocationController::class, 'checkOut']);
+    });
+
+    // ── Assets ────────────────────────────────────────────────────────────────
+    Route::prefix('assets')->group(function () {
+        Route::get('/',            [AssetController::class, 'index']);
+        Route::post('/',           [AssetController::class, 'store']);
+        Route::get('/{asset}',     [AssetController::class, 'show']);
+        Route::put('/{asset}',     [AssetController::class, 'update']);
+        Route::delete('/{asset}',  [AssetController::class, 'destroy']);
+
+        // Custody is its own permission, so it gets its own endpoints rather
+        // than being a field on update.
+        Route::post('/{asset}/assign',  [AssetController::class, 'assign']);
+        Route::post('/{asset}/release', [AssetController::class, 'release']);
     });
 
     // ── Pre-Onboarding (Preboarding) ──────────────────────────────────────────
