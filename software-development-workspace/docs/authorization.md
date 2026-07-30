@@ -169,3 +169,52 @@ query count.
 The suite runs against Postgres, not SQLite: migrations use Postgres-specific
 DDL (`ALTER TABLE ... DROP CONSTRAINT IF EXISTS`) that SQLite cannot parse, so
 `phpunit.xml` points at a `hrms_test` database on the `db` service.
+
+### Two kinds of test, deliberately
+
+**Example tests** cover a specific case. **Catalogue-wide invariants** iterate
+every permission in `Permission::all()` and assert a denial — no assignments
+grants nothing, a disabled account holds nothing even with a global wildcard,
+an exclusion always denies, a deny always overrides.
+
+The invariants exist because example tests only prove the case you thought of.
+Both bugs found while building this passed every example test written at the
+time. A permission added later is covered the moment it joins the catalogue
+rather than when someone remembers to write a test for it.
+
+## Mutation testing
+
+Ordinary tests confirm the code does what you expected. Mutation testing checks
+the tests would *notice if it stopped*: it breaks the source deliberately —
+flips a comparison, negates a condition, drops an array item — and reports any
+change no test caught.
+
+```
+composer test:mutation
+```
+
+Configured in `infection.json5`, scoped to `app/Support/Authorization`.
+Currently 126 mutants, all killed. Thresholds sit at 95% rather than 100%
+because a gate that fails on the first harmless mutant gets disabled rather
+than investigated.
+
+It needs a coverage driver, which the application image does not carry. Build
+one on top of it:
+
+```dockerfile
+FROM software-development-workspace-backend
+USER root
+RUN apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
+ && pecl install pcov && docker-php-ext-enable pcov && apk del .build-deps
+```
+
+### A known limitation
+
+The permission resolution logic lives on `App\Models\User`, so it sits outside
+the configured source directory. Mutating all of `app/Models` to reach it would
+bury the signal in unrelated models — a run against `User.php` alone scores
+99%, and the single survivor is an unrelated `datetime` cast.
+
+The clean fix is to extract permission resolution into
+`App\Support\Authorization`, which would bring it under the same enforced gate.
+Worth doing before that logic grows further.

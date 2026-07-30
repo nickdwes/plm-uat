@@ -1,0 +1,42 @@
+{
+    // Mutation testing for the authorization layer.
+    //
+    // Ordinary tests confirm the code does what you expected. Mutation
+    // testing checks the tests would notice if it stopped: it deliberately
+    // breaks the source — flips a comparison, negates a condition, drops a
+    // return — and reports any change no test caught. Those survivors are
+    // the gaps.
+    //
+    // Deliberately narrow. Mutating the whole application would take hours
+    // and mostly report gaps in code where a wrong answer is cosmetic. Here
+    // a wrong answer grants access.
+    //
+    // Run against the same suite the CI runs:
+    //   vendor/bin/infection --test-framework-options="--filter=RbacAbacTest"
+    "$schema": "vendor/infection/infection/resources/schema.json",
+    "source": {
+        "directories": [
+            "app/Support/Authorization"
+        ]
+    },
+    "logs": {
+        "text": "storage/logs/infection.log",
+        "summary": "storage/logs/infection-summary.log"
+    },
+    "mutators": {
+        "@default": true,
+
+        // Removing a cast changes nothing observable here — ids compared
+        // after (int) are already integers coming out of the database — and
+        // the resulting survivors are noise rather than signal.
+        "CastInt": false
+    },
+    "testFramework": "phpunit",
+
+    // Currently 100% — 126 mutants, all killed. The thresholds sit below that
+    // deliberately: a handful of harmless mutants will appear as the code
+    // grows, and a gate that fails on the first false positive gets disabled
+    // rather than investigated.
+    "minMsi": 95,
+    "minCoveredMsi": 95
+}
