@@ -574,4 +574,108 @@ class RbacAbacTest extends TestCase
         $this->assertTrue($role->isAssignableAt(Scope::GROUP));
         $this->assertFalse($role->isAssignableAt('not_a_scope'));
     }
+
+    // ── Catalogue-wide invariants ─────────────────────────────────────────────
+    //
+    // Example-based tests only prove the case you thought of. Both bugs found
+    // while building this passed every example test written at the time: the
+    // exclusion bug because the example happened to use a non-wildcard grant,
+    // the deny-cache bug because no example added a denial mid-request.
+    //
+    // These iterate the whole catalogue instead, so a new permission is
+    // covered the moment it is added rather than when someone remembers to
+    // write a test for it. Each asserts a DENIAL, because failing open is the
+    // only direction that matters.
+
+    public function test_no_assignments_grants_nothing_in_the_entire_catalogue(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+
+        foreach (Permission::all() as $permission) {
+            $this->assertFalse(
+                $user->hasPermission($permission, $org->id),
+                "A user with no assignments must not hold [{$permission}]."
+            );
+        }
+    }
+
+    public function test_a_disabled_account_is_denied_the_entire_catalogue(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::GROUP_ADMIN, 'group', ['*']), null);
+        $user->account_status = User::STATUS_DISABLED;
+
+        foreach (Permission::all() as $permission) {
+            $this->assertFalse(
+                $user->hasPermission($permission, $org->id),
+                "A disabled account must not hold [{$permission}] even with a global wildcard."
+            );
+        }
+    }
+
+    public function test_an_exclusion_holds_for_every_permission_in_the_catalogue(): void
+    {
+        // The bug this guards: excluding X from a wildcard grant must deny X.
+        // Checked for every permission, against a global wildcard — the widest
+        // possible grant, so nothing else can be masking the result.
+        $org = $this->makeOrg('alpha');
+
+        foreach (Permission::all() as $permission) {
+            $user = User::factory()->create();
+            $role = Role::create([
+                'name'                 => 'excluder_' . md5($permission),
+                'display_name'         => 'Excluder',
+                'scope'                => 'organization',
+                'permissions'          => ['*'],
+                'excluded_permissions' => [$permission],
+            ]);
+            $this->assign($user, $role, $org->id);
+
+            $this->assertFalse(
+                $user->hasPermission($permission, $org->id),
+                "[{$permission}] was excluded but still granted."
+            );
+        }
+    }
+
+    public function test_a_deny_holds_for_every_permission_in_the_catalogue(): void
+    {
+        $org = $this->makeOrg('alpha');
+
+        foreach (Permission::all() as $permission) {
+            $user = User::factory()->create();
+            $this->assign($user, $this->makeRole('admin_' . md5($permission), 'group', ['*']), null);
+
+            \DB::table('deny_assignments')->insert([
+                'user_id'    => $user->id,
+                'permission' => $permission,
+                'reason'     => 'invariant check',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $user->forgetCachedRoles();
+
+            $this->assertFalse(
+                $user->hasPermission($permission, $org->id),
+                "[{$permission}] was denied but still granted."
+            );
+        }
+    }
+
+    public function test_every_catalogue_permission_belongs_to_exactly_one_group(): void
+    {
+        // A permission listed twice, or in no group, means grouped() and all()
+        // disagree — and grouped() is what a role-management UI would render.
+        $flat    = Permission::all();
+        $unique  = array_unique($flat);
+
+        $this->assertSame(
+            count($unique),
+            count($flat),
+            'A permission appears in more than one group: ' .
+            implode(', ', array_keys(array_filter(array_count_values($flat), fn ($n) => $n > 1)))
+        );
+    }
 }

@@ -8,7 +8,6 @@ use App\Support\Authorization\ResourceAttributes;
 use App\Support\Authorization\Scope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -307,17 +306,11 @@ class User extends Authenticatable
             return $this->cachedDenyAssignments;
         }
 
-        // Tolerate the table being absent so the check is safe to deploy in
-        // the window before its migration runs. Resolved once per process —
-        // schema does not change under a running worker, and paying a query
-        // per request for a defensive check is not worth it.
-        static $tableExists = null;
-        $tableExists ??= Schema::hasTable('deny_assignments');
-
-        if (! $tableExists) {
-            return $this->cachedDenyAssignments = [];
-        }
-
+        // No tolerance for the table being missing. An earlier version fell
+        // back to "no denials" if it was absent, which is a fail-open: the
+        // one direction authorization must never fail in. A missing table is
+        // a broken deployment and should surface as an error, not as silently
+        // granted access.
         return $this->cachedDenyAssignments = DB::table('deny_assignments')
             ->where('user_id', $this->getKey())
             ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
