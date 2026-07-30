@@ -61,6 +61,20 @@ watch(() => route.name, () => {
         Dashboard
       </router-link>
 
+      <!-- Notifications sits with Dashboard rather than under People: it is
+           cross-cutting, and will carry Projects, Assets and Travel events
+           once those modules land. -->
+      <router-link :to="{ name: 'notifications' }" :class="['nav-item', { active: route.name === 'notifications' }]">
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zm0 16a2 2 0 001.732-1H8.268A2 2 0 0010 18z" />
+        </svg>
+        Notifications
+      </router-link>
+
+      <!-- ── Section: People ─────────────────────────────────────────────────── -->
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section">People</div>
+
       <!-- ── Employees ──────────────────────────────────────────────────────── -->
       <button
         :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info' }]"
@@ -185,14 +199,6 @@ watch(() => route.name, () => {
         </router-link>
       </div>
 
-      <!-- ── Notifications ─────────────────────────────────────────────────────── -->
-      <router-link :to="{ name: 'notifications' }" :class="['nav-item', { active: route.name === 'notifications' }]">
-        <svg viewBox="0 0 20 20" fill="currentColor">
-          <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zm0 16a2 2 0 001.732-1H8.268A2 2 0 0010 18z" />
-        </svg>
-        Notifications
-      </router-link>
-
       <!-- ── Recruitment ─────────────────────────────────────────────────────── -->
       <router-link :to="{ name: 'recruitment' }" :class="['nav-item', { active: isActive('recruitment') || isActive('vacanc') || isActive('candidate') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -232,8 +238,19 @@ watch(() => route.name, () => {
         </router-link>
       </div>
 
-      <!-- ── Vendor Management ───────────────────────────────────────────────── -->
+      <!-- ── Section: Operations ─────────────────────────────────────────────── -->
+      <!--
+        Home for the modules being ported from Plmv2 — Assets first, then
+        Travel, then Projects and Tasks. See docs/plm-modules-implementation-plan.md.
+
+        Deliberately empty rather than carrying placeholder links: a nav entry
+        pointing at a route that does not exist is a 404 the user finds before
+        we do. Each module adds its own entry here as it lands.
+      -->
+
+      <!-- ── Section: Vendor Management ─────────────────────────────────────── -->
       <div class="sidebar-divider"></div>
+      <div class="sidebar-section">Vendor Management</div>
 
       <button
         :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('vendor') }]"
