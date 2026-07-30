@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Payroll;
 
 use App\Http\Controllers\Controller;
+use App\Models\PayrollPeriod;
 use App\Models\PayrollConfigStatutoryRate;
 use App\Models\PayrollConfigTaxBand;
 use App\Models\PayrollDeductionCode;
@@ -24,6 +25,9 @@ class PayrollConfigController extends Controller
 
     public function index(): JsonResponse
     {
+        // Reading the payroll configuration screen.
+        $this->authorize('viewConfig', PayrollPeriod::class);
+
         $orgId = $this->orgId();
         $year  = (int) now()->format('Y');
 
@@ -75,6 +79,9 @@ class PayrollConfigController extends Controller
 
     public function updateTaxBands(Request $request): JsonResponse
     {
+        // Replaces a whole tax year of PAYE bands.
+        $this->authorize('manageStatutory', PayrollPeriod::class);
+
         $orgId = $this->orgId();
 
         $data = $request->validate([
@@ -115,6 +122,9 @@ class PayrollConfigController extends Controller
 
     public function updateStatutoryRates(Request $request): JsonResponse
     {
+        // Changes the rates every payslip is calculated from.
+        $this->authorize('manageStatutory', PayrollPeriod::class);
+
         $orgId = $this->orgId();
 
         $data = $request->validate([
@@ -146,6 +156,8 @@ class PayrollConfigController extends Controller
 
     public function storeEarningCode(Request $request): JsonResponse
     {
+        $this->authorize('manageConfig', PayrollPeriod::class);
+
         $orgId = $this->orgId();
 
         $data = $request->validate([
@@ -167,6 +179,8 @@ class PayrollConfigController extends Controller
 
     public function updateEarningCode(Request $request, PayrollEarningCode $earningCode): JsonResponse
     {
+        $this->authorize('manageConfig', PayrollPeriod::class);
+
         abort_unless($earningCode->organization_id === $this->orgId(), 403);
 
         $data = $request->validate([
@@ -187,6 +201,8 @@ class PayrollConfigController extends Controller
 
     public function destroyEarningCode(PayrollEarningCode $earningCode): JsonResponse
     {
+        $this->authorize('manageConfig', PayrollPeriod::class);
+
         abort_unless($earningCode->organization_id === $this->orgId(), 403);
         $earningCode->delete();
         return response()->json(null, 204);
@@ -196,6 +212,8 @@ class PayrollConfigController extends Controller
 
     public function storeDeductionCode(Request $request): JsonResponse
     {
+        $this->authorize('manageConfig', PayrollPeriod::class);
+
         $orgId = $this->orgId();
 
         $data = $request->validate([
@@ -217,6 +235,8 @@ class PayrollConfigController extends Controller
 
     public function updateDeductionCode(Request $request, PayrollDeductionCode $deductionCode): JsonResponse
     {
+        $this->authorize('manageConfig', PayrollPeriod::class);
+
         abort_unless($deductionCode->organization_id === $this->orgId(), 403);
 
         $data = $request->validate([
@@ -237,6 +257,8 @@ class PayrollConfigController extends Controller
 
     public function destroyDeductionCode(PayrollDeductionCode $deductionCode): JsonResponse
     {
+        $this->authorize('manageConfig', PayrollPeriod::class);
+
         abort_unless($deductionCode->organization_id === $this->orgId(), 403);
         $deductionCode->delete();
         return response()->json(null, 204);
@@ -247,6 +269,9 @@ class PayrollConfigController extends Controller
 
     public function seedDefaults(Request $request): JsonResponse
     {
+        // Rewrites statutory configuration wholesale.
+        $this->authorize('manageStatutory', PayrollPeriod::class);
+
         $orgId = $this->orgId();
         $year  = (int) now()->format('Y');
         $effectiveDate = $year . '-01-01';

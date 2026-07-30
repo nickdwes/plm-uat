@@ -36,4 +36,34 @@ class PayrollPeriodPolicy extends BasePolicy
     {
         return $this->isGlobalHR($user);
     }
+
+    /** Reading the payroll configuration is an HR administration screen. */
+    public function viewConfig(User $user): bool
+    {
+        return $this->isCompanyHR($user);
+    }
+
+    /**
+     * Earning and deduction codes are operational payroll setup — the same
+     * level of trust as creating a period.
+     */
+    public function manageConfig(User $user): bool
+    {
+        return $this->isCompanyHR($user);
+    }
+
+    /**
+     * PAYE bands and statutory rates are group-level, not org-level.
+     *
+     * These values determine every employee's net pay, they are set by
+     * legislation rather than by the business, and updateTaxBands() replaces a
+     * whole tax year at once. That is the same blast radius as approving a
+     * payroll run, so it takes the same authority — and it keeps the person
+     * who prepares payroll separate from the person who can change what it
+     * calculates.
+     */
+    public function manageStatutory(User $user): bool
+    {
+        return $this->isGlobalHR($user);
+    }
 }
