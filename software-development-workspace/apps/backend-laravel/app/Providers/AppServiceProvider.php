@@ -58,5 +58,10 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(RoleCompetencyProfile::class, CompetencyPolicy::class);
         Gate::policy(EmployeeTrainingRecord::class, TrainingRecordPolicy::class);
         Gate::policy(VendorPartner::class,         VendorPartnerPolicy::class);
+
+        // Asset register. Registered explicitly because auto-discovery only
+        // resolves App\Models\X to App\Policies\XPolicy — it does not follow
+        // sub-namespaces, so a policy in a folder is silently never applied.
+        Gate::policy(\App\Models\Asset\Asset::class, \App\Policies\Asset\AssetPolicy::class);
     }
 }
