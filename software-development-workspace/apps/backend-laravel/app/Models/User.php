@@ -5,7 +5,10 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Support\Authorization\Permission;
 use App\Support\Authorization\ResourceAttributes;
+use App\Support\Authorization\Scope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
@@ -39,7 +42,11 @@ class User extends Authenticatable
     public function roles(): BelongsToMany
     {
         return $this->belongsToMany(Role::class, 'user_roles')
-            ->withPivot('organization_id')
+            ->withPivot([
+                'organization_id', 'scope',
+                'valid_from', 'valid_until',
+                'revoked_at', 'revoked_by', 'granted_by', 'grant_reason',
+            ])
             ->withTimestamps();
     }
 
@@ -120,37 +127,78 @@ class User extends Authenticatable
             return $this->cachedRoleAssignments;
         }
 
+        $now = now();
+
         return $this->cachedRoleAssignments = $this->roles()
-            ->get(['roles.id', 'roles.name', 'roles.permissions'])
-            ->map(fn ($role) => [
-                'name'            => $role->name,
-                'organization_id' => $role->pivot->organization_id !== null
-                    ? (int) $role->pivot->organization_id
-                    : null,
-                'permissions'     => $role->permissions ?? [],
-            ])
+            ->get(['roles.id', 'roles.name', 'roles.permissions', 'roles.excluded_permissions'])
+            ->map(function ($role) {
+                $pivot = $role->pivot;
+
+                // A grant is effective only inside its validity window and
+                // only while unrevoked. Revoked rows are retained so that
+                // "who had access last March" stays answerable, which means
+                // they must be filtered here rather than deleted there.
+                $revoked = $pivot->revoked_at !== null;
+                $notYet  = $pivot->valid_from !== null && $pivot->valid_from > now();
+                $lapsed  = $pivot->valid_until !== null && $pivot->valid_until <= now();
+
+                return [
+                    'name'            => $role->name,
+                    'organization_id' => $pivot->organization_id !== null
+                        ? (int) $pivot->organization_id
+                        : null,
+                    'scope'           => $pivot->scope ?? Scope::ORGANIZATION,
+                    'permissions'     => $role->permissions ?? [],
+                    'excluded'        => $role->excluded_permissions ?? [],
+                    'effective'       => ! ($revoked || $notYet || $lapsed),
+                ];
+            })
             ->all();
+    }
+
+    /**
+     * Assignments that currently grant something. Revoked, lapsed and
+     * not-yet-effective grants are excluded.
+     *
+     * @return array<int, array>
+     */
+    protected function effectiveAssignments(): array
+    {
+        return array_values(array_filter(
+            $this->roleAssignments(),
+            fn (array $a) => $a['effective'] === true
+        ));
     }
 
     /** @var array<int, array>|null */
     protected ?array $cachedRoleAssignments = null;
 
     /**
-     * Drop the memoized assignments. Call after granting or revoking a role
-     * within the same request, otherwise the stale set is reused.
+     * Drop all memoized authorization state — role assignments and deny
+     * assignments both.
+     *
+     * Call after granting, revoking or denying within the same request.
+     * Clearing only the roles half would leave a stale deny cache, which
+     * fails *open* for a newly added denial — the dangerous direction.
      */
     public function forgetCachedRoles(): static
     {
         $this->cachedRoleAssignments = null;
+        $this->cachedDenyAssignments = null;
 
         return $this;
     }
 
     /**
-     * Every permission this user holds in the given organization.
+     * The raw permission strings granted in an organization, wildcards
+     * included. Group-scoped assignments apply everywhere, so they are always
+     * included alongside the org-scoped ones.
      *
-     * Group-scoped assignments (organization_id === null) apply everywhere,
-     * so they are always included alongside the org-scoped ones.
+     * Exclusions are deliberately NOT applied here. An exclusion can only be
+     * resolved against a specific permission — `leave.approve` cannot be
+     * subtracted from the string `leave.*` by filtering a list, because the
+     * wildcard is what carries the grant. Use hasPermission() for a decision;
+     * this is for display and inspection.
      *
      * @return string[]
      */
@@ -158,18 +206,131 @@ class User extends Authenticatable
     {
         $granted = [];
 
-        foreach ($this->roleAssignments() as $assignment) {
-            $isGroupScoped = $assignment['organization_id'] === null;
-            $matchesOrg    = $organizationId !== null
-                && $assignment['organization_id'] === $organizationId;
-
-            if ($isGroupScoped || $matchesOrg) {
-                $granted = array_merge($granted, $assignment['permissions']);
+        foreach ($this->effectiveAssignments() as $assignment) {
+            if (! $this->assignmentAppliesIn($assignment, $organizationId)) {
+                continue;
             }
+
+            $granted = array_merge($granted, $assignment['permissions']);
         }
 
         return array_values(array_unique($granted));
     }
+
+    /** Does an assignment apply in the organization being asked about? */
+    protected function assignmentAppliesIn(array $assignment, ?int $organizationId): bool
+    {
+        // Group scope reaches every tenant.
+        if ($assignment['organization_id'] === null || $assignment['scope'] === Scope::GROUP) {
+            return true;
+        }
+
+        return $organizationId !== null
+            && $assignment['organization_id'] === $organizationId;
+    }
+
+    /**
+     * The widest scope at which this user holds a permission, or null if they
+     * do not hold it at all.
+     *
+     * This is the RBAC half of a scoped check: it answers "how far does this
+     * grant reach", leaving ResourceAttributes to answer whether a particular
+     * record falls inside that reach.
+     */
+    public function scopeForPermission(string $permission, ?int $organizationId = null): ?string
+    {
+        Permission::assertKnown($permission);
+
+        if (! $this->isAccountActive() || $this->isDenied($permission, $organizationId)) {
+            return null;
+        }
+
+        $organizationId ??= app()->bound('current.organization_id')
+            ? app('current.organization_id')
+            : null;
+
+        $scopes = [];
+
+        foreach ($this->effectiveAssignments() as $assignment) {
+            if (! $this->assignmentAppliesIn($assignment, $organizationId)) {
+                continue;
+            }
+
+            if (Permission::anySatisfies($assignment['excluded'], $permission)) {
+                continue;
+            }
+
+            if (Permission::anySatisfies($assignment['permissions'], $permission)) {
+                $scopes[] = $assignment['scope'];
+            }
+        }
+
+        return Scope::widest($scopes);
+    }
+
+    /**
+     * Is this permission explicitly denied?
+     *
+     * Deny is the subtractive half of an otherwise additive model, and is
+     * evaluated before any grant. Roles cannot express "everything except X";
+     * this can.
+     */
+    public function isDenied(string $permission, ?int $organizationId = null): bool
+    {
+        $organizationId ??= app()->bound('current.organization_id')
+            ? app('current.organization_id')
+            : null;
+
+        foreach ($this->denyAssignments() as $deny) {
+            // A denial with a null organization applies in every tenant.
+            if ($deny['organization_id'] !== null
+                && $deny['organization_id'] !== $organizationId) {
+                continue;
+            }
+
+            if (Permission::satisfies($deny['permission'], $permission)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Deny assignments in force right now, memoized per request.
+     *
+     * @return array<int, array{permission: string, organization_id: int|null}>
+     */
+    protected function denyAssignments(): array
+    {
+        if ($this->cachedDenyAssignments !== null) {
+            return $this->cachedDenyAssignments;
+        }
+
+        // Tolerate the table being absent so the check is safe to deploy in
+        // the window before its migration runs. Resolved once per process —
+        // schema does not change under a running worker, and paying a query
+        // per request for a defensive check is not worth it.
+        static $tableExists = null;
+        $tableExists ??= Schema::hasTable('deny_assignments');
+
+        if (! $tableExists) {
+            return $this->cachedDenyAssignments = [];
+        }
+
+        return $this->cachedDenyAssignments = DB::table('deny_assignments')
+            ->where('user_id', $this->getKey())
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->get(['permission', 'organization_id'])
+            ->map(fn ($row) => [
+                'permission'      => $row->permission,
+                'organization_id' => $row->organization_id !== null ? (int) $row->organization_id : null,
+            ])
+            ->all();
+    }
+
+    /** @var array<int, array>|null */
+    protected ?array $cachedDenyAssignments = null;
 
     /**
      * Does this user hold a permission, honouring wildcards?
@@ -179,24 +340,18 @@ class User extends Authenticatable
      * (own, or within a reporting line), the caller must also apply the
      * matching check from ResourceAttributes.
      */
+    /**
+     * The full decision: account active, not explicitly denied, and granted
+     * by some effective assignment.
+     *
+     * Delegates to scopeForPermission() so the evaluation order lives in one
+     * place. A permission held at any scope is held; whether that scope
+     * reaches a particular record is the separate question ResourceAttributes
+     * answers.
+     */
     public function hasPermission(string $permission, ?int $organizationId = null): bool
     {
-        Permission::assertKnown($permission);
-
-        // Account state is checked before anything else, and fails closed.
-        // A leaver's role assignments are retained deliberately — deleting
-        // them would destroy the record of what they could do — so status is
-        // the only thing standing between a disabled account and every
-        // permission it held on its last day.
-        if (! $this->isAccountActive()) {
-            return false;
-        }
-
-        $organizationId ??= app()->bound('current.organization_id')
-            ? app('current.organization_id')
-            : null;
-
-        return Permission::anySatisfies($this->permissionsFor($organizationId), $permission);
+        return $this->scopeForPermission($permission, $organizationId) !== null;
     }
 
     /**

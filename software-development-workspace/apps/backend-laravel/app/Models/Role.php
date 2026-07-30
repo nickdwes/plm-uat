@@ -13,13 +13,43 @@ class Role extends Model
     protected $fillable = [
         'name',
         'display_name',
+        'description',
         'scope',
+        'is_system',
         'permissions',
+        'excluded_permissions',
+        'assignable_scopes',
+        'organization_id',
+        'created_by',
     ];
 
     protected $casts = [
-        'permissions' => 'array',
+        'permissions'          => 'array',
+        'excluded_permissions' => 'array',
+        'assignable_scopes'    => 'array',
+        'is_system'            => 'boolean',
     ];
+
+    /**
+     * May this definition be assigned at the given scope?
+     *
+     * A null `assignable_scopes` means unrestricted, which is correct for the
+     * built-in roles. A custom role built for departmental use should list
+     * only the scopes it is meant for, so it cannot later be granted
+     * tenant-wide whatever an administrator intends.
+     */
+    public function isAssignableAt(string $scope): bool
+    {
+        if (! \App\Support\Authorization\Scope::isValid($scope)) {
+            return false;
+        }
+
+        if (empty($this->assignable_scopes)) {
+            return true;
+        }
+
+        return in_array($scope, $this->assignable_scopes, true);
+    }
 
     // Role name constants — use these everywhere instead of raw strings
     const GROUP_ADMIN  = 'group_admin';

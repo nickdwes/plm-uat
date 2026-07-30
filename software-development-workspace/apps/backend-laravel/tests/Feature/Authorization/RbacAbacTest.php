@@ -8,6 +8,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Support\Authorization\Permission;
 use App\Support\Authorization\ResourceAttributes;
+use App\Support\Authorization\Scope;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -294,24 +295,32 @@ class RbacAbacTest extends TestCase
 
     // ── Query cost ────────────────────────────────────────────────────────────
 
-    public function test_role_assignments_are_resolved_once_per_request(): void
+    public function test_repeated_permission_checks_do_not_requery(): void
     {
         $org  = $this->makeOrg('alpha');
         $user = User::factory()->create();
         $this->assign($user, $this->makeRole(Role::ORG_HR, 'organization', ['employees.*']), $org->id);
 
+        // Warm the memoized assignment and deny lookups.
+        $user->hasPermission(Permission::EMPLOYEES_VIEW, $org->id);
+
         \DB::enableQueryLog();
         \DB::flushQueryLog();
 
-        // Previously each of these issued its own query, and the nested ones
-        // issued three.
+        // Each of these previously issued its own query, and the nested role
+        // helpers issued three apiece.
         $user->isManagerIn($org->id);
         $user->isOrgHR($org->id);
         $user->isGroupAdmin();
         $user->hasPermission(Permission::EMPLOYEES_UPDATE, $org->id);
         $user->hasPermission(Permission::EMPLOYEES_VIEW, $org->id);
+        $user->scopeForPermission(Permission::EMPLOYEES_VIEW, $org->id);
 
-        $this->assertCount(1, \DB::getQueryLog(), 'Role assignments should be loaded exactly once.');
+        $this->assertCount(
+            0,
+            \DB::getQueryLog(),
+            'Authorization must not query once assignments and denials are resolved.'
+        );
     }
 
     // ── Account lifecycle (JML) ───────────────────────────────────────────────
@@ -357,5 +366,212 @@ class RbacAbacTest extends TestCase
 
         $this->assertFalse($user->hasPermission(Permission::EMPLOYEES_VIEW, $org->id));
         $this->assertNotEmpty($user->permissionsFor($org->id), 'Assignments must survive disabling.');
+    }
+
+    // ── Scope ─────────────────────────────────────────────────────────────────
+
+    public function test_scope_ordering_is_containment_not_equality(): void
+    {
+        // A wider grant satisfies a narrower requirement, never the reverse.
+        $this->assertTrue(Scope::covers(Scope::ORGANIZATION, Scope::SELF));
+        $this->assertTrue(Scope::covers(Scope::TEAM, Scope::SELF));
+        $this->assertFalse(Scope::covers(Scope::SELF, Scope::ORGANIZATION));
+        $this->assertFalse(Scope::covers(Scope::TEAM, Scope::DEPARTMENT));
+    }
+
+    public function test_an_unrecognised_scope_never_outranks_a_real_one(): void
+    {
+        $this->assertFalse(Scope::covers('everything', Scope::SELF));
+        $this->assertSame(Scope::TEAM, Scope::widest([Scope::SELF, 'bogus', Scope::TEAM]));
+    }
+
+    public function test_scope_for_permission_returns_the_widest_grant(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+
+        $narrow = $this->makeRole('viewer_self', 'organization', ['leave.view']);
+        $wide   = $this->makeRole('viewer_team', 'organization', ['leave.view']);
+
+        $user->roles()->attach($narrow->id, ['organization_id' => $org->id, 'scope' => Scope::SELF]);
+        $user->roles()->attach($wide->id,   ['organization_id' => $org->id, 'scope' => Scope::TEAM]);
+        $user->forgetCachedRoles();
+
+        $this->assertSame(Scope::TEAM, $user->scopeForPermission(Permission::LEAVE_VIEW, $org->id));
+    }
+
+    public function test_scope_for_permission_is_null_when_not_held(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+
+        $this->assertNull($user->scopeForPermission(Permission::PAYROLL_APPROVE, $org->id));
+    }
+
+    // ── Validity window and revocation ────────────────────────────────────────
+
+    public function test_a_lapsed_assignment_grants_nothing(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $role = $this->makeRole(Role::ORG_HR, 'organization', ['payroll.*']);
+
+        $user->roles()->attach($role->id, [
+            'organization_id' => $org->id,
+            'scope'           => Scope::ORGANIZATION,
+            'valid_from'      => now()->subMonths(2),
+            'valid_until'     => now()->subDay(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_APPROVE, $org->id));
+    }
+
+    public function test_an_assignment_not_yet_in_force_grants_nothing(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $role = $this->makeRole(Role::ORG_HR, 'organization', ['payroll.*']);
+
+        // A joiner whose access starts on their first day.
+        $user->roles()->attach($role->id, [
+            'organization_id' => $org->id,
+            'scope'           => Scope::ORGANIZATION,
+            'valid_from'      => now()->addWeek(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_APPROVE, $org->id));
+    }
+
+    public function test_a_revoked_assignment_grants_nothing_but_is_retained(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $role = $this->makeRole(Role::ORG_HR, 'organization', ['payroll.*']);
+
+        $user->roles()->attach($role->id, [
+            'organization_id' => $org->id,
+            'scope'           => Scope::ORGANIZATION,
+            'revoked_at'      => now()->subHour(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_APPROVE, $org->id));
+
+        // "Who had access last March" must stay answerable.
+        $this->assertDatabaseHas('user_roles', ['user_id' => $user->id, 'role_id' => $role->id]);
+    }
+
+    // ── Excluded permissions ──────────────────────────────────────────────────
+
+    public function test_an_exclusion_carves_out_of_a_wildcard(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+
+        $role = Role::create([
+            'name'                 => 'leave_admin_no_approve',
+            'display_name'         => 'Leave admin without approval',
+            'scope'                => 'organization',
+            'permissions'          => ['leave.*'],
+            'excluded_permissions' => ['leave.approve'],
+        ]);
+
+        $this->assign($user, $role, $org->id);
+
+        $this->assertTrue($user->hasPermission(Permission::LEAVE_VIEW, $org->id));
+        $this->assertFalse($user->hasPermission(Permission::LEAVE_APPROVE, $org->id));
+    }
+
+    // ── Deny assignments ──────────────────────────────────────────────────────
+
+    public function test_a_deny_assignment_beats_a_grant(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::GROUP_ADMIN, 'group', ['*']), null);
+
+        $this->assertTrue($user->hasPermission(Permission::PAYROLL_VIEW, $org->id));
+
+        \DB::table('deny_assignments')->insert([
+            'user_id'    => $user->id,
+            'permission' => 'payroll.*',
+            'reason'     => 'Under investigation',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_VIEW, $org->id));
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_APPROVE, $org->id));
+        // Unrelated permissions are untouched.
+        $this->assertTrue($user->hasPermission(Permission::EMPLOYEES_VIEW, $org->id));
+    }
+
+    public function test_an_expired_deny_no_longer_applies(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::GROUP_ADMIN, 'group', ['*']), null);
+
+        \DB::table('deny_assignments')->insert([
+            'user_id'    => $user->id,
+            'permission' => 'payroll.*',
+            'reason'     => 'Temporary suspension, now lapsed',
+            'expires_at' => now()->subDay(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertTrue($user->hasPermission(Permission::PAYROLL_VIEW, $org->id));
+    }
+
+    public function test_a_deny_scoped_to_one_org_does_not_leak_to_another(): void
+    {
+        $orgA = $this->makeOrg('alpha');
+        $orgB = $this->makeOrg('beta');
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole(Role::GROUP_ADMIN, 'group', ['*']), null);
+
+        \DB::table('deny_assignments')->insert([
+            'user_id'         => $user->id,
+            'permission'      => 'payroll.view',
+            'organization_id' => $orgA->id,
+            'reason'          => 'Excluded from alpha payroll',
+            'created_at'      => now(),
+            'updated_at'      => now(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertFalse($user->hasPermission(Permission::PAYROLL_VIEW, $orgA->id));
+        $this->assertTrue($user->hasPermission(Permission::PAYROLL_VIEW, $orgB->id));
+    }
+
+    // ── Assignable scopes ─────────────────────────────────────────────────────
+
+    public function test_a_role_cannot_be_assigned_outside_its_assignable_scopes(): void
+    {
+        $role = Role::create([
+            'name'              => 'dept_reviewer',
+            'display_name'      => 'Departmental reviewer',
+            'scope'             => 'organization',
+            'permissions'       => ['employees.view'],
+            'assignable_scopes' => [Scope::SELF, Scope::TEAM, Scope::DEPARTMENT],
+        ]);
+
+        $this->assertTrue($role->isAssignableAt(Scope::DEPARTMENT));
+        $this->assertFalse($role->isAssignableAt(Scope::ORGANIZATION));
+        $this->assertFalse($role->isAssignableAt(Scope::GROUP));
+    }
+
+    public function test_a_role_without_assignable_scopes_is_unrestricted(): void
+    {
+        $role = $this->makeRole('anywhere', 'organization', ['employees.view']);
+
+        $this->assertTrue($role->isAssignableAt(Scope::SELF));
+        $this->assertTrue($role->isAssignableAt(Scope::GROUP));
+        $this->assertFalse($role->isAssignableAt('not_a_scope'));
     }
 }
