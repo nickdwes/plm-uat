@@ -459,7 +459,13 @@ async function signInWithMicrosoft(): Promise<void> {
   left: clamp(-6rem, -6vw, -3rem);
 }
 
-.brand-copy { @apply relative; max-width: 44rem; }
+/* Copy and preview share one 44rem column, centred in the panel. Both need
+   the same width and the same centring or their left edges won't line up. */
+.brand-copy {
+  @apply relative w-full;
+  max-width: 44rem;
+  margin-inline: auto;
+}
 
 .brand-copy h2 {
   @apply font-bold;
@@ -485,6 +491,7 @@ async function signInWithMicrosoft(): Promise<void> {
      the panel width and on a 1920 display the due/owner columns drift far
      from the task they belong to. */
   max-width: 44rem;
+  margin-inline: auto;
   margin-top: clamp(1.5rem, 5vh, 2.5rem);
   padding: clamp(0.875rem, 1.4vw, 1rem);
   border-radius: var(--radius-2xl);
