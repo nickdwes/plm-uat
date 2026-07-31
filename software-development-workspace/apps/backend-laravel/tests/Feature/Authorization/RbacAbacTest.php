@@ -716,4 +716,57 @@ class RbacAbacTest extends TestCase
         $this->assertSame(User::STATUS_DISABLED, $user->fresh()->account_status);
         $this->assertFalse($user->fresh()->isAccountActive());
     }
+
+    // ── Tenancy reach follows scope, not role name ────────────────────────────
+
+    public function test_group_reach_is_decided_by_scope_not_role_name(): void
+    {
+        // ResolveOrganizationContext and accessibleOrganizationIds used to ask
+        // whether the role was *called* group_admin. A custom role carrying
+        // group-wide rights under any other name was silently treated as
+        // having none, and rejected before any controller ran.
+        $orgA = $this->makeOrg('alpha');
+        $this->makeOrg('beta');
+
+        $user = User::factory()->create();
+        $role = $this->makeRole('platform_operations', 'group', ['employees.view']);
+        $user->roles()->attach($role->id, ['organization_id' => null, 'scope' => Scope::GROUP]);
+        $user->forgetCachedRoles();
+
+        $this->assertTrue($user->hasGroupScope());
+        $this->assertFalse($user->isGroupAdmin(), 'It is not the named role.');
+        $this->assertCount(2, $user->accessibleOrganizationIds(), 'Group reach spans every tenant.');
+        $this->assertTrue($user->hasPermission(Permission::EMPLOYEES_VIEW, $orgA->id));
+    }
+
+    public function test_an_org_scoped_identity_has_no_group_reach(): void
+    {
+        $org  = $this->makeOrg('alpha');
+        $this->makeOrg('beta');
+
+        $user = User::factory()->create();
+        $this->assign($user, $this->makeRole('org_hr', 'organization', ['employees.*']), $org->id);
+
+        $this->assertFalse($user->hasGroupScope());
+        $this->assertSame([$org->id], $user->accessibleOrganizationIds());
+    }
+
+    public function test_a_revoked_group_assignment_no_longer_confers_reach(): void
+    {
+        // hasGroupScope reads effective assignments, so revocation must remove
+        // cross-tenant reach as well as permissions.
+        $this->makeOrg('alpha');
+        $this->makeOrg('beta');
+
+        $user = User::factory()->create();
+        $role = $this->makeRole('platform_ops', 'group', ['employees.view']);
+        $user->roles()->attach($role->id, [
+            'organization_id' => null,
+            'scope'           => Scope::GROUP,
+            'revoked_at'      => now()->subHour(),
+        ]);
+        $user->forgetCachedRoles();
+
+        $this->assertFalse($user->hasGroupScope());
+    }
 }

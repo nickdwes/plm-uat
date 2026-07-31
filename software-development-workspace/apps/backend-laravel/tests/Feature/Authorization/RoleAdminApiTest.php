@@ -46,10 +46,9 @@ class RoleAdminApiTest extends TestCase
     }
 
     /**
-     * $roleName matters for group-scoped users: ResolveOrganizationContext
-     * decides who may operate across tenants by checking for the role *named*
-     * group_admin, not by permission. A group-wide assignment under any other
-     * name is rejected by the middleware before the controller is reached.
+     * $roleName is incidental. Tenancy reach is decided by the assignment's
+     * scope, so a group-scoped role works under any name — see
+     * groupAdmin() below, which deliberately uses a generated one.
      */
     private function user(
         array $permissions,
@@ -71,10 +70,15 @@ class RoleAdminApiTest extends TestCase
         return $user;
     }
 
-    /** A group-wide administrator, named so the org-context middleware admits it. */
+    /**
+     * A group-wide administrator under a *generated* name.
+     *
+     * Deliberately not called group_admin: the middleware used to gate on that
+     * name, so this asserts the tenancy check now follows scope instead.
+     */
     private function groupAdmin(): User
     {
-        return $this->user(['*'], null, Scope::GROUP, Role::GROUP_ADMIN);
+        return $this->user(['*'], null, Scope::GROUP);
     }
 
     private function headers(): array

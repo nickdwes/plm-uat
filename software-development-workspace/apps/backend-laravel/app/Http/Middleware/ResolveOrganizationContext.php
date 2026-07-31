@@ -37,8 +37,10 @@ class ResolveOrganizationContext
             return $next($request);
         }
 
-        // Group admins can operate across all orgs; null means no filter
-        if ($user->isGroupAdmin()) {
+        // Anyone holding an assignment at group scope operates across all orgs;
+        // null means no filter. Decided by scope rather than by role name, so a
+        // custom role granted group-wide is recognised as such.
+        if ($user->hasGroupScope()) {
             $orgId = $this->resolveFromHeader($request);
             app()->instance('current.organization_id', $orgId);
             app()->instance('current.organization', $orgId ? Organization::find($orgId) : null);

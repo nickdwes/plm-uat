@@ -96,11 +96,36 @@ class User extends Authenticatable
     }
 
     /**
+     * Does this identity operate across every tenant?
+     *
+     * Answered from the assignment's scope rather than the role's name. A role
+     * granted at group scope is group-wide by definition; requiring it to be
+     * *called* `group_admin` makes the name load-bearing, so a custom role
+     * carrying group-wide rights under any other name is silently treated as
+     * having none.
+     *
+     * Distinct from isGroupAdmin(), which asks whether a specific named role is
+     * held. The legacy policies still use that for their own decisions; this
+     * answers only the tenancy question.
+     */
+    public function hasGroupScope(): bool
+    {
+        foreach ($this->effectiveAssignments() as $assignment) {
+            if ($assignment['organization_id'] === null
+                || $assignment['scope'] === Scope::GROUP) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Return all organization IDs this user has any role in.
      */
     public function accessibleOrganizationIds(): array
     {
-        if ($this->isGroupAdmin()) {
+        if ($this->hasGroupScope()) {
             return Organization::pluck('id')->toArray();
         }
 
