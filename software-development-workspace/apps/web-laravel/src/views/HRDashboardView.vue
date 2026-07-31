@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { api, ApiError } from "../lib/api";
-import { currentOrgSlug, authStore } from "../stores/auth";
+import { currentOrgSlug } from "../stores/auth";
 import type { TeamLocationEntry, WorkLocationType } from "../lib/types";
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface EmploymentType { type: string; count: number }
 interface GenderRow      { gender: string; count: number }
@@ -10,28 +12,33 @@ interface DeptRow        { department: string; headcount: number }
 interface MonthlyHire    { month: string; count: number }
 
 interface DashboardSummary {
-  totalActive:        number;
-  totalExited:        number;
-  newHiresThisMonth:  number;
-  newHiresLastMonth:  number;
-  pendingLeave:       number;
-  approvedLeave:      number;
-  rejectedLeave:      number;
-  onLeaveToday:       number;
-  leaveRatio:         number;
-  headcountByDept:    DeptRow[];
-  employmentTypes:    EmploymentType[];
-  genderBreakdown:    GenderRow[];
-  monthlyHires:       MonthlyHire[];
+  totalActive:       number;
+  totalExited:       number;
+  newHiresThisMonth: number;
+  newHiresLastMonth: number;
+  pendingLeave:      number;
+  approvedLeave:     number;
+  rejectedLeave:     number;
+  onLeaveToday:      number;
+  leaveRatio:        number;
+  headcountByDept:   DeptRow[];
+  employmentTypes:   EmploymentType[];
+  genderBreakdown:   GenderRow[];
+  monthlyHires:      MonthlyHire[];
 }
 
-const summary = ref<DashboardSummary | null>(null);
-const loading = ref(false);
-const error   = ref("");
+// ── State ─────────────────────────────────────────────────────────────────────
 
+const summary       = ref<DashboardSummary | null>(null);
+const loading       = ref(false);
+const error         = ref("");
 const teamLocations = ref<TeamLocationEntry[] | null>(null);
+const schedTab      = ref<"meetings" | "events" | "holidays">("meetings");
+const weekOffset    = ref(0); // -1 = prev week, 0 = this week, +1 = next
 
 function org(): string | null { return currentOrgSlug.value; }
+
+// ── API ───────────────────────────────────────────────────────────────────────
 
 async function load(): Promise<void> {
   if (!org()) { error.value = "Select an organisation first."; return; }
@@ -54,70 +61,154 @@ async function loadTeamLocations(): Promise<void> {
     const res = await api<{ data: TeamLocationEntry[] }>("GET", "/api/v1/work-location/team", { org: org() });
     teamLocations.value = res.data;
   } catch {
-    teamLocations.value = null; // non-managers get a 403 — hide the card silently
+    teamLocations.value = null;
   }
 }
 
 onMounted(() => { load(); loadTeamLocations(); });
 watch(currentOrgSlug, () => { load(); loadTeamLocations(); });
 
-// ── Computed helpers ──────────────────────────────────────────────────────────
+// ── Colour maps ───────────────────────────────────────────────────────────────
+
+// Note: donut segment colours are intentional palette choices, not brand tokens.
+// "permanent" and "male" both use Figma's sky-blue #0c8ef4 which matches our
+// brand base exactly — if the brand ever shifts these will need updating too.
+const BRAND = "#0c8ef4";
+const typeColours: Record<string, string> = {
+  permanent:   BRAND,
+  contract:    "#F59E0B",
+  contractor:  "#F59E0B",
+  intern:      "#D1D5DB",
+  internship:  "#D1D5DB",
+  attachee:    "#6366F1",
+  probation:   "#EC4899",
+  unspecified: "#D1D5DB",
+};
+const genderColours: Record<string, string> = {
+  male:        BRAND,
+  female:      "#D1D5DB",
+  other:       "#8B5CF6",
+  unspecified: "#E5E7EB",
+};
+const deptBarColours = ["#7C3AED","#F59E0B","#0D9488","#8B5CF6","#0c8ef4","#10B981","#EC4899","#64748B"];
+
+function typeColour(t: string):   string { return typeColours[t.toLowerCase()]   ?? "#D1D5DB"; }
+function genderColour(g: string): string { return genderColours[g.toLowerCase()] ?? "#D1D5DB"; }
+
+// ── Donut computation (stroke-dasharray) ──────────────────────────────────────
+
+interface DonutSeg { label: string; pct: number; color: string; dashArray: string; dashOffset: number; }
+
+function computeDonut(items: { label: string; value: number; color: string }[], r = 44): DonutSeg[] {
+  const circ  = 2 * Math.PI * r;
+  const total = items.reduce((s, i) => s + i.value, 0) || 1;
+  const gap   = items.length > 1 ? 2 : 0;
+  let acc     = 0;
+  return items.map(item => {
+    const pct    = item.value / total;
+    const len    = Math.max(0, circ * pct - gap);
+    const offset = circ - acc;
+    acc += circ * pct;
+    return { label: item.label, pct: Math.round(pct * 100), color: item.color,
+             dashArray: `${len.toFixed(2)} ${(circ - len).toFixed(2)}`, dashOffset: offset };
+  });
+}
+
+const genderSegs = computed((): DonutSeg[] =>
+  computeDonut((summary.value?.genderBreakdown ?? []).map(g => ({ label: g.gender, value: g.count, color: genderColour(g.gender) })))
+);
+const typeSegs = computed((): DonutSeg[] =>
+  computeDonut((summary.value?.employmentTypes ?? []).map(e => ({ label: e.type, value: e.count, color: typeColour(e.type) })))
+);
+
+// ── Line chart ────────────────────────────────────────────────────────────────
+
+const CPAD = { top: 20, right: 16, bottom: 52, left: 52 };
+const CW = 560; const CH = 230;
+const CIW = CW - CPAD.left - CPAD.right;
+const CIH = CH - CPAD.top - CPAD.bottom;
+
+const chartYMax = computed(() => {
+  const max = Math.max(1, ...(summary.value?.monthlyHires?.map(h => h.count) ?? [0]));
+  if (max <= 10) return 10;
+  const mag = Math.pow(10, Math.floor(Math.log10(max)));
+  return Math.ceil(max / mag) * mag;
+});
+
+const chartGridLines = computed(() =>
+  Array.from({ length: 6 }, (_, i) => ({
+    y: CPAD.top + i * (CIH / 5),
+    label: String(Math.round(chartYMax.value * (1 - i / 5))),
+  }))
+);
+
+const chartPoints = computed(() => {
+  const hires = summary.value?.monthlyHires ?? [];
+  if (!hires.length) return [];
+  const ymax = chartYMax.value;
+  return hires.map((h, i) => ({
+    x: CPAD.left + (hires.length === 1 ? CIW / 2 : (i / (hires.length - 1)) * CIW),
+    y: CPAD.top  + CIH - (h.count / ymax) * CIH,
+    label: formatMonth(h.month),
+    count: h.count,
+  }));
+});
+
+function smoothPath(pts: { x: number; y: number }[]): string {
+  if (pts.length < 2) return "";
+  let d = `M ${pts[0].x.toFixed(1)} ${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const mx = ((pts[i].x + pts[i + 1].x) / 2).toFixed(1);
+    d += ` C ${mx} ${pts[i].y.toFixed(1)} ${mx} ${pts[i + 1].y.toFixed(1)} ${pts[i + 1].x.toFixed(1)} ${pts[i + 1].y.toFixed(1)}`;
+  }
+  return d;
+}
+
+const chartLinePath  = computed(() => smoothPath(chartPoints.value));
+const chartAreaPath  = computed(() => {
+  const pts = chartPoints.value;
+  if (!pts.length) return "";
+  const bottom = (CPAD.top + CIH).toFixed(1);
+  return `${smoothPath(pts)} L ${pts[pts.length-1].x.toFixed(1)} ${bottom} L ${pts[0].x.toFixed(1)} ${bottom} Z`;
+});
 
 const maxDeptHeadcount = computed(() =>
-  Math.max(1, ...(summary.value?.headcountByDept?.map((d) => d.headcount) ?? [0]))
+  Math.max(1, ...(summary.value?.headcountByDept?.map(d => d.headcount) ?? [0]))
 );
 
-const totalByType = computed(() =>
-  (summary.value?.employmentTypes ?? []).reduce((s, e) => s + e.count, 0) || 1
-);
-
-const totalGender = computed(() =>
-  (summary.value?.genderBreakdown ?? []).reduce((s, g) => s + g.count, 0) || 1
-);
-
-const maxMonthlyHires = computed(() =>
-  Math.max(1, ...(summary.value?.monthlyHires?.map((m) => m.count) ?? [0]))
-);
-
-const totalLeaveRequests = computed(() => {
+const totalEmployees = computed(() => {
   const s = summary.value;
-  return s ? s.pendingLeave + s.approvedLeave + s.rejectedLeave : 1;
+  return s ? s.totalActive + s.totalExited : 0;
 });
 
-const hiresChange = computed(() => {
-  const s = summary.value;
-  if (!s) return null;
-  const diff = s.newHiresThisMonth - s.newHiresLastMonth;
-  return { diff, positive: diff >= 0 };
+// ── Week calendar ─────────────────────────────────────────────────────────────
+
+const NOW = new Date();
+
+const calendarMonth = computed(() => {
+  const base = new Date(NOW);
+  base.setDate(base.getDate() + weekOffset.value * 7);
+  return base.toLocaleString("default", { month: "long", year: "numeric" });
 });
 
-const typeColours: Record<string, string> = {
-  permanent:    "#004C97",
-  intern:       "#0D9488",
-  contractor:   "#F59E08",
-  attachee:     "#6366F1",
-  unspecified:  "#9CA3AF",
-};
+const weekDays = computed(() => {
+  const base = new Date(NOW);
+  base.setDate(base.getDate() + weekOffset.value * 7);
+  const dow = base.getDay();
+  const mon = new Date(base);
+  mon.setDate(base.getDate() - (dow === 0 ? 6 : dow - 1));
+  return ["Mon", "Tue", "Wed", "Thu", "Fri"].map((lbl, i) => {
+    const d = new Date(mon);
+    d.setDate(mon.getDate() + i);
+    return { label: lbl, date: d.getDate(), isToday: d.toDateString() === NOW.toDateString() };
+  });
+});
 
-const genderColours: Record<string, string> = {
-  male:         "#004C97",
-  female:       "#EC4899",
-  other:        "#8B5CF6",
-  unspecified:  "#9CA3AF",
-};
+const todayStr = NOW.toLocaleDateString("en-GB", {
+  weekday: "long", day: "numeric", month: "long", year: "numeric",
+});
 
-function typeColour(type: string): string {
-  return typeColours[type.toLowerCase()] ?? "#9CA3AF";
-}
-
-function genderColour(g: string): string {
-  return genderColours[g.toLowerCase()] ?? "#9CA3AF";
-}
-
-function formatMonth(ym: string): string {
-  const [y, m] = ym.split("-");
-  return new Date(Number(y), Number(m) - 1).toLocaleString("default", { month: "short", year: "2-digit" });
-}
+// ── Team location helpers ─────────────────────────────────────────────────────
 
 function fmtTime(d: string | null | undefined): string {
   if (!d) return "—";
@@ -125,368 +216,398 @@ function fmtTime(d: string | null | undefined): string {
   catch { return d; }
 }
 
-function teamInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
+function wlBadgeClass(type: WorkLocationType): string {
+  return ({ office: "badge-blue", home: "badge-teal", customer_site: "badge-amber" } as Record<string, string>)[type] ?? "badge-gray";
 }
-
-function teamWlBadgeClass(type: WorkLocationType): string {
-  return { office: "badge-blue", home: "badge-teal", customer_site: "badge-amber" }[type] ?? "badge-gray";
-}
-
-function teamWlLabel(c: { location_type: WorkLocationType; customer_name: string | null }): string {
-  const base = { office: "Office", home: "Work From Home", customer_site: "Customer Site" }[c.location_type] ?? c.location_type;
+function wlLabel(c: { location_type: WorkLocationType; customer_name: string | null }): string {
+  const base = ({ office: "Office", home: "Work From Home", customer_site: "Customer Site" } as Record<string, string>)[c.location_type] ?? c.location_type;
   return c.location_type === "customer_site" && c.customer_name ? `${base}: ${c.customer_name}` : base;
 }
 
-const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+function formatMonth(ym: string): string {
+  const [y, m] = ym.split("-");
+  return new Date(Number(y), Number(m) - 1).toLocaleString("default", { month: "short" });
+}
 </script>
 
 <template>
-  <div class="view dash-view">
+  <div class="view dash-root">
 
-    <!-- ── Page header ───────────────────────────────────────────────────── -->
-    <div class="dash-page-header">
+    <!-- ── Page header ──────────────────────────────────────────────────── -->
+    <div class="dash-header">
       <div>
-        <h2 class="dash-page-title">HR Dashboard</h2>
-        <p class="dash-page-sub">{{ today }}</p>
+        <h2 class="dash-title">HR Dashboard</h2>
+        <p class="dash-sub">{{ todayStr }}</p>
       </div>
-      <span v-if="authStore.currentOrg" class="badge badge-blue dash-org-badge">
-        {{ authStore.currentOrg.name }}
-      </span>
+      <div class="dash-header-pills" v-if="summary">
+        <span class="dash-pill">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zm8 0a3 3 0 11-6 0 3 3 0 016 0zM.458 18C1.64 14.435 5.08 12 9 12s7.36 2.435 8.542 6H.458z"/></svg>
+          Employees {{ summary.totalActive }}
+        </span>
+        <span class="dash-pill">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+          On Leave Today: {{ summary.onLeaveToday }}
+        </span>
+      </div>
     </div>
 
-    <p v-if="loading" class="status">Loading dashboard…</p>
+    <p v-if="loading" class="status">Loading…</p>
     <p v-if="error"   class="error">{{ error }}</p>
 
     <template v-if="summary">
 
-      <!-- ── KPI strip ──────────────────────────────────────────────────── -->
-      <div class="kpi-strip">
+      <!-- ── Summary strip ─────────────────────────────────────────────── -->
+      <div class="sum-strip">
 
-        <article class="kpi-card kpi-blue">
-          <div class="kpi-icon-wrap kpi-icon-blue">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zm8 0a3 3 0 11-6 0 3 3 0 016 0zM.458 18C1.64 14.435 5.08 12 9 12s7.36 2.435 8.542 6H.458z"/></svg>
+        <!-- 1 · Employee Summary -->
+        <div class="sum-card">
+          <div class="sum-eyebrow">
+            <span class="sum-icon-wrap sum-icon-blue">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zm8 0a3 3 0 11-6 0 3 3 0 016 0zM.458 18C1.64 14.435 5.08 12 9 12s7.36 2.435 8.542 6H.458z"/></svg>
+            </span>
+            Employee Summary
           </div>
-          <div class="kpi-body">
-            <p class="kpi-label">Active Staff</p>
-            <p class="kpi-value">{{ summary.totalActive }}</p>
-            <p class="kpi-hint">Across all departments</p>
+          <div class="sum-stats">
+            <div class="sum-stat">
+              <p class="sum-lbl">All</p>
+              <p class="sum-val">{{ totalEmployees }}</p>
+            </div>
+            <div class="sum-divider"></div>
+            <div class="sum-stat">
+              <p class="sum-lbl">On Leave</p>
+              <p class="sum-val">{{ summary.onLeaveToday }}</p>
+            </div>
+            <div class="sum-divider"></div>
+            <div class="sum-stat">
+              <p class="sum-lbl">Exited</p>
+              <p class="sum-val">{{ summary.totalExited }}</p>
+            </div>
           </div>
-        </article>
+        </div>
 
-        <article class="kpi-card kpi-green">
-          <div class="kpi-icon-wrap kpi-icon-green">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+        <!-- 2 · Leave Overview (maps to Talent Requisition layout) -->
+        <div class="sum-card">
+          <div class="sum-eyebrow">
+            <span class="sum-icon-wrap sum-icon-purple">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>
+            </span>
+            Leave Overview
           </div>
-          <div class="kpi-body">
-            <p class="kpi-label">New Hires</p>
-            <p class="kpi-value">{{ summary.newHiresThisMonth }}</p>
-            <p class="kpi-hint" v-if="hiresChange">
-              <span :class="hiresChange.positive ? 'trend-up' : 'trend-down'">
-                {{ hiresChange.positive ? "▲" : "▼" }} {{ Math.abs(hiresChange.diff) }} vs last month
-              </span>
-            </p>
+          <div class="sum-stats">
+            <div class="sum-stat">
+              <p class="sum-lbl">All</p>
+              <p class="sum-val">{{ summary.pendingLeave + summary.approvedLeave + summary.rejectedLeave }}</p>
+            </div>
+            <div class="sum-divider"></div>
+            <div class="sum-stat">
+              <p class="sum-lbl">Pending</p>
+              <p class="sum-val">{{ summary.pendingLeave }}</p>
+            </div>
+            <div class="sum-divider"></div>
+            <div class="sum-stat">
+              <p class="sum-lbl">Approved</p>
+              <p class="sum-val">{{ summary.approvedLeave }}</p>
+            </div>
+            <div class="sum-divider"></div>
+            <div class="sum-stat">
+              <p class="sum-lbl">Rejected</p>
+              <p class="sum-val">{{ summary.rejectedLeave }}</p>
+            </div>
           </div>
-        </article>
+        </div>
 
-        <article class="kpi-card kpi-amber">
-          <div class="kpi-icon-wrap kpi-icon-amber">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zM4 8h12v8H4V8z"/></svg>
+        <!-- 3 · New Hires (maps to Work Today layout) -->
+        <div class="sum-card">
+          <div class="sum-eyebrow">
+            <span class="sum-icon-wrap sum-icon-amber">
+              <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+            </span>
+            New Hires
           </div>
-          <div class="kpi-body">
-            <p class="kpi-label">On Leave Today</p>
-            <p class="kpi-value">{{ summary.onLeaveToday }}</p>
-            <p class="kpi-hint">{{ summary.leaveRatio }}% of workforce</p>
+          <div class="sum-stats">
+            <div class="sum-stat">
+              <p class="sum-lbl">This Month</p>
+              <p class="sum-val">{{ summary.newHiresThisMonth }}</p>
+            </div>
+            <div class="sum-divider"></div>
+            <div class="sum-stat">
+              <p class="sum-lbl">Last Month</p>
+              <p class="sum-val">{{ summary.newHiresLastMonth }}</p>
+            </div>
           </div>
-        </article>
+        </div>
 
-        <article class="kpi-card kpi-indigo">
-          <div class="kpi-icon-wrap kpi-icon-indigo">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
-          </div>
-          <div class="kpi-body">
-            <p class="kpi-label">Pending Leave</p>
-            <p class="kpi-value">{{ summary.pendingLeave }}</p>
-            <p class="kpi-hint">Awaiting approval</p>
-          </div>
-        </article>
+      </div><!-- /sum-strip -->
 
-        <article class="kpi-card kpi-red">
-          <div class="kpi-icon-wrap kpi-icon-red">
-            <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524L13.477 14.89zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clip-rule="evenodd"/></svg>
-          </div>
-          <div class="kpi-body">
-            <p class="kpi-label">Exited Staff</p>
-            <p class="kpi-value">{{ summary.totalExited }}</p>
-            <p class="kpi-hint">Total on record</p>
-          </div>
-        </article>
+      <!-- ── Main two-column grid ──────────────────────────────────────── -->
+      <div class="dash-main">
 
-      </div><!-- /kpi-strip -->
+        <!-- ── LEFT column ────────────────────────────────────────────── -->
+        <div class="dash-left">
 
-      <!-- ── Row 2: Department ranking + Leave stats ────────────────────── -->
-      <div class="dash-row">
+          <!-- Donut charts row -->
+          <div class="donut-row">
 
-        <!-- Department headcount ranking -->
-        <div class="card dash-dept-card">
-          <div class="card-head">
-            <h3 class="card-title">Department Headcount Ranking</h3>
-            <span class="card-badge">{{ summary.headcountByDept.length }} depts</span>
+            <!-- Gender Distribution -->
+            <div class="card donut-card">
+              <div class="card-head">
+                <h3 class="card-title">Gender Distribution</h3>
+                <svg class="more-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+              </div>
+              <div class="donut-body" v-if="summary.genderBreakdown?.length">
+                <div class="donut-wrap">
+                  <svg viewBox="0 0 100 100" class="donut-svg">
+                    <circle cx="50" cy="50" r="44" fill="none" stroke="var(--color-neutral-200)" stroke-width="12"/>
+                    <circle
+                      v-for="seg in genderSegs" :key="seg.label"
+                      cx="50" cy="50" r="44" fill="none"
+                      :stroke="seg.color" stroke-width="12"
+                      :stroke-dasharray="seg.dashArray" :stroke-dashoffset="seg.dashOffset"
+                      transform="rotate(-90 50 50)"
+                    />
+                  </svg>
+                </div>
+                <div class="donut-legend">
+                  <div v-for="seg in genderSegs" :key="seg.label" class="leg-row">
+                    <span class="leg-dot" :style="{ background: seg.color }"></span>
+                    <span class="leg-label">{{ seg.label }}</span>
+                    <span class="leg-pct">{{ seg.pct }}%</span>
+                  </div>
+                </div>
+              </div>
+              <p v-else class="dash-empty">No data.</p>
+            </div>
+
+            <!-- Employee Category -->
+            <div class="card donut-card">
+              <div class="card-head">
+                <h3 class="card-title">Employee Category</h3>
+                <svg class="more-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+              </div>
+              <div class="donut-body" v-if="summary.employmentTypes?.length">
+                <div class="donut-wrap">
+                  <svg viewBox="0 0 100 100" class="donut-svg">
+                    <circle cx="50" cy="50" r="44" fill="none" stroke="var(--color-neutral-200)" stroke-width="12"/>
+                    <circle
+                      v-for="seg in typeSegs" :key="seg.label"
+                      cx="50" cy="50" r="44" fill="none"
+                      :stroke="seg.color" stroke-width="12"
+                      :stroke-dasharray="seg.dashArray" :stroke-dashoffset="seg.dashOffset"
+                      transform="rotate(-90 50 50)"
+                    />
+                  </svg>
+                </div>
+                <div class="donut-legend">
+                  <div v-for="seg in typeSegs" :key="seg.label" class="leg-row">
+                    <span class="leg-dot" :style="{ background: seg.color }"></span>
+                    <span class="leg-label">{{ seg.label }}</span>
+                    <span class="leg-pct">{{ seg.pct }}%</span>
+                  </div>
+                </div>
+              </div>
+              <p v-else class="dash-empty">No data.</p>
+            </div>
+
+          </div><!-- /donut-row -->
+
+          <!-- Department Headcount Ranking -->
+          <div class="card dept-card">
+            <div class="card-head">
+              <h3 class="card-title">Department Headcount Ranking</h3>
+            </div>
+            <div class="dept-list">
+              <div v-for="(row, i) in summary.headcountByDept" :key="row.department" class="dept-row">
+                <span class="dept-num">{{ i + 1 }}.</span>
+                <span class="dept-name">{{ row.department || "Unassigned" }}</span>
+                <div class="dept-track">
+                  <div
+                    class="dept-bar"
+                    :style="{
+                      width: ((row.headcount / maxDeptHeadcount) * 100) + '%',
+                      background: deptBarColours[i % deptBarColours.length]
+                    }"
+                  ></div>
+                </div>
+                <span class="dept-count">{{ row.headcount }}</span>
+              </div>
+              <p v-if="!summary.headcountByDept.length" class="dash-empty">
+                No departments configured.
+                <router-link :to="{ name: 'org' }">Set up →</router-link>
+              </p>
+            </div>
+            <router-link v-if="summary.headcountByDept.length" :to="{ name: 'employees' }" class="see-more">
+              See more
+            </router-link>
           </div>
-          <div class="dept-list">
-            <div
-              v-for="(row, i) in summary.headcountByDept"
-              :key="row.department"
-              class="dept-row"
-            >
-              <span class="dept-rank">{{ i + 1 }}</span>
-              <span class="dept-name">{{ row.department || "Unassigned" }}</span>
-              <div class="dept-bar-wrap">
+
+          <!-- Monthly Hiring Trend — line chart -->
+          <div v-if="summary.monthlyHires?.length" class="card trend-card">
+            <div class="card-head">
+              <h3 class="card-title">Monthly Hiring Trend</h3>
+              <span class="trend-period-badge">{{ summary.monthlyHires.length }} months</span>
+            </div>
+            <div class="trend-chart-wrap">
+              <svg :viewBox="`0 0 ${CW} ${CH}`" class="trend-svg" preserveAspectRatio="xMidYMid meet">
+                <!-- Grid lines -->
+                <line
+                  v-for="gl in chartGridLines" :key="gl.y"
+                  :x1="CPAD.left" :y1="gl.y" :x2="CW - CPAD.right" :y2="gl.y"
+                  stroke="var(--color-neutral-200)" stroke-width="1"
+                />
+                <!-- Y-axis labels -->
+                <text
+                  v-for="gl in chartGridLines" :key="`l${gl.y}`"
+                  :x="CPAD.left - 8" :y="gl.y + 4"
+                  class="chart-axis-label" text-anchor="end"
+                >{{ gl.label }}</text>
+                <!-- X-axis labels -->
+                <text
+                  v-for="(pt, i) in chartPoints" :key="`x${i}`"
+                  :x="pt.x" :y="CPAD.top + CIH + 20"
+                  class="chart-axis-label" text-anchor="middle"
+                >{{ pt.label }}</text>
+                <!-- Y-axis label -->
+                <text
+                  :x="12" :y="CPAD.top + CIH / 2"
+                  class="chart-axis-label chart-axis-rotate"
+                  text-anchor="middle"
+                  transform="rotate(-90 12 110)"
+                >New Hires</text>
+                <!-- Area fill -->
+                <path :d="chartAreaPath" class="chart-area"/>
+                <!-- Line -->
+                <path :d="chartLinePath" class="chart-line" fill="none" stroke="var(--color-brand-base)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <!-- Data points -->
+                <circle
+                  v-for="(pt, i) in chartPoints" :key="`dot${i}`"
+                  :cx="pt.x" :cy="pt.y" r="3.5"
+                  fill="var(--color-brand-base)" stroke="white" stroke-width="1.5"
+                >
+                  <title>{{ pt.label }}: {{ pt.count }}</title>
+                </circle>
+              </svg>
+            </div>
+          </div>
+
+        </div><!-- /dash-left -->
+
+        <!-- ── RIGHT column — Schedule ─────────────────────────────────── -->
+        <div class="dash-right">
+          <div class="card sched-card">
+
+            <!-- Schedule header -->
+            <div class="card-head">
+              <h3 class="card-title">
+                <svg viewBox="0 0 20 20" fill="currentColor" class="sched-cal-icon"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>
+                Schedule
+              </h3>
+              <router-link :to="{ name: 'leave' }" class="see-all-link">See all</router-link>
+            </div>
+
+            <!-- Month navigator -->
+            <div class="cal-month-row">
+              <button class="cal-nav-btn" @click="weekOffset--">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+              </button>
+              <span class="cal-month-label">{{ calendarMonth }}</span>
+              <button class="cal-nav-btn" @click="weekOffset++">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+              </button>
+            </div>
+
+            <!-- Week strip with nav -->
+            <div class="cal-week-row">
+              <button class="cal-nav-btn cal-nav-sm" @click="weekOffset--">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+              </button>
+              <div class="cal-week">
+                <div v-for="day in weekDays" :key="day.date" :class="['cal-day', { 'cal-today': day.isToday }]">
+                  <span class="cal-day-lbl">{{ day.label }}</span>
+                  <span class="cal-day-num">{{ day.date }}</span>
+                </div>
+              </div>
+              <button class="cal-nav-btn cal-nav-sm" @click="weekOffset++">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/></svg>
+              </button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="sched-tabs">
+              <button :class="['sched-tab', { active: schedTab === 'meetings' }]" @click="schedTab = 'meetings'">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" clip-rule="evenodd"/></svg>
+                Meetings
+              </button>
+              <button :class="['sched-tab', { active: schedTab === 'events' }]" @click="schedTab = 'events'">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/></svg>
+                Events
+              </button>
+              <button :class="['sched-tab', { active: schedTab === 'holidays' }]" @click="schedTab = 'holidays'">
+                <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/></svg>
+                Holidays
+              </button>
+            </div>
+
+            <!-- Meetings content -->
+            <div v-if="schedTab === 'meetings'" class="sched-entries">
+              <template v-if="teamLocations?.length">
                 <div
-                  class="dept-bar"
-                  :style="{ width: ((row.headcount / maxDeptHeadcount) * 100) + '%' }"
-                ></div>
+                  v-for="(entry, idx) in teamLocations"
+                  :key="entry.employee.id"
+                  :class="['sched-entry', {
+                    'entry-top':    idx === 0,
+                    'entry-bottom': idx === teamLocations.length - 1,
+                    'entry-mid':    idx > 0 && idx < teamLocations.length - 1
+                  }]"
+                >
+                  <div class="entry-time">
+                    <p class="entry-time-main">{{ entry.check_in ? fmtTime(entry.check_in.checked_in_at) : '—' }}</p>
+                    <p class="entry-time-end">{{ entry.check_in?.checked_out_at ? fmtTime(entry.check_in.checked_out_at) : '' }}</p>
+                  </div>
+                  <div class="entry-divider"></div>
+                  <div class="entry-body">
+                    <p class="entry-title">{{ entry.employee.full_name }}</p>
+                    <p class="entry-sub">
+                      <template v-if="entry.check_in">
+                        <span :class="['badge', wlBadgeClass(entry.check_in.location_type)]">{{ wlLabel(entry.check_in) }}</span>
+                      </template>
+                      <template v-else>Not checked in</template>
+                    </p>
+                  </div>
+                  <button class="entry-chevron">
+                    <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                  </button>
+                </div>
+              </template>
+              <div v-else class="sched-empty">
+                <p>No team check-ins today</p>
               </div>
-              <span class="dept-count">{{ row.headcount }}</span>
             </div>
-            <p v-if="!summary.headcountByDept.length" class="dash-empty">
-              No departments configured.
-              <router-link :to="{ name: 'org' }">Set up departments →</router-link>
-            </p>
-          </div>
-        </div>
 
-        <!-- Leave statistics panel -->
-        <div class="card dash-leave-card">
-          <div class="card-head">
-            <h3 class="card-title">Leave Statistics</h3>
-          </div>
+            <!-- Events content -->
+            <div v-if="schedTab === 'events'" class="sched-empty">
+              <p>No events scheduled</p>
+            </div>
 
-          <!-- Leave ratio ring -->
-          <div class="leave-ring-wrap">
-            <svg class="leave-ring" viewBox="0 0 80 80">
-              <circle cx="40" cy="40" r="32" fill="none" stroke="#E5E7EB" stroke-width="10"/>
-              <circle
-                cx="40" cy="40" r="32" fill="none"
-                stroke="#F59E08" stroke-width="10"
-                stroke-dasharray="201"
-                :stroke-dashoffset="201 - (201 * summary.leaveRatio / 100)"
-                transform="rotate(-90 40 40)"
-                stroke-linecap="round"
-              />
-            </svg>
-            <div class="leave-ring-label">
-              <p class="leave-ring-pct">{{ summary.leaveRatio }}%</p>
-              <p class="leave-ring-sub">Leave ratio</p>
+            <!-- Holidays content -->
+            <div v-if="schedTab === 'holidays'" class="sched-entries">
+              <router-link :to="{ name: 'public-holidays' }" class="sched-holiday-link">
+                View public holidays calendar →
+              </router-link>
             </div>
-          </div>
 
-          <div class="leave-stat-grid">
-            <div class="leave-stat-item leave-stat-pending">
-              <p class="leave-stat-val">{{ summary.pendingLeave }}</p>
-              <p class="leave-stat-lbl">Pending</p>
-            </div>
-            <div class="leave-stat-item leave-stat-approved">
-              <p class="leave-stat-val">{{ summary.approvedLeave }}</p>
-              <p class="leave-stat-lbl">Approved</p>
-            </div>
-            <div class="leave-stat-item leave-stat-today">
-              <p class="leave-stat-val">{{ summary.onLeaveToday }}</p>
-              <p class="leave-stat-lbl">Out today</p>
-            </div>
-            <div class="leave-stat-item leave-stat-rejected">
-              <p class="leave-stat-val">{{ summary.rejectedLeave }}</p>
-              <p class="leave-stat-lbl">Rejected</p>
-            </div>
-          </div>
+          </div><!-- /sched-card -->
+        </div><!-- /dash-right -->
 
-          <!-- Leave request progress bar -->
-          <div v-if="totalLeaveRequests > 0" class="leave-progress-wrap">
-            <p class="leave-progress-title">Leave Requests Breakdown</p>
-            <div class="leave-progress-bar">
-              <div
-                class="lp-seg lp-approved"
-                :style="{ width: ((summary.approvedLeave / totalLeaveRequests) * 100) + '%' }"
-                :title="`Approved: ${summary.approvedLeave}`"
-              ></div>
-              <div
-                class="lp-seg lp-pending"
-                :style="{ width: ((summary.pendingLeave / totalLeaveRequests) * 100) + '%' }"
-                :title="`Pending: ${summary.pendingLeave}`"
-              ></div>
-              <div
-                class="lp-seg lp-rejected"
-                :style="{ width: ((summary.rejectedLeave / totalLeaveRequests) * 100) + '%' }"
-                :title="`Rejected: ${summary.rejectedLeave}`"
-              ></div>
-            </div>
-            <div class="lp-legend">
-              <span class="lp-dot lp-dot-approved"></span> Approved
-              <span class="lp-dot lp-dot-pending" style="margin-left:12px"></span> Pending
-              <span class="lp-dot lp-dot-rejected" style="margin-left:12px"></span> Rejected
-            </div>
-          </div>
-        </div>
-
-      </div><!-- /dash-row -->
-
-      <!-- ── Row 3: Employment category + Gender breakdown ─────────────── -->
-      <div class="dash-row">
-
-        <!-- Employment category -->
-        <div class="card dash-type-card">
-          <div class="card-head">
-            <h3 class="card-title">Employee Category</h3>
-            <span class="card-badge">{{ summary.totalActive }} active</span>
-          </div>
-          <div v-if="summary.employmentTypes?.length" class="emp-type-list">
-            <div
-              v-for="et in summary.employmentTypes"
-              :key="et.type"
-              class="emp-type-row"
-            >
-              <div class="emp-type-meta">
-                <span class="emp-type-dot" :style="{ background: typeColour(et.type) }"></span>
-                <span class="emp-type-name">{{ et.type }}</span>
-                <span class="emp-type-pct">{{ Math.round((et.count / totalByType) * 100) }}%</span>
-              </div>
-              <div class="emp-type-bar-wrap">
-                <div
-                  class="emp-type-bar"
-                  :style="{
-                    width: ((et.count / totalByType) * 100) + '%',
-                    background: typeColour(et.type)
-                  }"
-                ></div>
-              </div>
-              <span class="emp-type-count">{{ et.count }}</span>
-            </div>
-          </div>
-          <p v-else class="dash-empty">No employment type data available.</p>
-        </div>
-
-        <!-- Gender breakdown -->
-        <div class="card dash-gender-card">
-          <div class="card-head">
-            <h3 class="card-title">Gender Distribution</h3>
-          </div>
-          <div v-if="summary.genderBreakdown?.length" class="gender-list">
-            <div
-              v-for="g in summary.genderBreakdown"
-              :key="g.gender"
-              class="gender-row"
-            >
-              <div class="gender-meta">
-                <span class="gender-dot" :style="{ background: genderColour(g.gender) }"></span>
-                <span class="gender-label">{{ g.gender }}</span>
-                <span class="gender-pct">{{ Math.round((g.count / totalGender) * 100) }}%</span>
-              </div>
-              <div class="gender-bar-wrap">
-                <div
-                  class="gender-bar"
-                  :style="{
-                    width: ((g.count / totalGender) * 100) + '%',
-                    background: genderColour(g.gender)
-                  }"
-                ></div>
-              </div>
-              <span class="gender-count">{{ g.count }}</span>
-            </div>
-          </div>
-          <p v-else class="dash-empty">No gender data available.</p>
-        </div>
-
-      </div><!-- /dash-row -->
-
-      <!-- ── Row 4: Monthly hiring trend ───────────────────────────────── -->
-      <div v-if="summary.monthlyHires?.length" class="card dash-trend-card">
-        <div class="card-head">
-          <h3 class="card-title">Monthly Hiring Trend</h3>
-          <span class="card-badge">Last 6 months</span>
-        </div>
-        <div class="trend-chart">
-          <div
-            v-for="m in summary.monthlyHires"
-            :key="m.month"
-            class="trend-col"
-          >
-            <span class="trend-val">{{ m.count }}</span>
-            <div class="trend-bar-wrap">
-              <div
-                class="trend-bar"
-                :style="{ height: ((m.count / maxMonthlyHires) * 100) + '%' }"
-              ></div>
-            </div>
-            <span class="trend-month">{{ formatMonth(m.month) }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- ── Team Work Locations (managers/HR only) ─────────────────────── -->
-      <div v-if="teamLocations" class="card dash-team-loc-card">
-        <div class="card-head">
-          <h3 class="card-title">Team Work Locations — Today</h3>
-          <span class="card-badge">{{ teamLocations.length }} member{{ teamLocations.length === 1 ? "" : "s" }}</span>
-        </div>
-        <div v-if="teamLocations.length" class="team-loc-list">
-          <div v-for="entry in teamLocations" :key="entry.employee.id" class="team-loc-row">
-            <div class="team-loc-avatar">{{ teamInitials(entry.employee.full_name) }}</div>
-            <div class="team-loc-meta">
-              <p class="team-loc-name">{{ entry.employee.full_name }}</p>
-              <p class="team-loc-num">{{ entry.employee.employee_number }}</p>
-            </div>
-            <div class="team-loc-status">
-              <span v-if="entry.check_in" :class="['badge', teamWlBadgeClass(entry.check_in.location_type)]">
-                {{ teamWlLabel(entry.check_in) }}
-              </span>
-              <span v-else class="badge badge-gray">Not checked in</span>
-              <span v-if="entry.check_in" class="team-loc-time">since {{ fmtTime(entry.check_in.checked_in_at) }}</span>
-            </div>
-          </div>
-        </div>
-        <p v-else class="dash-empty">No team members found.</p>
-      </div>
-
-      <!-- ── HR Modules quick-access ────────────────────────────────────── -->
-      <div class="dash-modules-section">
-        <p class="section-title">HR Modules</p>
-        <div class="actions-grid">
-          <router-link :to="{ name: 'employees' }" class="action-card">
-            <span class="action-icon">👥</span><span>Employees</span>
-          </router-link>
-          <router-link :to="{ name: 'leave' }" class="action-card">
-            <span class="action-icon">🌴</span><span>Leave</span>
-          </router-link>
-          <router-link :to="{ name: 'leave-approvals' }" class="action-card">
-            <span class="action-icon">✅</span><span>Approvals</span>
-          </router-link>
-          <router-link :to="{ name: 'leave-admin' }" class="action-card">
-            <span class="action-icon">⚙️</span><span>Leave Admin</span>
-          </router-link>
-          <router-link :to="{ name: 'payroll' }" class="action-card">
-            <span class="action-icon">💰</span><span>Payroll</span>
-          </router-link>
-          <router-link :to="{ name: 'performance' }" class="action-card">
-            <span class="action-icon">📈</span><span>Performance</span>
-          </router-link>
-          <router-link :to="{ name: 'recruitment' }" class="action-card">
-            <span class="action-icon">🔍</span><span>Recruitment</span>
-          </router-link>
-          <router-link :to="{ name: 'org' }" class="action-card">
-            <span class="action-icon">🏢</span><span>Organisation</span>
-          </router-link>
-        </div>
-      </div>
+      </div><!-- /dash-main -->
 
     </template>
 
-    <!-- Empty state when no data yet -->
+    <!-- Empty state -->
     <template v-if="!loading && !summary && !error">
-      <div class="dash-coming-soon">
-        <div class="dash-coming-soon-icon">🚧</div>
-        <p class="dash-coming-soon-title">Dashboard metrics loading…</p>
-        <p class="dash-coming-soon-sub">Select an organisation to view live statistics.</p>
+      <div class="dash-empty-state">
+        <svg viewBox="0 0 48 48" fill="none"><rect x="4" y="8" width="40" height="36" rx="4" stroke="currentColor" stroke-width="2"/><path d="M4 18h40M14 4v8M34 4v8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <p class="des-title">Select an organisation to view the dashboard</p>
+        <p class="des-sub">Workforce metrics, leave stats and hiring trends will appear here.</p>
       </div>
     </template>
 
@@ -494,235 +615,345 @@ const today = new Date().toLocaleDateString("en-GB", { weekday: "long", day: "nu
 </template>
 
 <style scoped>
-/* ── Page header ───────────────────────────────────────────────────────────── */
-.dash-view { max-width: 1200px; }
+/* ─────────────────────────────────────────────────────────────────────────────
+   Root — fill the full available content area, no artificial width cap.
+   The parent .app-content already handles horizontal padding.
+   ───────────────────────────────────────────────────────────────────────────── */
+.dash-root { max-width: 100%; }
 
-.dash-page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-bottom: 28px;
-  flex-wrap: wrap;
-  gap: 12px;
+/* ── Page header ────────────────────────────────────────────────────────────── */
+.dash-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  margin-bottom: 20px; flex-wrap: wrap; gap: 10px;
 }
-.dash-page-title { font-size: 22px; font-weight: 700; color: var(--color-text); letter-spacing: -0.3px; }
-.dash-page-sub   { font-size: 13px; color: var(--color-text-muted); margin-top: 2px; }
-.dash-org-badge  { align-self: flex-start; margin-top: 4px; }
+.dash-title { font-size: 22px; font-weight: 700; color: var(--color-text); letter-spacing: -.3px; }
+.dash-sub   { font-size: 13px; color: var(--color-text-muted); margin-top: 3px; }
 
-/* ── KPI strip ─────────────────────────────────────────────────────────────── */
-.kpi-strip {
+.dash-header-pills { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dash-pill {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500; color: var(--color-text-muted);
+  background: var(--color-surface); border: 1px solid var(--color-border);
+  padding: 5px 12px; border-radius: 20px;
+}
+.dash-pill svg { width: 14px; height: 14px; flex-shrink: 0; }
+
+/* ── Summary strip ──────────────────────────────────────────────────────────── */
+.sum-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 16px;
 }
+@media (max-width: 700px) { .sum-strip { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 440px) { .sum-strip { grid-template-columns: 1fr; } }
 
-.kpi-card {
+.sum-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  padding: 16px;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,.06);
-  transition: box-shadow .15s, transform .15s;
+  padding: 16px 20px;
+  box-shadow: var(--shadow-xs);
 }
-.kpi-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.10); transform: translateY(-1px); }
 
-.kpi-icon-wrap {
-  width: 40px; height: 40px; border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
+.sum-eyebrow {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--color-text);
+  margin-bottom: 16px;
 }
-.kpi-icon-wrap svg { width: 20px; height: 20px; }
+.sum-icon-wrap {
+  width: 28px; height: 28px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.sum-icon-wrap svg { width: 14px; height: 14px; }
+.sum-icon-blue   { background: #DBEAFE; color: var(--color-brand-base); }
+.sum-icon-purple { background: #EDE9FE; color: #7C3AED; }
+.sum-icon-amber  { background: #FEF3C7; color: #D97706; }
 
-.kpi-icon-blue   { background: #DBEAFE; color: #004C97; }
-.kpi-icon-green  { background: #D1FAE5; color: #108981; }
-.kpi-icon-amber  { background: #FEF3C7; color: #D97706; }
-.kpi-icon-indigo { background: #EDE9FE; color: #6366F1; }
-.kpi-icon-red    { background: #FEE2E2; color: #D32F2F; }
+.sum-stats {
+  display: flex; align-items: stretch; gap: 0;
+}
+.sum-stat  { flex: 1; min-width: 0; padding: 0 10px; }
+.sum-stat:first-child { padding-left: 0; }
+.sum-stat:last-child  { padding-right: 0; }
 
-.kpi-body { flex: 1; min-width: 0; }
-.kpi-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); margin-bottom: 2px; }
-.kpi-value { font-size: 28px; font-weight: 700; color: var(--color-text); line-height: 1.2; }
-.kpi-hint  { font-size: 12px; color: var(--color-text-light); margin-top: 2px; }
+.sum-divider {
+  width: 1px; background: var(--color-border);
+  align-self: stretch; flex-shrink: 0;
+}
 
-.trend-up   { color: #108981; font-weight: 600; }
-.trend-down { color: #D32F2F; font-weight: 600; }
+.sum-lbl {
+  font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sum-val {
+  font-size: clamp(22px, 2.5vw, 32px);
+  font-weight: 700; color: var(--color-text);
+  line-height: 1.1; font-variant-numeric: tabular-nums;
+}
 
-/* ── Two-column row ────────────────────────────────────────────────────────── */
-.dash-row {
+/* ── Main two-column grid ────────────────────────────────────────────────────── */
+.dash-main {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 340px;
   gap: 16px;
-  margin-bottom: 16px;
-}
-@media (max-width: 800px) { .dash-row { grid-template-columns: 1fr; } }
-
-/* ── Card head ─────────────────────────────────────────────────────────────── */
-.card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 16px;
-}
-.card-head .card-title { margin-bottom: 0; }
-.card-badge {
-  font-size: 11px; font-weight: 600; padding: 3px 8px;
-  background: var(--color-neutral-100); border-radius: 20px;
-  color: var(--color-text-muted);
+  align-items: start;
 }
 
-/* ── Department ranking ────────────────────────────────────────────────────── */
-.dept-list { display: flex; flex-direction: column; gap: 10px; }
-.dept-row  { display: flex; align-items: center; gap: 10px; }
-
-.dept-rank { font-size: 11px; font-weight: 700; color: var(--color-text-muted); width: 18px; text-align: center; flex-shrink: 0; }
-.dept-name { font-size: 13px; color: var(--color-text); width: 140px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dept-bar-wrap { flex: 1; height: 8px; background: var(--color-neutral-200); border-radius: 4px; overflow: hidden; }
-.dept-bar { height: 100%; background: var(--color-brand-base); border-radius: 4px; transition: width .4s ease; }
-.dept-count { font-size: 13px; font-weight: 600; color: var(--color-text); width: 28px; text-align: right; flex-shrink: 0; }
-
-/* ── Leave card ────────────────────────────────────────────────────────────── */
-.leave-ring-wrap {
-  position: relative;
-  width: 100px; height: 100px;
-  margin: 0 auto 20px;
+/* Tablet: narrow the schedule, keep two columns */
+@media (max-width: 1024px) and (min-width: 769px) {
+  .dash-main { grid-template-columns: 1fr 280px; }
 }
-.leave-ring { width: 100%; height: 100%; }
-.leave-ring-label {
-  position: absolute; top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
+
+/* Mobile: single column, reorder schedule after main content */
+@media (max-width: 768px) {
+  .dash-main {
+    grid-template-columns: 1fr;
+  }
+  .dash-right { order: 2; }
+  .dash-left  { order: 1; }
 }
-.leave-ring-pct { font-size: 18px; font-weight: 700; color: var(--color-text); line-height: 1; }
-.leave-ring-sub { font-size: 10px; color: var(--color-text-muted); margin-top: 2px; }
 
-.leave-stat-grid {
-  display: grid; grid-template-columns: 1fr 1fr;
-  gap: 10px; margin-bottom: 20px;
+.dash-left { display: flex; flex-direction: column; gap: 14px; }
+
+/* ── Sticky schedule sidebar ─────────────────────────────────────────────────── */
+.dash-right {
+  position: sticky;
+  top: 0;
+  align-self: start;           /* sticky only works on start-aligned flex/grid items */
 }
-.leave-stat-item {
-  border-radius: 10px; padding: 12px;
-  text-align: center;
-}
-.leave-stat-val { font-size: 22px; font-weight: 700; line-height: 1; }
-.leave-stat-lbl { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-top: 4px; }
 
-.leave-stat-pending  { background: #FEF3C7; }
-.leave-stat-pending .leave-stat-val { color: #D97706; }
-.leave-stat-pending .leave-stat-lbl { color: #92400E; }
-
-.leave-stat-approved { background: #D1FAE5; }
-.leave-stat-approved .leave-stat-val { color: #108981; }
-.leave-stat-approved .leave-stat-lbl { color: #065F46; }
-
-.leave-stat-today    { background: #DBEAFE; }
-.leave-stat-today .leave-stat-val { color: #004C97; }
-.leave-stat-today .leave-stat-lbl { color: #1E3A5F; }
-
-.leave-stat-rejected { background: #FEE2E2; }
-.leave-stat-rejected .leave-stat-val { color: #D32F2F; }
-.leave-stat-rejected .leave-stat-lbl { color: #7F1D1D; }
-
-.leave-progress-wrap  { margin-top: 4px; }
-.leave-progress-title { font-size: 12px; font-weight: 600; color: var(--color-text-muted); margin-bottom: 6px; }
-.leave-progress-bar   { height: 10px; border-radius: 6px; overflow: hidden; background: var(--color-neutral-200); display: flex; }
-.lp-seg               { height: 100%; transition: width .4s; }
-.lp-approved          { background: #108981; }
-.lp-pending           { background: #F59E08; }
-.lp-rejected          { background: #D32F2F; }
-
-.lp-legend { font-size: 11px; color: var(--color-text-muted); margin-top: 6px; display: flex; align-items: center; }
-.lp-dot    { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
-.lp-dot-approved { background: #108981; }
-.lp-dot-pending  { background: #F59E08; }
-.lp-dot-rejected { background: #D32F2F; }
-
-/* ── Employment category ───────────────────────────────────────────────────── */
-.emp-type-list { display: flex; flex-direction: column; gap: 12px; }
-.emp-type-row  { display: flex; align-items: center; gap: 10px; }
-
-.emp-type-meta  { display: flex; align-items: center; gap: 6px; width: 160px; flex-shrink: 0; }
-.emp-type-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.emp-type-name  { font-size: 13px; color: var(--color-text); text-transform: capitalize; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.emp-type-pct   { font-size: 11px; color: var(--color-text-muted); font-weight: 600; flex-shrink: 0; }
-
-.emp-type-bar-wrap { flex: 1; height: 8px; background: var(--color-neutral-200); border-radius: 4px; overflow: hidden; }
-.emp-type-bar      { height: 100%; border-radius: 4px; transition: width .4s ease; }
-.emp-type-count    { font-size: 13px; font-weight: 600; color: var(--color-text); width: 28px; text-align: right; flex-shrink: 0; }
-
-/* ── Gender ────────────────────────────────────────────────────────────────── */
-.gender-list { display: flex; flex-direction: column; gap: 14px; }
-.gender-row  { display: flex; align-items: center; gap: 10px; }
-
-.gender-meta  { display: flex; align-items: center; gap: 6px; width: 140px; flex-shrink: 0; }
-.gender-dot   { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-.gender-label { font-size: 13px; color: var(--color-text); text-transform: capitalize; flex: 1; }
-.gender-pct   { font-size: 11px; color: var(--color-text-muted); font-weight: 600; }
-
-.gender-bar-wrap { flex: 1; height: 10px; background: var(--color-neutral-200); border-radius: 5px; overflow: hidden; }
-.gender-bar      { height: 100%; border-radius: 5px; transition: width .4s ease; }
-.gender-count    { font-size: 13px; font-weight: 600; color: var(--color-text); width: 28px; text-align: right; flex-shrink: 0; }
-
-/* ── Monthly trend bar chart ───────────────────────────────────────────────── */
-.dash-trend-card { margin-bottom: 24px; }
-.trend-chart {
-  display: flex;
-  align-items: flex-end;
-  gap: 10px;
-  height: 120px;
-  padding-bottom: 4px;
-}
-.trend-col {
-  flex: 1;
+.sched-card {
+  /* Height = viewport minus app header (60px) minus app-content top padding (32px) */
+  max-height: calc(100vh - 100px);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  height: 100%;
-}
-.trend-val { font-size: 11px; font-weight: 600; color: var(--color-text); margin-bottom: 4px; }
-.trend-bar-wrap {
-  flex: 1; width: 100%; display: flex; align-items: flex-end;
-  background: var(--color-neutral-100); border-radius: 4px 4px 0 0; overflow: hidden;
-}
-.trend-bar {
-  width: 100%;
-  background: var(--color-brand-base);
-  border-radius: 4px 4px 0 0;
-  transition: height .4s ease;
-  min-height: 4px;
-}
-.trend-month { font-size: 11px; color: var(--color-text-muted); margin-top: 4px; white-space: nowrap; }
-
-/* ── Team work locations ───────────────────────────────────────────────────── */
-.dash-team-loc-card { margin-bottom: 24px; }
-.team-loc-list { display: flex; flex-direction: column; gap: 10px; }
-.team-loc-row  { display: flex; align-items: center; gap: 12px; }
-
-.team-loc-avatar {
-  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--color-neutral-100); color: var(--color-brand-base);
-  font-size: 12px; font-weight: 700;
+  margin-bottom: 0 !important;  /* override .card global margin */
+  overflow: hidden;
 }
 
-.team-loc-meta { flex: 1; min-width: 0; }
-.team-loc-name { font-size: 13px; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.team-loc-num  { font-size: 11px; color: var(--color-text-muted); margin-top: 1px; }
+/* On mobile unstick and remove fixed height */
+@media (max-width: 768px) {
+  .dash-right { position: static; }
+  .sched-card { max-height: none; }
+}
 
-.team-loc-status { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.team-loc-time   { font-size: 11px; color: var(--color-text-muted); white-space: nowrap; }
+/* The entries list fills remaining card height and scrolls internally */
+.sched-entries {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;           /* required for flex children to respect overflow */
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
 
-/* ── Modules ───────────────────────────────────────────────────────────────── */
-.dash-modules-section { margin-top: 8px; }
+/* ── Card head ──────────────────────────────────────────────────────────────── */
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; flex-shrink: 0;
+}
+.card-head .card-title { margin-bottom: 0; display: flex; align-items: center; gap: 6px; font-size: 15px; }
+.more-icon { width: 16px; height: 16px; color: var(--color-text-muted); opacity: .5; cursor: pointer; }
+.more-icon:hover { opacity: 1; }
 
-/* ── Empty state ───────────────────────────────────────────────────────────── */
-.dash-empty {
-  font-size: 13px;
+/* ── Donut row ──────────────────────────────────────────────────────────────── */
+.donut-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+}
+@media (max-width: 540px) { .donut-row { grid-template-columns: 1fr; } }
+
+.donut-body {
+  display: flex; align-items: center; gap: 20px;
+}
+.donut-wrap { flex-shrink: 0; width: 120px; height: 120px; }
+.donut-svg  { width: 100%; height: 100%; display: block; }
+
+.donut-legend { flex: 1; display: flex; flex-direction: column; gap: 9px; }
+.leg-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px;
+}
+.leg-dot    { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.leg-label  { flex: 1; color: var(--color-text-muted); text-transform: capitalize; }
+.leg-pct    { font-weight: 700; color: var(--color-text); font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
+
+/* ── Department ranking ─────────────────────────────────────────────────────── */
+.dept-list { display: flex; flex-direction: column; gap: 10px; }
+.dept-row  { display: flex; align-items: center; gap: 8px; }
+.dept-num  { font-size: 12px; color: var(--color-text-muted); flex-shrink: 0; width: 22px; }
+.dept-name {
+  font-size: 13px; color: var(--color-text); flex-shrink: 0;
+  width: clamp(120px, 20%, 200px);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dept-track { flex: 1; height: 8px; background: var(--color-neutral-200); border-radius: 4px; overflow: hidden; }
+.dept-bar   { height: 100%; border-radius: 4px; transition: width .5s ease; }
+.dept-count {
+  font-size: 13px; font-weight: 600; color: var(--color-text-muted);
+  width: 28px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums;
+}
+
+.see-more {
+  display: inline-block; margin-top: 14px;
+  font-size: 13px; font-weight: 600; color: var(--color-brand-base);
+  text-decoration: none;
+}
+.see-more:hover { text-decoration: underline; }
+
+/* ── Monthly Hiring Trend — line chart ──────────────────────────────────────── */
+.trend-period-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 10px;
+  border: 1px solid var(--color-border); border-radius: 20px;
   color: var(--color-text-muted);
-  text-align: center;
-  padding: 20px 0;
+}
+
+.trend-chart-wrap { overflow-x: auto; }
+.trend-svg        { width: 100%; min-width: 300px; display: block; }
+
+.chart-axis-label {
+  font-size: 10px; fill: var(--color-text-muted);
+  font-family: var(--font-family);
+}
+.chart-area  { fill: var(--color-brand-base); opacity: .12; }
+.chart-line  {
+  stroke: var(--color-brand-base); stroke-width: 2.5;
+  fill: none; stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* ── Schedule card — flex column so it fills sticky height ───────────────────── */
+.sched-cal-icon { width: 16px; height: 16px; color: var(--color-brand-base); flex-shrink: 0; }
+.see-all-link   { font-size: 12px; font-weight: 600; color: var(--color-brand-base); text-decoration: none; flex-shrink: 0; }
+.see-all-link:hover { text-decoration: underline; }
+
+/* Month nav row */
+.cal-month-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px; flex-shrink: 0;
+}
+.cal-month-label { font-size: 13px; font-weight: 600; color: var(--color-text); }
+
+.cal-nav-btn {
+  background: none; border: none; cursor: pointer; padding: 4px;
+  color: var(--color-text-muted); display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; transition: background .12s, color .12s;
+}
+.cal-nav-btn svg  { width: 16px; height: 16px; }
+.cal-nav-btn:hover { background: var(--color-neutral-100); color: var(--color-text); }
+.cal-nav-sm svg   { width: 14px; height: 14px; }
+
+/* Week strip */
+.cal-week-row {
+  display: flex; align-items: center; gap: 4px;
+  margin-bottom: 14px; flex-shrink: 0;
+}
+.cal-week {
+  flex: 1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px;
+}
+.cal-day {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding: 4px 0;
+}
+.cal-day-lbl {
+  font-size: 10px; font-weight: 500;
+  color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .03em;
+}
+.cal-day-num {
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 500; color: var(--color-text);
+  border-radius: 8px;
+}
+.cal-today .cal-day-lbl { color: var(--color-brand-base); font-weight: 700; }
+.cal-today .cal-day-num {
+  background: var(--color-brand-base); color: #ffffff; font-weight: 700;
+}
+
+/* Tabs — flex-shrink:0 so they don't collapse inside flex sched-card */
+.sched-tabs {
+  display: flex; border-bottom: 1px solid var(--color-border);
+  margin-bottom: 0; flex-shrink: 0;
+}
+.sched-tab {
+  flex: 1; background: none; border: none; cursor: pointer;
+  padding: 7px 4px 9px;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+  font-size: 12px; font-weight: 500; color: var(--color-text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+  transition: color .15s, border-color .15s;
+  font-family: inherit;
+}
+.sched-tab svg { width: 13px; height: 13px; flex-shrink: 0; }
+.sched-tab.active { color: var(--color-brand-base); border-bottom-color: var(--color-brand-base); font-weight: 600; }
+.sched-tab:hover:not(.active) { color: var(--color-text); }
+
+/* Meeting entries */
+.sched-entry {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--color-neutral-50);
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+  padding: 12px 10px;
+  flex-shrink: 0;
+}
+.entry-top    { border-top: 1px solid var(--color-border); border-radius: 10px 10px 0 0; }
+.entry-bottom { border-bottom: 1px solid var(--color-border); border-radius: 0 0 10px 10px; margin-bottom: 8px; }
+
+.entry-top + .entry-mid,
+.entry-top + .entry-bottom,
+.entry-mid + .entry-mid,
+.entry-mid + .entry-bottom { border-top: 1px solid var(--color-border); }
+
+.entry-time      { flex-shrink: 0; width: 50px; }
+.entry-time-main { font-size: 12px; font-weight: 600; color: var(--color-text); line-height: 1.3; }
+.entry-time-end  { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+
+.entry-divider {
+  width: 2px; height: 34px; background: var(--color-brand-base);
+  opacity: .35; border-radius: 1px; flex-shrink: 0;
+}
+
+.entry-body  { flex: 1; min-width: 0; }
+.entry-title { font-size: 13px; font-weight: 600; color: var(--color-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.entry-sub   { margin-top: 3px; font-size: 11px; color: var(--color-text-muted); display: flex; align-items: center; gap: 4px; }
+
+.entry-chevron {
+  flex-shrink: 0; background: none; border: none; cursor: pointer;
+  padding: 4px; color: var(--color-text-muted); display: flex;
+  border-radius: 4px; transition: background .12s;
+}
+.entry-chevron svg { width: 14px; height: 14px; }
+.entry-chevron:hover { background: var(--color-neutral-100); color: var(--color-text); }
+
+.sched-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: var(--color-text-muted); font-size: 13px; padding: 24px 0;
+}
+.sched-holiday-link {
+  display: block; padding: 16px 0; font-size: 13px; font-weight: 600;
+  color: var(--color-brand-base); text-decoration: none;
+}
+.sched-holiday-link:hover { text-decoration: underline; }
+
+/* ── Empty state ────────────────────────────────────────────────────────────── */
+.dash-empty {
+  font-size: 13px; color: var(--color-text-muted); text-align: center; padding: 16px 0;
+}
+.dash-empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 240px; gap: 10px; color: var(--color-text-muted);
+}
+.dash-empty-state svg { width: 48px; height: 48px; opacity: .25; }
+.des-title { font-size: 15px; font-weight: 600; color: var(--color-text); text-align: center; }
+.des-sub   { font-size: 13px; color: var(--color-text-muted); text-align: center; }
+
+/* ── Mobile overrides ────────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .dash-title { font-size: 18px; }
+  .sum-card   { padding: 14px 16px; }
+  .sum-lbl    { font-size: 10px; }
+  .sum-stat   { padding: 0 8px; }
+  .donut-wrap { width: 100px; height: 100px; }
+  .dept-name  { width: 110px; }
 }
 </style>
-
-
