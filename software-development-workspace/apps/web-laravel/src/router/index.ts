@@ -22,6 +22,7 @@ import GoalsView           from "../views/GoalsView.vue";
 import BenefitPlansView    from "../views/BenefitPlansView.vue";
 import PublicHolidaysView  from "../views/PublicHolidaysView.vue";
 import OkrCyclesView       from "../views/OkrCyclesView.vue";
+import RoleAssignmentsView from "../views/RoleAssignmentsView.vue";
 
 // Recruitment
 import RecruitmentView      from "../views/Recruitment/RecruitmentView.vue";
@@ -88,6 +89,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/org/benefit-plans",    name: "benefit-plans",    component: BenefitPlansView },
   { path: "/org/public-holidays",  name: "public-holidays",  component: PublicHolidaysView },
   { path: "/org/payroll-config",   name: "payroll-config",   component: PayrollConfigView },
+  { path: "/org/role-assignments", name: "role-assignments", component: RoleAssignmentsView },
   { path: "/performance",          name: "performance",      component: PerformanceView },
   { path: "/goals",                name: "goals",            component: GoalsView },
   { path: "/okr/cycles",           name: "okr-cycles",       component: OkrCyclesView },
