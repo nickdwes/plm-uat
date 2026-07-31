@@ -239,14 +239,17 @@ watch(() => route.name, () => {
       </div>
 
       <!-- ── Section: Operations ─────────────────────────────────────────────── -->
-      <!--
-        Home for the modules being ported from Plmv2 — Assets first, then
-        Travel, then Projects and Tasks. See docs/plm-modules-implementation-plan.md.
+      <!-- Modules ported from Plmv2. Travel, then Projects and Tasks, follow
+           here as they land — see docs/plm-modules-implementation-plan.md. -->
+      <div class="sidebar-divider"></div>
+      <div class="sidebar-section">Operations</div>
 
-        Deliberately empty rather than carrying placeholder links: a nav entry
-        pointing at a route that does not exist is a 404 the user finds before
-        we do. Each module adds its own entry here as it lands.
-      -->
+      <router-link :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 10a1 1 0 00-1 1 1 1 0 001 1h10a1 1 0 001-1 1 1 0 00-1-1H5z" />
+        </svg>
+        Assets
+      </router-link>
 
       <!-- ── Section: Vendor Management ─────────────────────────────────────── -->
       <div class="sidebar-divider"></div>

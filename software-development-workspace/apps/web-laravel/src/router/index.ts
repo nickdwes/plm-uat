@@ -24,6 +24,10 @@ import PublicHolidaysView  from "../views/PublicHolidaysView.vue";
 import OkrCyclesView       from "../views/OkrCyclesView.vue";
 import RoleAssignmentsView from "../views/RoleAssignmentsView.vue";
 
+// Assets
+import AssetsView          from "../views/Asset/AssetsView.vue";
+import AssetDetailView     from "../views/Asset/AssetDetailView.vue";
+
 // Recruitment
 import RecruitmentView      from "../views/Recruitment/RecruitmentView.vue";
 import VacanciesView        from "../views/Recruitment/VacanciesView.vue";
@@ -90,6 +94,9 @@ const routes: RouteRecordRaw[] = [
   { path: "/org/public-holidays",  name: "public-holidays",  component: PublicHolidaysView },
   { path: "/org/payroll-config",   name: "payroll-config",   component: PayrollConfigView },
   { path: "/org/role-assignments", name: "role-assignments", component: RoleAssignmentsView },
+  // ── Operations ───────────────────────────────────────────────────────────
+  { path: "/assets",          name: "assets",        component: AssetsView },
+  { path: "/assets/:id",      name: "asset-detail",  component: AssetDetailView, props: true },
   { path: "/performance",          name: "performance",      component: PerformanceView },
   { path: "/goals",                name: "goals",            component: GoalsView },
   { path: "/okr/cycles",           name: "okr-cycles",       component: OkrCyclesView },

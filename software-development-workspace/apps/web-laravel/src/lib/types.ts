@@ -1115,3 +1115,65 @@ export interface VendorProject {
   created_at: string;
   updated_at: string;
 }
+
+// ---------------------------------------------------------------------------
+// Assets
+// ---------------------------------------------------------------------------
+
+export type AssetStatus = "available" | "assigned" | "maintenance" | "retired";
+
+export interface Asset {
+  id: number;
+  name: string;
+  asset_tag: string;
+  category: string;
+  brand: string | null;
+  model: string | null;
+  serial_number: string | null;
+
+  status: AssetStatus;
+  lifecycle_stage: string | null;
+  condition: string | null;
+
+  assigned_date: string | null;
+  location: string | null;
+  holder: { id: number; full_name: string; employee_number: string } | null;
+  department: { id: number; name: string } | null;
+
+  handover_required: boolean;
+  handover_signed_at: string | null;
+
+  purchase_date: string | null;
+  purchase_value: number | null;
+  vendor: string | null;
+  invoice_number: string | null;
+  warranty_period: string | null;
+  warranty_expiry_date: string | null;
+  procured_date: string | null;
+  in_stock_date: string | null;
+  next_maintenance: string | null;
+
+  specification: {
+    processor?: string;
+    ram?: string;
+    storage?: string;
+    operating_system?: string;
+  };
+
+  notes: string | null;
+
+  /** Derived server-side so every client agrees what "expired" means. */
+  is_assigned: boolean;
+  warranty_has_expired: boolean;
+  maintenance_is_due: boolean;
+
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AssetListMeta {
+  current_page: number;
+  last_page: number;
+  per_page: number;
+  total: number;
+}
