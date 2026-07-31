@@ -47,6 +47,14 @@ final class Permission
     public const PAYROLL_CREATE  = 'payroll.create';
     public const PAYROLL_PROCESS = 'payroll.process';
     public const PAYROLL_APPROVE = 'payroll.approve';
+    /** Earning and deduction codes — operational payroll setup. */
+    public const PAYROLL_MANAGE_CONFIG = 'payroll.manage_config';
+    /**
+     * PAYE bands and statutory rates. Separate from manage_config because these
+     * are set by legislation, determine every employee's net pay, and are
+     * rewritten a whole tax year at a time.
+     */
+    public const PAYROLL_MANAGE_STATUTORY = 'payroll.manage_statutory';
     public const PAYSLIP_VIEW_OWN = 'payslip.view_own';
 
     // ── Organization & departments ────────────────────────────────────────
@@ -168,6 +176,7 @@ final class Permission
             'payroll'       => [
                 self::PAYROLL_VIEW, self::PAYROLL_CREATE, self::PAYROLL_PROCESS,
                 self::PAYROLL_APPROVE,
+                self::PAYROLL_MANAGE_CONFIG, self::PAYROLL_MANAGE_STATUTORY,
             ],
             'payslip'       => [self::PAYSLIP_VIEW_OWN],
             'organizations' => [self::ORGANIZATIONS_VIEW, self::ORGANIZATIONS_MANAGE],

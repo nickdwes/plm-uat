@@ -40,20 +40,40 @@ class PayrollConfigPolicyTest extends TestCase
         app()->instance('current.organization_id', $this->org->id);
     }
 
+    /**
+     * Seeds the role with the permission set it actually carries in the
+     * database, so the test exercises the real configuration rather than an
+     * empty role that would deny everything regardless.
+     */
     private function userWithRole(?string $roleName, ?int $orgId): User
     {
         $user = User::factory()->create();
 
-        if ($roleName !== null) {
-            $role = Role::create([
-                'name'         => $roleName,
-                'display_name' => ucfirst($roleName),
-                'scope'        => $orgId === null ? 'group' : 'organization',
-                'permissions'  => [],
-            ]);
-            $user->roles()->attach($role->id, ['organization_id' => $orgId]);
-            $user->forgetCachedRoles();
+        if ($roleName === null) {
+            return $user;
         }
+
+        [$permissions, $excluded] = match ($roleName) {
+            Role::GROUP_ADMIN  => [['*'], []],
+            // org_hr prepares payroll but may not release it or change the
+            // rates it is calculated from.
+            Role::ORG_HR       => [['payroll.*'], ['payroll.approve', 'payroll.manage_statutory']],
+            default            => [[], []],
+        };
+
+        $role = Role::create([
+            'name'                 => $roleName,
+            'display_name'         => ucfirst($roleName),
+            'scope'                => $orgId === null ? 'group' : 'organization',
+            'permissions'          => $permissions,
+            'excluded_permissions' => $excluded,
+        ]);
+
+        $user->roles()->attach($role->id, [
+            'organization_id' => $orgId,
+            'scope'           => $orgId === null ? 'group' : 'organization',
+        ]);
+        $user->forgetCachedRoles();
 
         return $user;
     }
@@ -80,8 +100,13 @@ class PayrollConfigPolicyTest extends TestCase
         // be able to change what it calculates.
         $hr = $this->userWithRole(Role::ORG_HR, $this->org->id);
 
+        // The exclusion is what preserves separation of duties: org_hr holds
+        // payroll.* but payroll.approve and payroll.manage_statutory are
+        // carved out, so preparing a run does not confer releasing it.
         $this->assertTrue($this->policy->manageConfig($hr), 'Org HR should still manage codes.');
         $this->assertFalse($this->policy->manageStatutory($hr));
+        $this->assertFalse($this->policy->approve($hr), 'Preparer must not be the approver.');
+        $this->assertTrue($this->policy->process($hr), 'Org HR still runs the calculation.');
     }
 
     public function test_a_group_admin_can_change_statutory_rates(): void

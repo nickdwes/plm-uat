@@ -2,68 +2,91 @@
 
 namespace App\Policies;
 
-use App\Models\PayrollPeriod;
 use App\Models\User;
+use App\Support\Authorization\Permission;
 
+/**
+ * Payroll authorization, resolved from permissions rather than role names.
+ *
+ * Which roles may approve payroll is now a configuration question answered in
+ * the role administration screen, not a decision compiled into this class. Any
+ * role holding `payroll.approve` can approve, in whichever tenants it is
+ * assigned — which is the point of the catalogue.
+ *
+ * The separation of duties this class previously enforced by naming a role is
+ * preserved by permission instead: `org_hr` holds `payroll.*` with
+ * `payroll.approve` and `payroll.manage_statutory` excluded, so the people who
+ * prepare a payroll run still cannot release it or change the rates it is
+ * calculated from.
+ */
 class PayrollPeriodPolicy extends BasePolicy
 {
-    /** HR can list payroll periods; employees can see their own history via the history endpoint. */
+    /** Listing payroll periods. */
     public function viewAny(User $user): bool
     {
-        return $this->isCompanyHR($user);
+        return $this->can($user, Permission::PAYROLL_VIEW);
     }
 
-    /** HR and employees (for pay-slip access) can view a period. */
+    /**
+     * Viewing a period.
+     *
+     * Employees reach this to read their own payslip, so holding
+     * `payslip.view_own` is sufficient — the slip endpoint narrows to the
+     * caller's own record separately.
+     */
     public function view(User $user): bool
     {
-        return $this->isEmployee($user);
+        return $this->canAny($user, Permission::PAYROLL_VIEW, Permission::PAYSLIP_VIEW_OWN);
     }
 
-    /** Only HR can create a new payroll period. */
     public function create(User $user): bool
     {
-        return $this->isCompanyHR($user);
+        return $this->can($user, Permission::PAYROLL_CREATE);
     }
 
-    /** HR can trigger payroll processing. */
+    /** Running the calculation. */
     public function process(User $user): bool
     {
-        return $this->isCompanyHR($user);
+        return $this->can($user, Permission::PAYROLL_PROCESS);
     }
 
-    /** Only Group Admin / Global HR can approve payroll. */
+    /**
+     * Releasing a payroll run.
+     *
+     * Deliberately its own permission. Whoever holds this authorises money
+     * leaving the business, and it should not be implied by any other payroll
+     * capability.
+     */
     public function approve(User $user): bool
     {
-        return $this->isGlobalHR($user);
+        return $this->can($user, Permission::PAYROLL_APPROVE);
     }
 
-    /** Reading the payroll configuration is an HR administration screen. */
+    /** Reading the payroll configuration screen. */
     public function viewConfig(User $user): bool
     {
-        return $this->isCompanyHR($user);
+        return $this->canAny(
+            $user,
+            Permission::PAYROLL_VIEW,
+            Permission::PAYROLL_MANAGE_CONFIG,
+        );
     }
 
-    /**
-     * Earning and deduction codes are operational payroll setup — the same
-     * level of trust as creating a period.
-     */
+    /** Earning and deduction codes — operational setup. */
     public function manageConfig(User $user): bool
     {
-        return $this->isCompanyHR($user);
+        return $this->can($user, Permission::PAYROLL_MANAGE_CONFIG);
     }
 
     /**
-     * PAYE bands and statutory rates are group-level, not org-level.
+     * PAYE bands and statutory rates.
      *
-     * These values determine every employee's net pay, they are set by
-     * legislation rather than by the business, and updateTaxBands() replaces a
-     * whole tax year at once. That is the same blast radius as approving a
-     * payroll run, so it takes the same authority — and it keeps the person
-     * who prepares payroll separate from the person who can change what it
-     * calculates.
+     * updateTaxBands() replaces a whole tax year at once and these values
+     * determine every payslip, so this carries the same weight as approving a
+     * run rather than the same weight as editing a deduction code.
      */
     public function manageStatutory(User $user): bool
     {
-        return $this->isGlobalHR($user);
+        return $this->can($user, Permission::PAYROLL_MANAGE_STATUTORY);
     }
 }
