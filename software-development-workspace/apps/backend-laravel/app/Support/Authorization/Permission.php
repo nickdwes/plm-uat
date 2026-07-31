@@ -78,6 +78,16 @@ final class Permission
     public const AUDIT_VIEW   = 'audit.view';
     public const SETTINGS_MANAGE = 'settings.manage';
 
+    // ── Authorization administration ──────────────────────────────────────
+    //
+    // Deliberately three permissions, not one. Reading who holds what is a
+    // routine audit question; defining a role is a change to the rules; and
+    // granting one is a change to who is bound by them. Collapsing them means
+    // anyone who may review access may also widen it.
+    public const ROLES_VIEW   = 'roles.view';
+    public const ROLES_MANAGE = 'roles.manage';
+    public const ROLES_ASSIGN = 'roles.assign';
+
     // ── Performance reviews ───────────────────────────────────────────────
     public const PERFORMANCE_VIEW      = 'performance.view';
     public const PERFORMANCE_VIEW_OWN  = 'performance.view_own';
@@ -174,6 +184,7 @@ final class Permission
             'reports'       => [self::REPORTS_ORG, self::REPORTS_TEAM],
             'audit'         => [self::AUDIT_VIEW],
             'settings'      => [self::SETTINGS_MANAGE],
+            'roles'         => [self::ROLES_VIEW, self::ROLES_MANAGE, self::ROLES_ASSIGN],
             'performance'   => [
                 self::PERFORMANCE_VIEW, self::PERFORMANCE_VIEW_OWN,
                 self::PERFORMANCE_VIEW_TEAM, self::PERFORMANCE_MANAGE,

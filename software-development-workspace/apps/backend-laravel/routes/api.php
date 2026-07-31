@@ -35,6 +35,7 @@ use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Asset\AssetController;
+use App\Http\Controllers\Authorization\RoleController;
 use App\Http\Controllers\Goals\GoalController;
 use App\Http\Controllers\Roster\HandoverController;
 use App\Http\Controllers\Roster\RosterConfigController;
@@ -152,6 +153,18 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/team',       [WorkLocationController::class, 'team']);
         Route::post('/check-in',  [WorkLocationController::class, 'checkIn']);
         Route::post('/check-out', [WorkLocationController::class, 'checkOut']);
+    });
+
+    // ── Authorization administration ──────────────────────────────────────────
+    // Role-centric, with a tenant on every assignment so one identity can hold
+    // different rights in different organizations.
+    Route::prefix('authorization')->group(function () {
+        Route::get('/options',            [RoleController::class, 'options']);
+        Route::get('/roles',              [RoleController::class, 'index']);
+        Route::get('/roles/{role}',       [RoleController::class, 'show']);
+        Route::get('/users/{user}/assignments', [RoleController::class, 'assignmentsFor']);
+        Route::post('/assignments',       [RoleController::class, 'grant']);
+        Route::delete('/assignments/{assignment}', [RoleController::class, 'revoke']);
     });
 
     // ── Assets ────────────────────────────────────────────────────────────────
