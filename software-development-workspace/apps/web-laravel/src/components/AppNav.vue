@@ -337,62 +337,83 @@ watch(() => route.name, () => {
 
 <style scoped>
 /*
- * Migrated to the Konvergenz design system — see docs/design-system.md.
- * All sidebar styling now lives here rather than in the global style.css;
- * AppNav is the only consumer of these classes.
+ * Light sidebar, implementing the Figma nav spec.
  *
- * `@reference` gives this scoped block access to the theme so `@apply` can
- * resolve token-backed utilities. Repeated patterns (.nav-item, .nav-child)
- * stay as named classes — the nav renders 30+ of them, and inlining a dozen
- * utilities per row would obscure the markup rather than clarify it.
+ * The spec's literal hex values are mapped onto sidebar tokens rather than
+ * inlined, so the nav themes with the rest of the application instead of
+ * being a white panel pinned to a dark surface in dark mode.
+ *
+ * `@reference` gives this scoped block the theme so `@apply` resolves.
+ * Repeated patterns stay as named classes — the nav renders 25+ rows, and a
+ * dozen utilities per row would obscure the markup.
  */
 @reference "../theme.css";
 
 /* ── Shell ─────────────────────────────────────────────────────────────── */
 .app-sidebar {
   @apply flex flex-col shrink-0 overflow-hidden;
-  width: var(--sidebar-width);
+  width: var(--sidebar-width);          /* 260px */
   background: var(--color-sidebar-bg);
+  border-right: 1px solid var(--color-sidebar-divider);
 }
 
+/* Logo band: fixed 72px, its own rule off the rest. */
 .sidebar-logo {
-  @apply flex items-center p-4;
-  min-height: var(--header-height);
+  @apply flex shrink-0 flex-col justify-center;
+  height: 72px;
+  padding: 0 20px;
   border-bottom: 1px solid var(--color-sidebar-divider);
 }
 
 .sidebar-logo-img {
   @apply h-auto object-contain;
-  width: 140px;
+  width: 182px;
+  max-height: 44px;
 }
 
 .sidebar-nav {
-  @apply flex flex-1 flex-col gap-0.5 overflow-y-auto p-3;
+  @apply flex flex-1 flex-col overflow-y-auto;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3) var(--space-4);
+}
+
+/*
+ * The spec groups items into bordered bands. The existing markup uses a
+ * divider element between flat groups instead, so the band effect is produced
+ * with a full-bleed rule rather than restructuring 25 nav rows — the visual
+ * result is the same and the navigation keeps working throughout.
+ */
+.sidebar-divider {
+  @apply shrink-0;
+  height: 1px;
+  margin: var(--space-2) calc(var(--space-3) * -1) 0;
+  background: var(--color-sidebar-divider);
 }
 
 .sidebar-section {
-  @apply px-3 pt-3 pb-2 mt-2 font-semibold uppercase;
-  font-size: var(--text-xs-size);
-  letter-spacing: 0.08em;
-  color: var(--color-sidebar-text);
-  opacity: 0.5;
-}
-
-.sidebar-divider {
-  @apply mx-3 my-2 h-px;
-  background: var(--color-sidebar-divider);
+  @apply font-semibold uppercase;
+  padding: var(--space-2) var(--space-3) 0;
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: -0.03em;
+  color: var(--color-sidebar-section);
 }
 
 /* ── Nav items ─────────────────────────────────────────────────────────── */
 .nav-item {
-  @apply relative flex items-center gap-3 rounded-lg border-l-[3px] border-transparent px-3 py-[9px] font-medium no-underline;
-  font-size: var(--text-sm-size);
+  @apply relative flex items-center font-medium no-underline;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 10px var(--space-3);
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 20px;
   color: var(--color-sidebar-text);
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .nav-item svg {
-  @apply size-4 shrink-0 opacity-80;
+  @apply size-5 shrink-0;
 }
 
 .nav-item:hover {
@@ -400,20 +421,32 @@ watch(() => route.name, () => {
   color: var(--color-sidebar-text-hover);
 }
 
+/*
+ * Active state carries three signals — rail, fill and colour — so it does not
+ * depend on hue alone. The rail sits outside the rounded box, matching the
+ * spec's separate 3px rectangle.
+ */
 .nav-item.active {
-  @apply font-semibold;
   background: var(--color-sidebar-active-bg);
   color: var(--color-sidebar-text-active);
-  border-left-color: var(--color-sidebar-active-border);
 }
 
-.nav-item.active svg {
-  @apply opacity-100;
+.nav-item.active::before {
+  @apply absolute;
+  content: '';
+  left: -8px;
+  top: 2px;
+  bottom: 2px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--color-sidebar-active-border);
 }
+
+.nav-item.active svg { color: var(--color-sidebar-accent); }
 
 .nav-item:focus-visible {
   @apply outline-2 outline-offset-[-2px];
-  outline-color: var(--color-sidebar-accent);
+  outline-color: var(--color-sidebar-active-border);
 }
 
 /* ── Collapsible groups ────────────────────────────────────────────────── */
@@ -423,113 +456,110 @@ watch(() => route.name, () => {
   font-size: inherit;
 }
 
-/* Active group label. Uses the sidebar accent, not --color-brand-base: the
-   brand blue measures 2.05:1 on this ground, which made the active state less
-   legible than the idle state. */
 .nav-group-toggle.group-active {
   @apply font-semibold;
-  color: var(--color-sidebar-accent);
+  color: var(--color-sidebar-text-active);
 }
 
-.nav-group-toggle > span {
-  @apply flex-1;
-}
+.nav-group-toggle > span { @apply flex-1; }
 
 .chevron {
-  @apply size-3.5 shrink-0 opacity-60;
+  @apply size-4 shrink-0 opacity-60;
   transition: transform var(--transition-base);
 }
 
-.chevron.open {
-  @apply rotate-180;
-}
+.chevron.open { @apply rotate-180; }
 
 .nav-group-children {
-  @apply max-h-0 overflow-hidden;
+  @apply flex max-h-0 flex-col overflow-hidden;
+  gap: var(--space-1);
   transition: max-height 250ms ease;
 }
 
 .nav-group-children.open {
-  max-height: 400px;
+  max-height: 520px;
+  margin-top: var(--space-1);
 }
 
-/* ── Child items ───────────────────────────────────────────────────────── */
-.nav-child {
-  @apply relative pl-9;
-  font-size: 0.85em;
-}
+/* Children indent under their parent rather than carrying a bullet — the
+   spec has no child treatment, and a dot competes with the active rail. */
+.nav-child { padding-left: calc(var(--space-3) + 28px); }
 
-.nav-child::before {
-  @apply absolute top-1/2 size-1 -translate-y-1/2 rounded-full opacity-35;
-  content: '';
-  left: 1.1rem;
-  background: currentColor;
-}
-
-.nav-child.active::before {
-  @apply opacity-100;
-  background: var(--color-sidebar-accent);
+/* ── Badge (hidden until a count is supplied) ──────────────────────────── */
+.nav-badge {
+  @apply ml-auto inline-flex items-center rounded-full font-medium;
+  padding: 2px var(--space-2);
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--color-sidebar-active-bg);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-sidebar-text);
 }
 
 /* ── Footer ────────────────────────────────────────────────────────────── */
 .sidebar-footer {
-  @apply px-4 py-3;
+  @apply mt-auto flex shrink-0 flex-col;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--color-sidebar-divider);
 }
 
 .sidebar-user {
-  @apply flex items-center gap-3;
+  @apply flex items-center;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
 }
 
 .user-avatar {
-  @apply flex size-8 shrink-0 items-center justify-center rounded-full font-bold;
-  font-size: var(--text-xs-size);
-  background: var(--color-brand-base);
-  color: var(--color-on-brand);
+  @apply flex size-8 shrink-0 items-center justify-center rounded-full font-semibold;
+  font-size: 12px;
+  background: var(--color-brand-light);
+  color: var(--color-brand-dark);
 }
 
-.user-info {
-  @apply min-w-0 flex-1;
-}
+.user-info { @apply min-w-0 flex-1; }
 
 .user-name {
-  @apply truncate font-semibold;
-  font-size: var(--text-xs-size);
-  color: var(--color-sidebar-text-active);
+  @apply truncate font-medium;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--color-sidebar-text-hover);
 }
 
 .user-role {
-  @apply truncate opacity-60;
-  font-size: var(--text-xs-size);
+  @apply truncate;
+  font-size: 12px;
+  line-height: 18px;
   color: var(--color-sidebar-text);
 }
 
 .logout-btn {
-  @apply flex shrink-0 cursor-pointer items-center rounded-md border-none bg-transparent p-1;
+  @apply flex w-full cursor-pointer items-center border-none bg-transparent font-medium;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 10px var(--space-3);
+  border-radius: 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 20px;
   color: var(--color-sidebar-text);
-  transition: color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .logout-btn:hover {
+  background: var(--color-sidebar-hover-bg);
   color: var(--color-sidebar-text-hover);
 }
 
 .logout-btn:focus-visible {
-  @apply outline-2 outline-offset-2;
-  outline-color: var(--color-sidebar-accent);
+  @apply outline-2 outline-offset-[-2px];
+  outline-color: var(--color-sidebar-active-border);
 }
 
-.logout-btn svg {
-  @apply size-4;
-}
+.logout-btn svg { @apply size-5 shrink-0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .chevron,
-  .nav-group-children,
-  .nav-item,
-  .logout-btn {
-    transition: none;
-  }
+  .chevron, .nav-group-children, .nav-item, .logout-btn { transition: none; }
 }
 </style>
 

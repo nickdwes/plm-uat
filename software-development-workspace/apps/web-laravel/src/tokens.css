@@ -22,11 +22,12 @@
 
   /* ── Brand ramp ──────────────────────────────────────────────────────── */
   --ramp-brand-900: #0A3573;
-  --ramp-brand-700: #004C97;   /* Konvergenz primary */
+  --ramp-brand-700: #004C97;   /* Konvergenz heritage navy */
+  --ramp-brand-550: #0c8ef4;   /* Figma accent — sky blue */
   --ramp-brand-500: #1565C0;
   --ramp-brand-400: #3B82F6;
   --ramp-brand-300: #60A5FA;
-  --ramp-brand-100: #DBEAFE;
+  --ramp-brand-100: #DBF0FE;   /* tinted toward #0c8ef4 */
 
   /* ── Neutral ramp ────────────────────────────────────────────────────── */
   --ramp-neutral-900: #101828;
@@ -89,13 +90,13 @@
   color-scheme: light;
 
   /* ── Brand ───────────────────────────────────────────────────────────── */
-  --color-brand-base:   var(--ramp-brand-700);
-  --color-brand-hover:  var(--ramp-brand-500);
-  --color-brand-dark:   var(--ramp-brand-900);
-  --color-brand-light:  var(--ramp-brand-100);
-  --color-brand-subtle: rgba(0, 76, 151, 0.08);
+  --color-brand-base:   var(--ramp-brand-550);   /* #0c8ef4 sky blue */
+  --color-brand-hover:  #0a7fd9;                 /* 8% darker for hover */
+  --color-brand-dark:   var(--ramp-brand-700);   /* #004C97 for emphasis */
+  --color-brand-light:  var(--ramp-brand-100);   /* #DBF0FE light tint */
+  --color-brand-subtle: rgba(12, 142, 244, 0.08);
   /* Text/icon colour when brand is used as a foreground on a plain surface */
-  --color-brand-on-surface: var(--ramp-brand-700);
+  --color-brand-on-surface: var(--ramp-brand-550);
   /* Foreground that sits ON a brand-filled element */
   --color-on-brand:     #FFFFFF;
 
@@ -139,20 +140,29 @@
   --color-indigo: var(--ramp-indigo-500);
   --color-amber:  var(--ramp-amber-500);
 
-  /* ── Sidebar (always dark, in both themes) ───────────────────────────── */
-  --color-sidebar-bg:            #0D1B2A;
-  --color-sidebar-active-bg:     rgba(0, 76, 151, 0.18);
-  --color-sidebar-active-border: var(--ramp-brand-700);
-  --color-sidebar-hover-bg:      rgba(255, 255, 255, 0.06);
-  --color-sidebar-text:          rgba(255, 255, 255, 0.60);
-  --color-sidebar-text-hover:    rgba(255, 255, 255, 0.90);
-  --color-sidebar-text-active:   #FFFFFF;
-  --color-sidebar-divider:       rgba(255, 255, 255, 0.08);
-  /* Accent for active/expanded nav labels. The sidebar is dark in BOTH themes,
-     so it needs the dark-mode brand tone: --color-brand-base (#004C97) measures
-     2.05:1 against #0D1B2A, making the active item less legible than the idle
-     one. This is 6.84:1. */
-  --color-sidebar-accent:        var(--ramp-brand-300);
+  /* ── Sidebar — light, per the Figma nav spec ─────────────────────────── */
+  --color-sidebar-bg:            #FFFFFF;
+  --color-sidebar-active-bg:     #F1F5F9;
+  --color-sidebar-hover-bg:      #F8FAFC;
+  --color-sidebar-text:          #475569;   /* 7.58:1 on white — AA */
+  --color-sidebar-text-hover:    #1E293B;
+  --color-sidebar-section:       #1E293B;   /* uppercase group headings */
+  --color-sidebar-divider:       #E2E8F0;
+
+  /*
+   * Two accents, deliberately different values for the same colour idea.
+   *
+   * The rail and icons are non-text UI, where WCAG's threshold is 3:1 —
+   * #0c8ef4 on #F1F5F9 is 3.10:1 and passes. The label is 14px text, where
+   * the threshold is 4.5:1 and the same blue reaches only 3.10:1. Using it
+   * for the label would make the *active* item the least legible in the nav.
+   *
+   * #0A6EBE is the nearest step that passes at 4.81:1 and is visually all
+   * but indistinguishable at this size.
+   */
+  --color-sidebar-active-border: var(--ramp-brand-550);   /* #0c8ef4 — 3:1 UI */
+  --color-sidebar-accent:        var(--ramp-brand-550);   /* icons */
+  --color-sidebar-text-active:   #0A6EBE;                 /* labels — 4.5:1 text */
 
   /* ── Elevation ───────────────────────────────────────────────────────── */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
@@ -224,9 +234,19 @@
   --color-amber:  var(--ramp-amber-400);
 
   /* Sidebar — already dark; deepen slightly so it still separates from bg */
-  --color-sidebar-bg:            #080D17;
-  --color-sidebar-active-bg:     rgba(96, 165, 250, 0.18);
-  --color-sidebar-active-border: var(--ramp-brand-300);
+  /* The nav follows the surface in dark mode rather than staying white. */
+  --color-sidebar-bg:            var(--ramp-slate-900);
+  --color-sidebar-active-bg:     rgba(12, 142, 244, 0.16);
+  --color-sidebar-hover-bg:      rgba(255, 255, 255, 0.05);
+  --color-sidebar-text:          #94A3B8;
+  --color-sidebar-text-hover:    #E5E7EB;
+  --color-sidebar-section:       #CBD5E1;
+  --color-sidebar-divider:       var(--ramp-slate-700);
+  --color-sidebar-active-border: var(--ramp-brand-550);
+  --color-sidebar-accent:        var(--ramp-brand-550);
+  /* #0c8ef4 on #0F172A is 5.2:1 — legible as text on the dark ground, so the
+     light theme's darker label colour is not needed here. */
+  --color-sidebar-text-active:   var(--ramp-brand-550);
 
   /* Elevation — shadows read poorly on dark; deepen and lean on borders */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.40);
@@ -332,7 +352,7 @@
   --radius-full: 9999px;
 
   /* ── Layout ──────────────────────────────────────────────────────────── */
-  --sidebar-width: 240px;
+  --sidebar-width: 260px;   /* Figma nav spec */
   --header-height: 60px;
 
   /* ── Motion ──────────────────────────────────────────────────────────── */
@@ -424,7 +444,7 @@
     --color-amber:  var(--ramp-amber-400);
 
     --color-sidebar-bg:            #080D17;
-    --color-sidebar-active-bg:     rgba(96, 165, 250, 0.18);
-    --color-sidebar-active-border: var(--ramp-brand-300);
+    --color-sidebar-active-bg:     rgba(12, 142, 244, 0.16);
+    --color-sidebar-active-border: var(--ramp-brand-550);
   }
 }
