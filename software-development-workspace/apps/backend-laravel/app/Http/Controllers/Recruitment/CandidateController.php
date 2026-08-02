@@ -10,6 +10,9 @@ use App\Services\Recruitment\CandidateService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CandidateController extends Controller
 {
@@ -65,6 +68,62 @@ class CandidateController extends Controller
         ]);
         $updated = $this->service->uploadResume($candidate, $request->file('resume'));
         return new CandidateResource($updated);
+    }
+
+    /**
+     * Stream a candidate's CV to an authorised viewer.
+     *
+     * CVs used to be served straight off the storage symlink, so the URL alone
+     * granted access to anyone who held it. Streaming through the app means
+     * every download passes the same policy check as viewing the candidate,
+     * and the file itself has no publicly reachable address.
+     */
+    public function downloadResume(Candidate $candidate): StreamedResponse
+    {
+        $this->authorize('view', $candidate);
+        return $this->streamResume($candidate);
+    }
+
+    /**
+     * Same file, reached by a signed link instead of a bearer token.
+     *
+     * The signature is the authorisation — Laravel's `signed` middleware has
+     * already rejected anything tampered with or expired before we get here.
+     * Global scopes are skipped deliberately: this route runs outside
+     * `org.context`, so there is no current organisation to scope against, and
+     * the signature already names one specific candidate.
+     */
+    public function downloadSignedResume(int $candidate): StreamedResponse
+    {
+        $model = Candidate::withoutGlobalScopes()->findOrFail($candidate);
+        return $this->streamResume($model);
+    }
+
+    private function streamResume(Candidate $candidate): StreamedResponse
+    {
+        abort_if($candidate->resume_path === null, 404, 'No CV on file.');
+
+        $disk = Storage::disk('candidate_docs');
+        abort_unless($disk->exists($candidate->resume_path), 404, 'File not found on disk.');
+
+        // The stored name is a random UUID; give the viewer something readable.
+        $filename = Str::slug($candidate->full_name ?: 'candidate')
+            . '-cv.' . pathinfo($candidate->resume_path, PATHINFO_EXTENSION);
+
+        return response()->streamDownload(
+            function () use ($disk, $candidate) {
+                $stream = $disk->readStream($candidate->resume_path);
+                fpassthru($stream);
+                if (is_resource($stream)) fclose($stream);
+            },
+            $filename,
+            [
+                'Content-Type'           => $disk->mimeType($candidate->resume_path) ?: 'application/octet-stream',
+                'Content-Disposition'    => 'attachment; filename="' . addslashes($filename) . '"',
+                'X-Content-Type-Options' => 'nosniff',
+                'Cache-Control'          => 'no-store',
+            ]
+        );
     }
 
     public function bulkAction(Request $request): JsonResponse

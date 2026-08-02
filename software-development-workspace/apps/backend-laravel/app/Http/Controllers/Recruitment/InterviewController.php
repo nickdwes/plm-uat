@@ -12,7 +12,6 @@ use App\Services\Recruitment\TeamsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Storage;
 
 class InterviewController extends Controller
 {
@@ -227,9 +226,7 @@ class InterviewController extends Controller
             ? trim("{$application->candidate->first_name} {$application->candidate->last_name}")
             : 'Candidate';
         $vacancyName  = $application?->vacancy?->name ?? 'the role';
-        $resumeUrl    = $application?->candidate?->resume_path
-            ? Storage::url($application->candidate->resume_path)
-            : null;
+        $resumeUrl    = $application?->candidate?->signedResumeUrl(60 * 24 * 14);
 
         $sent   = 0;
         $errors = [];

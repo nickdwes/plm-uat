@@ -78,6 +78,22 @@ Route::prefix('public')->middleware('throttle:60,1')->group(function () {
         Route::post('/{token}/attachments',            [PublicPreboardingController::class, 'uploadAttachment'])->middleware('throttle:10,1');
     });
 
+    /*
+     * Candidate CV download.
+     *
+     * Signed rather than authenticated, for two reasons: the SPA links to CVs
+     * with a plain anchor, which carries no bearer token, and external
+     * interview panellists need the link from an email without an account.
+     *
+     * The signature is what grants access, so it is issued only inside a
+     * response the caller was already authorised to receive, and it expires.
+     * This is the presigned-URL pattern, and it replaces URLs that were
+     * unauthenticated, permanent and served straight off the storage symlink.
+     */
+    Route::get('/candidates/{candidate}/resume', [CandidateController::class, 'downloadSignedResume'])
+        ->middleware('signed')
+        ->name('candidates.resume.signed');
+
     // Interview scoring form (public, token-based)
     Route::prefix('scoring')->middleware('throttle:30,1')->group(function () {
         Route::get('/{token}',    [\App\Http\Controllers\Recruitment\PublicScoringController::class, 'show']);
@@ -415,6 +431,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::put('/candidates/{candidate}',                 [CandidateController::class, 'update']);
         Route::delete('/candidates/{candidate}',              [CandidateController::class, 'destroy']);
         Route::post('/candidates/{candidate}/resume',         [CandidateController::class, 'uploadResume']);
+        Route::get('/candidates/{candidate}/resume',          [CandidateController::class, 'downloadResume']);
 
         // Interviews
         Route::get('/employees-search',                                        [InterviewController::class, 'employees']);

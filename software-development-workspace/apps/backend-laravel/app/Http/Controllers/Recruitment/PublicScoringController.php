@@ -9,7 +9,6 @@ use App\Models\Recruitment\InterviewScore;
 use App\Models\Recruitment\Application;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 
 /**
  * Public (unauthenticated) scoring form endpoint.
@@ -80,7 +79,7 @@ class PublicScoringController extends Controller
             ],
             'candidate' => [
                 'name'       => $candidate ? trim("{$candidate->first_name} {$candidate->last_name}") : 'Candidate',
-                'resume_url' => $candidate?->resume_path ? Storage::url($candidate->resume_path) : null,
+                'resume_url' => $candidate?->signedResumeUrl(240),
             ],
             'vacancy' => [
                 'name' => $vacancy?->name ?? 'Role',

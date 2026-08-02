@@ -103,7 +103,7 @@ class PublicJobController extends Controller
         $cvPath = $request->file('cv')->storeAs(
             'resumes/' . $v->uuid,
             Str::uuid() . '.' . $cvExtension,
-            'public'
+            'candidate_docs'
         );
 
         $attachmentPath = null;
@@ -112,7 +112,7 @@ class PublicJobController extends Controller
             $attachmentPath = $request->file('attachment')->storeAs(
                 'attachments/' . $v->uuid,
                 Str::uuid() . '.' . $ext,
-                'public'
+                'candidate_docs'
             );
         }
 

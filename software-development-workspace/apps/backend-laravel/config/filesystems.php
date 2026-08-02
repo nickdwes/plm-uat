@@ -58,6 +58,24 @@ return [
         ],
 
         // Private preboarding attachments — served only through PreboardingController.
+        /*
+         * Candidate CVs and application attachments.
+         *
+         * These were on the `public` disk, which is exposed by the storage
+         * symlink — every CV was downloadable by anyone with the URL and no
+         * authentication at all. Random UUID paths made guessing impractical
+         * but did nothing about URLs leaking through browser history, referrer
+         * headers or proxy logs, and they never expired.
+         *
+         * Private, and served only through an authorised download route.
+         */
+        'candidate_docs' => [
+            'driver'     => 'local',
+            'root'       => storage_path('app/private/candidate-docs'),
+            'visibility' => 'private',
+            'throw'      => true,
+        ],
+
         'preboarding_docs' => [
             'driver'     => 'local',
             'root'       => storage_path('app/private/preboarding-docs'),

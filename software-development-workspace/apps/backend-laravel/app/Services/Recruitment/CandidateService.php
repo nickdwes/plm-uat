@@ -82,10 +82,10 @@ class CandidateService extends BaseService
     public function uploadResume(Candidate $candidate, UploadedFile $file): Candidate
     {
         if ($candidate->resume_path) {
-            Storage::disk('public')->delete($candidate->resume_path);
+            Storage::disk('candidate_docs')->delete($candidate->resume_path);
         }
 
-        $path = $file->store("resumes/{$candidate->id}", 'public');
+        $path = $file->store("resumes/{$candidate->id}", 'candidate_docs');
         $candidate->update(['resume_path' => $path]);
 
         return $candidate->fresh();

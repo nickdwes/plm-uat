@@ -49,6 +49,10 @@ services:
       CORS_ALLOWED_HEADERS: "Content-Type,Authorization,X-Requested-With,X-HRMS-Version,X-Organization"
     volumes:
       - hrms-storage:/var/www/html/storage/app/public
+      # Private storage — résumés, preboarding documents. Not reachable over
+      # HTTP, and needs its own volume: without one it lives in the container
+      # filesystem and is destroyed by the next rebuild.
+      - hrms-private:/var/www/html/storage/app/private
       - hrms-logs:/var/www/html/storage/logs
     depends_on:
       db:
@@ -113,5 +117,7 @@ volumes:
     name: hrms-postgres-data
   hrms-storage:
     name: hrms-laravel-storage
+  hrms-private:
+    name: hrms-laravel-private
   hrms-logs:
     name: hrms-laravel-logs

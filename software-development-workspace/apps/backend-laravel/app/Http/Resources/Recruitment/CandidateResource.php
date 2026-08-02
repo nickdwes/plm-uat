@@ -4,7 +4,6 @@ namespace App\Http\Resources\Recruitment;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Facades\Storage;
 
 class CandidateResource extends JsonResource
 {
@@ -18,7 +17,7 @@ class CandidateResource extends JsonResource
             'full_name'    => $this->full_name,
             'email'        => $this->email,
             'phone'        => $this->phone,
-            'resume_url'   => $this->resume_path ? Storage::url($this->resume_path) : null,
+            'resume_url'   => $this->resource->signedResumeUrl(30),
             'social_links' => $this->social_links ?? [],
             'keywords'     => $this->keywords ?? [],
             'source'       => $this->source,
