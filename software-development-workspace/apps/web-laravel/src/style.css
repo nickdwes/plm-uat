@@ -589,6 +589,10 @@ input[type="time"].form-input {
 .badge {
   display: inline-flex;
   align-items: center;
+  /* A pill in a grid or stretch-aligned flex cell fills the column unless it
+     is told not to — which is why the Active badge rendered as a full-width
+     green bar. OrgView already worked around this locally on one badge. */
+  width: fit-content;
   padding: 3px 10px;
   border-radius: var(--radius-full);
   font-size: var(--font-size-xs);

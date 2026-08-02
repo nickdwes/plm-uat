@@ -394,57 +394,15 @@
   --font-weight-extrabold: 700;
 }
 
-
-/* Honour OS preference when no explicit theme has been chosen. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="dark"]) {
-    color-scheme: dark;
-
-    --color-brand-base:   var(--ramp-brand-400);
-    --color-brand-hover:  var(--ramp-brand-300);
-    --color-brand-dark:   var(--ramp-brand-500);
-    --color-brand-light:  rgba(96, 165, 250, 0.16);
-    --color-brand-subtle: rgba(96, 165, 250, 0.10);
-    --color-brand-on-surface: var(--ramp-brand-300);
-    --color-on-brand:     #06121F;
-
-    --color-neutral-900: #E5E7EB;
-    --color-neutral-800: #CBD5E1;
-    --color-neutral-700: #94A3B8;
-    --color-neutral-500: #64748B;
-    --color-neutral-300: var(--ramp-slate-700);
-    --color-neutral-200: var(--ramp-slate-800);
-    --color-neutral-100: var(--ramp-slate-900);
-    --color-neutral-50:  var(--ramp-slate-950);
-
-    --color-bg:             var(--ramp-slate-950);
-    --color-surface:        var(--ramp-slate-900);
-    --color-surface-raised: var(--ramp-slate-800);
-    --color-surface-sunken: #080D17;
-    --color-border:         var(--ramp-slate-700);
-    --color-border-strong:  var(--ramp-slate-600);
-    --color-overlay:        rgba(0, 0, 0, 0.64);
-
-    --color-text:         #E5E7EB;
-    --color-text-muted:   #94A3B8;
-    --color-text-light:   #64748B;
-    --color-text-inverse: var(--ramp-neutral-900);
-
-    --color-success:       var(--ramp-success-400);
-    --color-success-light: var(--ramp-success-900);
-    --color-warning:       var(--ramp-warning-400);
-    --color-warning-light: var(--ramp-warning-900);
-    --color-error:         var(--ramp-error-400);
-    --color-error-light:   var(--ramp-error-900);
-    --color-info:          var(--ramp-info-400);
-    --color-info-light:    var(--ramp-info-900);
-
-    --color-teal:   var(--ramp-teal-400);
-    --color-indigo: var(--ramp-indigo-400);
-    --color-amber:  var(--ramp-amber-400);
-
-    --color-sidebar-bg:            #080D17;
-    --color-sidebar-active-bg:     rgba(12, 142, 244, 0.16);
-    --color-sidebar-active-border: var(--ramp-brand-550);
-  }
-}
+/*
+ * There is deliberately no @media (prefers-color-scheme: dark) block.
+ *
+ * The dark palette used to be declared twice — here and under
+ * [data-theme="dark"] — and the two drifted: this copy defined three sidebar
+ * tokens against the other's ten, so the rest fell back to their light values
+ * and section headings rendered near-black on a near-black ground.
+ *
+ * stores/theme.ts now writes data-theme onto the root from the OS preference
+ * (or an explicit choice) before the app mounts, so [data-theme="dark"] is the
+ * only place dark values are defined and cannot drift from a second copy.
+ */
