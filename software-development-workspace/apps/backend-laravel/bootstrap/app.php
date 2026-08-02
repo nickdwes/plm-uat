@@ -12,6 +12,23 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        /*
+         * TLS terminates at Caddy, so without this the application sees plain
+         * http and generates http URLs. Signed URLs are the visible symptom:
+         * the signature is computed over the whole URL, so one minted as https
+         * never matches a request read as http, and every signed link 403s.
+         *
+         * It also decides what `$request->ip()` returns — untrusted, audit
+         * entries record the proxy rather than the person.
+         *
+         * Scoped to private ranges rather than '*' because the container also
+         * publishes port 9090 on the host, so it is not exclusively reachable
+         * through Caddy.
+         */
+        $middleware->trustProxies(
+            at: ['127.0.0.1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'],
+        );
+
         $middleware->alias([
             'auth'        => \App\Http\Middleware\Authenticate::class,
             'verified'    => \App\Http\Middleware\EnsureEmailIsVerified::class,
