@@ -44,6 +44,47 @@ class EmployeeController extends Controller
         return new EmployeeResource($employee->load(['primaryOrganization', 'department', 'designation', 'jobGrade']));
     }
 
+    /**
+     * GET /api/v1/employees/search — typeahead lookup for pickers.
+     *
+     * Deliberately narrow: enough to identify a person and nothing more.
+     * A picker that returns the full employee resource hands salary, national
+     * ID and medical fields to every screen that needs to choose a name.
+     *
+     * An equivalent already existed under the recruitment prefix. Left in
+     * place so that module keeps working, but a general-purpose lookup does
+     * not belong behind a feature route.
+     */
+    public function search(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Employee::class);
+
+        $term = trim((string) $request->query('q', ''));
+
+        $employees = Employee::query()
+            ->where('status', 'active')
+            ->when($term !== '', function ($q) use ($term) {
+                $like = '%' . $term . '%';
+                $q->where(fn ($w) => $w
+                    ->where('first_name', 'ilike', $like)
+                    ->orWhere('last_name', 'ilike', $like)
+                    ->orWhere('work_email', 'ilike', $like)
+                    ->orWhere('employee_number', 'ilike', $like));
+            })
+            ->orderBy('first_name')
+            ->limit(25)
+            ->get(['id', 'first_name', 'last_name', 'employee_number', 'work_email']);
+
+        return response()->json([
+            'data' => $employees->map(fn (Employee $e) => [
+                'id'              => $e->id,
+                'full_name'       => trim($e->first_name . ' ' . $e->last_name),
+                'employee_number' => $e->employee_number,
+                'work_email'      => $e->work_email,
+            ]),
+        ]);
+    }
+
     /** GET /api/v1/employees/me — the logged-in user's own employee record */
     public function me(Request $request): EmployeeResource
     {

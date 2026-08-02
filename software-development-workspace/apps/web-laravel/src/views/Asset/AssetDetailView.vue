@@ -11,6 +11,7 @@ import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import type { Asset } from "../../lib/types";
+import EmployeePicker from "../../components/EmployeePicker.vue";
 
 const props = defineProps<{ id: string | number }>();
 const router = useRouter();
@@ -22,7 +23,7 @@ const busy    = ref(false);
 
 const showAssign  = ref(false);
 const assignError = ref("");
-const assignForm  = ref({ employee_id: "" as string | number, assigned_date: "" });
+const assignForm  = ref<{ employee_id: number | null; assigned_date: string }>({ employee_id: null, assigned_date: "" });
 
 function org() { return currentOrgSlug.value; }
 
@@ -47,7 +48,7 @@ async function assign() {
     const res = await api<{ data: Asset }>("POST", `/api/v1/assets/${props.id}/assign`, {
       org: org(),
       body: {
-        employee_id: Number(assignForm.value.employee_id),
+        employee_id: assignForm.value.employee_id,
         assigned_date: assignForm.value.assigned_date || null,
       },
     });
@@ -76,7 +77,7 @@ async function release(status: string) {
 }
 
 function openAssign() {
-  assignForm.value = { employee_id: "", assigned_date: new Date().toISOString().slice(0, 10) };
+  assignForm.value = { employee_id: null, assigned_date: new Date().toISOString().slice(0, 10) };
   assignError.value = "";
   showAssign.value = true;
 }
@@ -179,9 +180,10 @@ onMounted(load);
     <div v-if="showAssign" class="overlay" @click.self="showAssign = false">
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Assign asset">
         <h2>Assign {{ asset?.name }}</h2>
-        <label class="field"><span>Employee ID</span>
-          <input v-model="assignForm.employee_id" type="number" class="control" placeholder="e.g. 12" />
-        </label>
+        <div class="field">
+          <span>Employee</span>
+          <EmployeePicker v-model="assignForm.employee_id" />
+        </div>
         <label class="field"><span>Assigned from</span>
           <input v-model="assignForm.assigned_date" type="date" class="control" />
         </label>

@@ -340,6 +340,12 @@ onMounted(async () => { await Promise.all([loadRoles(), loadOptions()]); });
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Assign role">
         <h2>Assign {{ selected?.display_name }}</h2>
 
+        <!--
+          A user id, not an employee id. Role assignments target the login
+          identity; EmployeePicker resolves employee records, and until the two
+          are unified they are separate ids. Using the picker here would assign
+          the role to whichever user happened to share that number.
+        -->
         <label class="field">
           <span>Identity (user ID)</span>
           <input v-model="grantForm.user_id" type="number" class="control" placeholder="e.g. 12" />

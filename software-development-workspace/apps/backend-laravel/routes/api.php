@@ -102,6 +102,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/me',                [EmployeeController::class, 'me']);
         Route::put('/me/contact',        [EmployeeController::class, 'updateOwnContact']);
 
+        // Typeahead lookup. Also registered before /{employee} — a literal
+        // segment declared after a route parameter is never reached.
+        Route::get('/search',            [EmployeeController::class, 'search']);
+
         Route::get('/{employee}',        [EmployeeController::class, 'show']);
         Route::put('/{employee}',        [EmployeeController::class, 'update']);
         Route::post('/{employee}/exit',  [EmployeeController::class, 'exit']);
