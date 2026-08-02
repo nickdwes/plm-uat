@@ -142,9 +142,7 @@ class AzureSsoController extends Controller
                     'id'            => $org->id,
                     'name'          => $org->name,
                     'slug'          => $org->slug,
-                    'logo_url'      => $org->logo_path
-                        ? Storage::url($org->logo_path)
-                        : null,
+                    'logo_url'      => $org->logoUrl(),
                     'primary_color' => $org->primary_color,
                 ])
                 ->values()

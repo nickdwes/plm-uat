@@ -27,9 +27,7 @@ class OrganizationController extends Controller
                 'address', 'is_active', 'logo_path', 'primary_color',
             ])
             ->map(fn ($org) => array_merge($org->makeHidden('logo_path')->toArray(), [
-                'logo_url' => $org->logo_path
-                    ? \Illuminate\Support\Facades\Storage::url($org->logo_path)
-                    : null,
+                'logo_url' => $org->logoUrl(),
             ]));
 
         return response()->json(['data' => $orgs]);
@@ -61,9 +59,7 @@ class OrganizationController extends Controller
                     'address', 'is_active', 'primary_color',
                 ]),
                 [
-                    'logo_url'   => $organization->logo_path
-                        ? \Illuminate\Support\Facades\Storage::url($organization->logo_path)
-                        : null,
+                    'logo_url'   => $organization->logoUrl(),
                     'headcount'  => $organization->headcount(),
                 ]
             ),
@@ -145,7 +141,7 @@ class OrganizationController extends Controller
         return response()->json([
             'data'    => array_merge(
                 $fresh->only(['id', 'name', 'slug', 'legal_name', 'industry', 'country', 'currency', 'primary_email', 'primary_phone', 'address', 'is_active', 'primary_color']),
-                ['logo_url' => $fresh->logo_path ? \Illuminate\Support\Facades\Storage::url($fresh->logo_path) : null]
+                ['logo_url' => $fresh->logoUrl()]
             ),
             'message' => 'Organisation updated.',
         ]);
@@ -176,7 +172,7 @@ class OrganizationController extends Controller
         $organization->update(['logo_path' => $path]);
 
         return response()->json([
-            'logo_url'      => \Illuminate\Support\Facades\Storage::url($path),
+            'logo_url'      => $organization->logoUrl(),
             'primary_color' => $organization->primary_color,
             'message'       => 'Logo updated successfully.',
         ]);

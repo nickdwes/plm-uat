@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 class Organization extends Model
 {
@@ -32,6 +33,24 @@ class Organization extends Model
         'settings'  => 'array',
         'is_active' => 'boolean',
     ];
+
+    /**
+     * Absolute URL for the org logo, or null when none is set.
+     *
+     * Logos are written to the `public` disk, so they must be read from it too.
+     * Call sites previously used the facade's default disk, which is `local`.
+     * That disk configures no `url`, so Laravel fell back to a root-relative
+     * `/storage/...` — correct only when the API and the SPA share an origin.
+     * They do not, so every logo resolved against the frontend host and 404'd.
+     *
+     * Resolving it here means the disk is named once rather than at each caller.
+     */
+    public function logoUrl(): ?string
+    {
+        return $this->logo_path
+            ? Storage::disk('public')->url($this->logo_path)
+            : null;
+    }
 
     // ── Relationships ─────────────────────────────────────────────────────────
 

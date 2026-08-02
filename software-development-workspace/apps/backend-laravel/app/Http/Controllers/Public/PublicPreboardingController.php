@@ -146,9 +146,7 @@ class PublicPreboardingController extends Controller
             'status'                 => $record->status,
             'organization'           => $org ? [
                 'name'          => $org->name,
-                'logo_url'      => $org->logo_path
-                    ? \Illuminate\Support\Facades\Storage::url($org->logo_path)
-                    : null,
+                'logo_url'      => $org->logoUrl(),
                 'primary_color' => $org->primary_color,
                 'country'       => $org->country,
             ] : null,
