@@ -59,6 +59,48 @@ return [
 
         // Private preboarding attachments — served only through PreboardingController.
         /*
+         * ── Azure Blob Storage ───────────────────────────────────────────────
+         *
+         * One disk per document class, each mapped to its own container. The
+         * containers are separate rather than one container with prefixes so
+         * that access and retention can differ: CVs should expire, employee
+         * records have statutory minimums, and Azure scopes both RBAC and
+         * lifecycle rules at the container.
+         *
+         * These sit alongside the local disks rather than replacing them. The
+         * cutover is a one-line change per disk once uploads have been verified
+         * against the real account, which keeps "does Azure work" and "is the
+         * application broken" as separate questions.
+         */
+        'azure_candidate_docs' => [
+            'driver'    => 'azure',
+            'account'   => env('AZURE_STORAGE_ACCOUNT'),
+            'container' => 'hrms-candidate-docs',
+            'throw'     => true,
+        ],
+
+        'azure_employee_documents' => [
+            'driver'    => 'azure',
+            'account'   => env('AZURE_STORAGE_ACCOUNT'),
+            'container' => 'hrms-employee-documents',
+            'throw'     => true,
+        ],
+
+        'azure_preboarding_docs' => [
+            'driver'    => 'azure',
+            'account'   => env('AZURE_STORAGE_ACCOUNT'),
+            'container' => 'hrms-preboarding-docs',
+            'throw'     => true,
+        ],
+
+        'azure_training_evidence' => [
+            'driver'    => 'azure',
+            'account'   => env('AZURE_STORAGE_ACCOUNT'),
+            'container' => 'hrms-training-evidence',
+            'throw'     => true,
+        ],
+
+        /*
          * Candidate CVs and application attachments.
          *
          * These were on the `public` disk, which is exposed by the storage
