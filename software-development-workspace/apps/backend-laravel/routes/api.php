@@ -37,6 +37,7 @@ use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\TravelRequestController;
+use App\Http\Controllers\Travel\TravelSettingsController;
 use App\Http\Controllers\Authorization\RoleController;
 use App\Http\Controllers\Goals\GoalController;
 use App\Http\Controllers\Roster\HandoverController;
@@ -224,6 +225,34 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // property of the request, not something the caller states — naming it
         // would let a later approver decide an earlier stage.
         Route::post('/{travelRequest}/decision', [TravelRequestController::class, 'decide']);
+    });
+
+    // ── Travel configuration ──────────────────────────────────────────────────
+    //
+    // Destinations, expense categories, the allowance rate card and the
+    // approval chain. Gated on travel.manage_rates, held by Finance.
+    Route::prefix('travel/settings')->group(function () {
+        Route::get('/destinations',                 [TravelSettingsController::class, 'destinations']);
+        Route::post('/destinations',                [TravelSettingsController::class, 'storeDestination']);
+        Route::put('/destinations/{destination}',   [TravelSettingsController::class, 'updateDestination']);
+        Route::delete('/destinations/{destination}',[TravelSettingsController::class, 'destroyDestination']);
+
+        Route::get('/categories',              [TravelSettingsController::class, 'categories']);
+        Route::post('/categories',             [TravelSettingsController::class, 'storeCategory']);
+        Route::put('/categories/{category}',   [TravelSettingsController::class, 'updateCategory']);
+        Route::delete('/categories/{category}',[TravelSettingsController::class, 'destroyCategory']);
+
+        // Rates are superseded rather than edited: a request approved in March
+        // must still show March's rates in November.
+        Route::get('/rates',           [TravelSettingsController::class, 'rates']);
+        Route::post('/rates',          [TravelSettingsController::class, 'storeRate']);
+        Route::put('/rates/{rate}',    [TravelSettingsController::class, 'updateRate']);
+        Route::delete('/rates/{rate}', [TravelSettingsController::class, 'destroyRate']);
+
+        // Saved as a set: the chain only makes sense whole, and saving stage
+        // by stage can leave it briefly empty.
+        Route::get('/approval-stages',  [TravelSettingsController::class, 'stages']);
+        Route::put('/approval-stages',  [TravelSettingsController::class, 'saveStages']);
     });
 
     // ── Assets ────────────────────────────────────────────────────────────────

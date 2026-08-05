@@ -244,6 +244,13 @@ watch(() => route.name, () => {
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Operations</div>
 
+      <router-link :to="{ name: 'travel-settings' }" :class="['nav-item', { active: isActive('travel') }]">
+        <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.5 11.5l15-5-5 15-2.5-6.5-7.5-3.5z" />
+        </svg>
+        <span>Travel</span>
+      </router-link>
       <router-link :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 10a1 1 0 00-1 1 1 1 0 001 1h10a1 1 0 001-1 1 1 0 00-1-1H5z" />
