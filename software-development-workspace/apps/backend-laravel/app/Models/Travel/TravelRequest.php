@@ -120,6 +120,18 @@ class TravelRequest extends Model
         return $this->hasMany(TravelItineraryItem::class)->orderBy('starts_on')->orderBy('position');
     }
 
+    /**
+     * The journeys this trip is made of.
+     *
+     * One per mode, because a real trip is several — a flight to Kampala and
+     * taxis once there. A single transport_mode column forces a choice that
+     * does not exist.
+     */
+    public function transportLegs(): HasMany
+    {
+        return $this->hasMany(TravelTransportLeg::class);
+    }
+
     public function bookings(): HasMany
     {
         return $this->hasMany(TravelBooking::class)->orderBy('booking_date');
