@@ -42,12 +42,21 @@ class TravelConfigurationSeeder extends Seeder
      */
     private const CATEGORIES = [
         // name, evidence_type, evidence_provider, rate, unit
-        ['Flights',       'receipt',         'finance',   35000, 'per_trip'],
         ['Accommodation', 'receipt',         'requestor', 12000, 'per_day'],
-        ['Transport',     'receipt',         'requestor',  3000, 'per_day'],
         ['Per diem',      'acknowledgement', 'requestor',  4500, 'per_day'],
         ['Incidentals',   'receipt',         'either',     5000, 'per_trip'],
     ];
+
+    /*
+     * Transport and flights are deliberately absent.
+     *
+     * Both are answered by a transport leg — distance, fuel, mode, ticket —
+     * rather than by a grade allowance. Seeding them here would recreate the
+     * double-count the transport calculator exists to remove.
+     *
+     * What is left is what should be grade-priced: a unit head does get a
+     * better hotel; they do not get a longer road.
+     */
 
     private const DESTINATIONS = [
         ['Nairobi',  'KE', false],
