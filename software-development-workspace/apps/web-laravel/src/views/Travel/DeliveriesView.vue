@@ -40,7 +40,9 @@ async function load() {
     // delivery slice of it.
     const res = await api<{ data: Row[] }>("GET", "/api/v1/travel-requests", {
       org: currentOrgSlug.value,
-      params: { per_page: 100 },
+      // Asked for as deliveries rather than filtered in the browser: a page
+      // of travel requests would otherwise arrive and be silently discarded.
+      params: { travel_type: "delivery", per_page: 100 },
     });
     rows.value = res.data;
   } catch (e) {
@@ -84,7 +86,7 @@ onMounted(load);
         <h1 class="dl-title">Deliveries</h1>
         <p class="dl-sub">Consignments, who is carrying them, and whether they arrived</p>
       </div>
-      <button class="btn-primary" @click="router.push({ name: 'travel-request-new' })">
+      <button class="btn-primary" @click="router.push({ name: 'delivery-new' })">
         + Delivery request
       </button>
     </header>
@@ -95,10 +97,10 @@ onMounted(load);
     <div v-else-if="rows.length === 0" class="dl-empty">
       <h2 class="dl-empty-title">No deliveries yet</h2>
       <p class="dl-empty-sub">
-        Raise a request and tick <strong>this journey delivers an item</strong> on the
-        transport step — that is what makes it a delivery and routes it to finance.
+        A delivery records what is being moved, who is carrying it, and the note it is
+        signed for on. It goes to finance for approval rather than to a line manager.
       </p>
-      <button class="btn-primary" @click="router.push({ name: 'travel-request-new' })">
+      <button class="btn-primary" @click="router.push({ name: 'delivery-new' })">
         + Delivery request
       </button>
     </div>

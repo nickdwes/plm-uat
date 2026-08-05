@@ -247,7 +247,17 @@ class TravelRequestService
         $items = (float) $request->items->sum('amount_claimed');
         $legs  = (float) $request->transportLegs->sum('estimated_cost');
 
+        /*
+         * A delivery stays a delivery.
+         *
+         * The type routes the request — a delivery goes to finance instead of
+         * a line manager — so it may be promoted by what the legs show but
+         * never quietly withdrawn. Adding an international leg to a
+         * consignment would otherwise move it back to the traveller's own
+         * manager for approval.
+         */
         $type = match (true) {
+            $request->travel_type === 'delivery' => 'delivery',
             $request->transportLegs->contains(fn ($l) => $l->is_delivery || $l->travel_type === 'delivery') => 'delivery',
             $request->transportLegs->contains(fn ($l) => $l->travel_type === 'international')               => 'international',
             default => $request->travel_type ?? 'local',

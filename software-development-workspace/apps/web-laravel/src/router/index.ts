@@ -31,6 +31,7 @@ import TravelRequestWizard from "../views/Travel/TravelRequestWizard.vue";
 import TravelRequestDetailView from "../views/Travel/TravelRequestDetailView.vue";
 import DeliveriesView from "../views/Travel/DeliveriesView.vue";
 import DeliveryDetailView from "../views/Travel/DeliveryDetailView.vue";
+import DeliveryWizard from "../views/Travel/DeliveryWizard.vue";
 import AssetsView          from "../views/Asset/AssetsView.vue";
 import AssetDetailView     from "../views/Asset/AssetDetailView.vue";
 
@@ -105,6 +106,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/travel/new",      name: "travel-request-new", component: TravelRequestWizard },
   { path: "/travel/:id",      name: "travel-request",     component: TravelRequestDetailView, props: true },
   { path: "/deliveries",      name: "deliveries",        component: DeliveriesView },
+  { path: "/deliveries/new",  name: "delivery-new",      component: DeliveryWizard },
   { path: "/deliveries/:id",  name: "delivery",          component: DeliveryDetailView, props: true },
   { path: "/travel/settings", name: "travel-settings",   component: TravelSettingsView },
   { path: "/assets",          name: "assets",        component: AssetsView },

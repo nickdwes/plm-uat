@@ -50,7 +50,9 @@ class TravelRequestController extends Controller
             });
         }
 
-        foreach (['status', 'employee_id', 'account_id', 'travel_destination_id'] as $filter) {
+        // travel_type included so the deliveries screen asks for deliveries
+        // rather than filtering a full list in the browser.
+        foreach (['status', 'travel_type', 'employee_id', 'account_id', 'travel_destination_id'] as $filter) {
             if ($request->filled($filter)) {
                 $q->where($filter, $request->input($filter));
             }
