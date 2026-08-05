@@ -36,6 +36,7 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Asset\AssetController;
+use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
 use App\Http\Controllers\Travel\TravelReconciliationController;
 use App\Http\Controllers\Travel\TravelSettingsController;
@@ -249,6 +250,22 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{travelRequest}/legs',       [TravelRequestController::class, 'storeLeg']);
         Route::put('/{travelRequest}/legs/{leg}',  [TravelRequestController::class, 'updateLeg']);
         Route::delete('/{travelRequest}/legs/{leg}',[TravelRequestController::class, 'destroyLeg']);
+
+        // ── Delivery ──────────────────────────────────────────────────────
+        //
+        // What is in the vehicle, who is carrying it, and the note it closes
+        // against. Receiving and the note arrive after approval, so those are
+        // gated on seeing the delivery rather than editing it.
+        Route::post('/{travelRequest}/manifest',        [DeliveryController::class, 'storeItem']);
+        Route::put('/{travelRequest}/manifest/{item}',  [DeliveryController::class, 'updateItem']);
+        Route::delete('/{travelRequest}/manifest/{item}',[DeliveryController::class, 'destroyItem']);
+
+        Route::post('/{travelRequest}/couriers',            [DeliveryController::class, 'storeCourier']);
+        Route::delete('/{travelRequest}/couriers/{courier}',[DeliveryController::class, 'destroyCourier']);
+
+        Route::post('/{travelRequest}/attachments', [DeliveryController::class, 'storeAttachment']);
+        Route::get('/{travelRequest}/attachments/{attachment}/download', [DeliveryController::class, 'downloadAttachment']);
+        Route::get('/{travelRequest}/delivery-gaps', [DeliveryController::class, 'outstanding']);
 
         Route::post('/{travelRequest}/submit', [TravelRequestController::class, 'submit']);
 

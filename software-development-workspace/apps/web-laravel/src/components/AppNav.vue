@@ -31,7 +31,7 @@ async function logout(): Promise<void> {
 const employeesOpen  = ref(isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info');
 const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin');
 const performanceOpen = ref(isActive('performance') || isActive('goals') || route.name === 'okr-cycles');
-const travelOpen      = ref(isActive('travel'));
+const travelOpen      = ref(isActive('travel') || isActive('deliver'));
 const trainingOpen   = ref(isActive('training'));
 const vendorOpen     = ref(isActive('vendor'));
 const orgOpen        = ref(isActive('org'));
@@ -266,6 +266,14 @@ watch(() => route.name, () => {
             <path d="M2.5 11.5l15-5-5 15-2.5-6.5-7.5-3.5z" />
           </svg>
           Travel Requests
+        </router-link>
+        <router-link :to="{ name: 'deliveries' }" :class="['nav-item', 'nav-child', { active: route.name === 'deliveries' || route.name === 'delivery' }]">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 6.5l7.5-3.5 7.5 3.5v7l-7.5 3.5-7.5-3.5v-7z" />
+            <path d="M2.5 6.5L10 10m0 0l7.5-3.5M10 10v7" />
+          </svg>
+          Deliveries
         </router-link>
         <router-link :to="{ name: 'travel-settings' }" :class="['nav-item', 'nav-child', { active: route.name === 'travel-settings' }]">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"

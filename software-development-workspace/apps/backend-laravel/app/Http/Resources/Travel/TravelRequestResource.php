@@ -45,6 +45,15 @@ class TravelRequestResource extends JsonResource
             'items'     => TravelRequestItemResource::collection($this->whenLoaded('items')),
             'travel_type'    => $this->travel_type,
             'transport_legs' => $this->whenLoaded('transportLegs'),
+            'delivery_reference' => $this->delivery_reference,
+            'delivery_note_attachment_id' => $this->delivery_note_attachment_id,
+            'manifest'    => $this->whenLoaded('manifest'),
+            'attachments' => $this->whenLoaded('attachments'),
+            'couriers'    => $this->whenLoaded('couriers', fn () => $this->couriers->map(fn ($c) => [
+                'id'         => $c->id,
+                'employee'   => ['id' => $c->employee?->id, 'name' => $c->employee?->full_name],
+                'is_primary' => $c->is_primary,
+            ])),
             'itinerary' => $this->whenLoaded('itinerary'),
             'bookings'  => $this->whenLoaded('bookings'),
             'activity'  => $this->whenLoaded('activity', fn () => $this->activity->map(fn ($a) => [
