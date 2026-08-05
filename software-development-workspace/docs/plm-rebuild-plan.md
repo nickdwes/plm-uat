@@ -239,37 +239,87 @@ Phase D, not during it.
 | Question | Answer |
 | --- | --- |
 | Customer scope | Per organisation |
-| Approval chain | Two stages: HOD (head of department), then Finance |
+| Approval chain | Four stages: HOD, function head, finance officer, CFO |
 | Allowance model | Rate card by grade, destination and activity, effective-dated |
 | Legacy data migration | Deferred |
 
-The approval chain is **shorter than the legacy system's**, not longer. The old
-system ran HOD → CTO → Finance → CFO on all 102 requests; the replacement drops
-CTO and CFO. That is a deliberate reduction, and worth recording as such so it
-is not later mistaken for an incomplete port.
+### The chain
+
+An engineer raises a request. It is approved by the head of their department,
+then by the chief manager of the function, then assessed by a finance officer,
+and finally approved by the CFO before disbursement.
+
+That is the same four stages the legacy system ran, and the legacy data
+supports it: all 102 requests passed through all four without exception. An
+earlier draft of this document recorded two stages; that was a misreading, and
+the four-stage chain stands.
+
+Sequence and what resolves each approver:
+
+| # | Stage | Approver resolves from |
+| --- | --- | --- |
+| 1 | Department head | `departments.lead_employee_id` |
+| 2 | Function head | **not yet modelled — see below** |
+| 3 | Finance officer | permission, organisation scope |
+| 4 | CFO | permission, organisation scope |
+
+Stages 1 and 2 are structural — they follow where the requester sits. Stages 3
+and 4 are role-based, so they follow the permission catalogue rather than the
+named approver lists the legacy kept (`travel_r_cfo_list`,
+`travel_r_cto_list`, `travel_r_finance_list`), one of which was empty while its
+approval column was fully populated — a list that had already drifted from what
+the system actually did.
+
+Stages 3 and 4 need distinct permissions, because "assessed by finance" and
+"approved by the CFO" are different authorities that must not collapse into
+one. The catalogue currently has a single `travel.approve`; it needs splitting:
+
+```
+travel.approve            line approval  (stages 1-2, resolved structurally)
+travel.assess_finance     stage 3
+travel.approve_executive  stage 4
+```
+
+Without that split, anyone who can approve a trip can also disburse it, which
+is the control the four-stage chain exists to prevent.
+
+### Two gaps to close before this can route
+
+**Function heads are not modelled.** `org_functional_units` exists with 2 rows
+but has no head or lead column — unlike `departments`, which has
+`lead_employee_id`. Stage 2 has nobody to route to until that column is added.
+
+**The department-to-function link is mostly unset.** Only **3 of 17**
+departments have `functional_unit_id` populated. For the other 14, stage 2
+cannot be resolved at all. That is a data problem rather than a schema one, but
+it will surface as requests stuck with no approver, so it needs filling before
+Travel goes live rather than after.
+
+Both are small, and both are invisible until the first request routes.
 
 ### Approvals as rows
 
 ```
 travel_approvals
   travel_request_id
-  stage                 hod | finance
-  sequence              1, 2
+  stage                 department_head | function_head | finance | executive
+  sequence              1, 2, 3, 4
   approver_employee_id
   status                pending | approved | rejected
   comment
   decided_at
 ```
 
-The legacy encoded four stages as sixteen columns on the request. Storing them
-as rows means changing the chain — adding a stage, reordering, making one
-conditional on amount — is configuration rather than a migration. Given the
-chain has just changed once, it will change again.
+The legacy encoded the four stages as sixteen columns on the request. Storing
+them as rows means changing the chain — adding a stage, reordering, or making
+one conditional on amount — is configuration rather than a migration. Rows also
+make the common ask answerable: where is this request, and who is it waiting
+on.
 
-The HOD approver resolves from `departments.lead_employee_id` for the
-requester's department, which already exists. Finance resolves from the
-permission catalogue rather than a named list, so it follows role assignment
-like everything else.
+A threshold rule is worth considering here rather than later: sending a small
+domestic trip through all four stages is what makes approval chains get
+bypassed informally. The structure supports skipping stages by amount without
+any schema change.
 
 ### The rate card
 
