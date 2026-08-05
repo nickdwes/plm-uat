@@ -116,6 +116,18 @@ return [
         ],
 
         /*
+         * Database backups. Written by infra/azure/backup-database.sh, read
+         * here only so `backup:check` can tell whether last night's dump
+         * actually arrived.
+         */
+        'azure_db_backups' => [
+            'driver'    => 'azure',
+            'account'   => env('AZURE_STORAGE_ACCOUNT'),
+            'container' => 'hrms-db-backups',
+            'throw'     => true,
+        ],
+
+        /*
          * Candidate CVs and application attachments.
          *
          * These were on the `public` disk, which is exposed by the storage

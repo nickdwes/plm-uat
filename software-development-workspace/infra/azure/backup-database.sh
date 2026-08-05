@@ -60,6 +60,21 @@ done
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 
+# Raise an alert for any unplanned exit.
+#
+# Without this a failure only reaches a log file nobody reads: cron mails the
+# local user, which on this host goes nowhere. `set -e` means most failures
+# leave through here rather than through any explicit error path, so the trap
+# is the only place that catches all of them.
+BACKUP_STAGE="starting"
+alert_on_failure_with() {
+  local code="$1"
+  docker exec hrms-backend php artisan backup:check \
+    --failed="The backup script exited with status ${code} during: ${BACKUP_STAGE}" \
+    >/dev/null 2>&1 || echo "backup failed AND the alert could not be sent" >&2
+}
+# (exit handler installed below, once the paths it cleans up are known)
+
 # Two backups running at once would interleave writes to the same paths and
 # double the load on a live database.
 exec 9>"${WORKDIR}/.backup.lock"
@@ -82,7 +97,19 @@ SUMFILE="${WORKDIR}/${BASE}.sha256"
 # Whatever happens, do not leave a plaintext copy of every employee record
 # lying on the host.
 cleanup() { rm -f "$DUMP" "$GLOBALS" "$SUMFILE"; }
-trap cleanup EXIT
+
+# Scratch database, set only while a restore test is in flight.
+SCRATCH=""
+
+on_exit() {
+  local code=$?
+  [[ -n "$SCRATCH" ]] && docker exec "$PG_CONTAINER" psql -U "$DB_USER" -d postgres -q \
+    -c "DROP DATABASE IF EXISTS ${SCRATCH};" >/dev/null 2>&1
+  cleanup
+  [[ $code -ne 0 ]] && alert_on_failure_with "$code"
+  return 0
+}
+trap on_exit EXIT
 
 # ── 1. Dump ──────────────────────────────────────────────────────────────────
 #
@@ -90,6 +117,7 @@ trap cleanup EXIT
 # application image ships pg_dump 18 against a 16.13 server; it can read the
 # older server, but produces a dump aimed at 18 that may not restore into 16 —
 # which would only be discovered during a recovery.
+BACKUP_STAGE="dumping the database"
 say "Dumping $DB_NAME"
 docker exec "$PG_CONTAINER" pg_dump -U "$DB_USER" -d "$DB_NAME" \
   --format=custom --compress=9 --no-owner --no-privileges > "$DUMP"
@@ -108,16 +136,16 @@ printf '   sha256  %s\n' "$(cat "$SUMFILE")"
 
 # ── 2. Restore test ──────────────────────────────────────────────────────────
 if [[ "$VERIFY" -eq 1 ]]; then
-  say "Restore test"
+  BACKUP_STAGE="restore test"
+say "Restore test"
   # Lowercased: Postgres folds unquoted identifiers, so a name containing the
   # timestamp's T and Z would be created lowercase and then not be found by a
   # connection using the original casing.
   SCRATCH="restore_check_$(printf '%s' "$STAMP" | tr '[:upper:]' '[:lower:]')"
 
+  # Setting SCRATCH arms the exit handler to drop it, however this run ends —
+  # a failed restore must not leave a copy of production PII in the cluster.
   docker exec "$PG_CONTAINER" psql -U "$DB_USER" -d postgres -q -c "CREATE DATABASE ${SCRATCH};"
-  # The scratch database is dropped whatever happens next — a failed restore
-  # must not leave a copy of production PII sitting in the cluster.
-  trap 'docker exec "$PG_CONTAINER" psql -U "$DB_USER" -d postgres -q -c "DROP DATABASE IF EXISTS '"${SCRATCH}"';" >/dev/null 2>&1; cleanup' EXIT
 
   docker exec -i "$PG_CONTAINER" pg_restore -U "$DB_USER" -d "$SCRATCH" --no-owner --no-privileges < "$DUMP" >/dev/null 2>&1 || true
 
@@ -142,11 +170,12 @@ fi
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   say "Dry run — dump kept at ${DUMP%.dump}.* and not uploaded"
-  trap - EXIT
+  cleanup() { :; }   # keep the files; the exit handler still reports failures
   exit 0
 fi
 
 # ── 3. Upload ────────────────────────────────────────────────────────────────
+BACKUP_STAGE="uploading to Azure"
 say "Uploading to ${CONTAINER}/${PREFIX}"
 cd "$WORKDIR"
 for f in "$(basename "$DUMP")" "$(basename "$GLOBALS")" "$(basename "$SUMFILE")"; do
@@ -158,6 +187,7 @@ done
 
 # Confirm the bytes that arrived are the bytes that left. Storage acknowledging
 # a write is not the same as the write being intact.
+BACKUP_STAGE="verifying the uploaded copy"
 say "Verifying the uploaded copy"
 "$AZ" storage blob download --account-name "$ACCOUNT" --auth-mode login \
   -c "$CONTAINER" -n "${PREFIX}/$(basename "$DUMP")" -f "verify-${BASE}.dump" -o none
@@ -174,6 +204,7 @@ echo "   checksums match"
 #
 # Deletion is driven by the timestamp in the blob name rather than its
 # last-modified date, so re-uploading an old backup cannot extend its life.
+BACKUP_STAGE="pruning old backups"
 say "Pruning old backups"
 CUTOFF_DAILY=$(date -u -d "-${RETAIN_DAILY_DAYS} days" +%Y%m%d)
 CUTOFF_MONTHLY=$(date -u -d "-${RETAIN_MONTHLY_DAYS} days" +%Y%m%d)
