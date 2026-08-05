@@ -1,12 +1,44 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { authStore } from "../stores/auth";
 import { api } from "../lib/api";
 import { currentOrgSlug } from "../stores/auth";
 import OrgSelector from "./OrgSelector.vue";
 import { useRouter } from "vue-router";
+import { themePreference, resolvedTheme, setTheme, type ThemePreference } from "../stores/theme";
 
 const router = useRouter();
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+//
+// Cycles light -> dark -> system. "System" is in the rotation rather than
+// something you leave and cannot return to: someone who tries the other two
+// out of curiosity should be able to hand the decision back to their OS.
+//
+// A single icon showing one of three states is not self-explanatory, so the
+// label spells out both where you are and what a click does. It is the
+// accessible name as well as the tooltip — an icon-only control that only
+// announces "theme" tells a screen-reader user nothing about its state.
+const THEME_ORDER: ThemePreference[] = ["light", "dark", "system"];
+
+const THEME_LABEL: Record<ThemePreference, string> = {
+  light:  "Light theme",
+  dark:   "Dark theme",
+  system: "Matching your system",
+};
+
+const themeLabel = computed(() => {
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(themePreference.value) + 1) % THEME_ORDER.length];
+  const current = themePreference.value === "system"
+    ? `Matching your system (${resolvedTheme.value})`
+    : THEME_LABEL[themePreference.value];
+  return `${current}. Switch to ${THEME_LABEL[next].toLowerCase()}.`;
+});
+
+function cycleTheme(): void {
+  const i = THEME_ORDER.indexOf(themePreference.value);
+  setTheme(THEME_ORDER[(i + 1) % THEME_ORDER.length]);
+}
 
 // ── Clock In / Out ─────────────────────────────────────────────────────────
 const checkedIn    = ref(false);
@@ -73,6 +105,32 @@ onMounted(loadClockStatus);
       <button class="header-icon-btn" title="Notifications" type="button" @click="router.push({ name: 'notifications' })">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z" />
+        </svg>
+      </button>
+      <!-- Theme -->
+      <button
+        class="header-icon-btn"
+        type="button"
+        :title="themeLabel"
+        :aria-label="themeLabel"
+        @click="cycleTheme"
+      >
+        <!-- Light: sun -->
+        <svg v-if="themePreference === 'light'" viewBox="0 0 20 20" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <circle cx="10" cy="10" r="3.5" />
+          <path d="M10 1.5v2M10 16.5v2M18.5 10h-2M3.5 10h-2M16 4l-1.4 1.4M5.4 14.6L4 16M16 16l-1.4-1.4M5.4 5.4L4 4" />
+        </svg>
+        <!-- Dark: moon -->
+        <svg v-else-if="themePreference === 'dark'" viewBox="0 0 20 20" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+          <path d="M17 11.7A7.5 7.5 0 018.3 3a7.5 7.5 0 108.7 8.7z" />
+        </svg>
+        <!-- System: display -->
+        <svg v-else viewBox="0 0 20 20" fill="none"
+             stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2.5" y="3.5" width="15" height="10" rx="1.5" />
+          <path d="M7 17h6M10 13.5V17" />
         </svg>
       </button>
       <!-- Settings -->
