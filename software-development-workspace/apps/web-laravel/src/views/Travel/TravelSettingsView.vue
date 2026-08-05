@@ -24,6 +24,7 @@ interface Category {
   evidence_type: "none" | "acknowledgement" | "receipt";
   evidence_provider: "requestor" | "finance" | "either";
 }
+interface Grade { id: number; name: string; code: string | null; level: number | null }
 interface Rate {
   id: number;
   travel_expense_category_id: number;
@@ -54,6 +55,7 @@ const success = ref<string | null>(null);
 const destinations = ref<Destination[]>([]);
 const categories   = ref<Category[]>([]);
 const rates        = ref<Rate[]>([]);
+const grades       = ref<Grade[]>([]);
 const stages       = ref<Stage[]>([]);
 const showHistory  = ref(false);
 
@@ -73,18 +75,20 @@ function fail(e: unknown) {
 async function load() {
   loading.value = true;
   try {
-    const [d, c, r, s] = await Promise.all([
+    const [d, c, r, s, g] = await Promise.all([
       api<{ data: Destination[] }>("GET", "/api/v1/travel/settings/destinations", { org: org() }),
       api<{ data: Category[] }>("GET", "/api/v1/travel/settings/categories", { org: org() }),
       api<{ data: Rate[] }>("GET", "/api/v1/travel/settings/rates", {
         org: org(), params: { include_history: showHistory.value ? 1 : 0 },
       }),
       api<{ data: Stage[] }>("GET", "/api/v1/travel/settings/approval-stages", { org: org() }),
+      api<{ data: Grade[] }>("GET", "/api/v1/travel/settings/job-grades", { org: org() }),
     ]);
     destinations.value = d.data;
     categories.value   = c.data;
     rates.value        = r.data;
     stages.value       = seedChain(s.data);
+    grades.value       = g.data;
   } catch (e) { fail(e); } finally { loading.value = false; }
 }
 
@@ -173,6 +177,7 @@ async function retireCategory(c: Category) {
 // ── Rates ───────────────────────────────────────────────────────────────────
 const blankRate = () => ({
   travel_expense_category_id: null as number | null,
+  job_grade_id: null as number | null,
   travel_destination_id: null as number | null,
   amount: "", currency: "KES", unit: "per_day",
   effective_from: new Date().toISOString().slice(0, 10),
@@ -205,6 +210,7 @@ function supersede(rate: Rate) {
   superseding.value = rate;
   newRate.value = {
     travel_expense_category_id: rate.travel_expense_category_id,
+    job_grade_id: rate.job_grade_id,
     travel_destination_id: rate.travel_destination_id,
     amount: rate.amount, currency: rate.currency, unit: rate.unit,
     effective_from: new Date().toISOString().slice(0, 10),
@@ -223,6 +229,11 @@ async function closeRate(rate: Rate) {
 
 const destinationName = (id: number | null) =>
   id ? (destinations.value.find((d) => d.id === id)?.name ?? "—") : "All destinations";
+const gradeName = (id: number | null) =>
+  id ? (grades.value.find((g) => g.id === id)?.name ?? "—") : "All grades";
+
+/** Dates arrive as full timestamps; only the day is meaningful here. */
+const day = (v: string | null) => (v ? String(v).slice(0, 10) : null);
 const categoryName = (id: number) =>
   categories.value.find((c) => c.id === id)?.name ?? "—";
 
@@ -290,8 +301,10 @@ onMounted(load);
       <!-- ── Rates ──────────────────────────────────────────────────────── -->
       <section v-if="tab === 'rates'" class="ts-panel">
         <p class="ts-note">
-          A blank grade or destination means <strong>applies to all</strong>, so one rate can be
-          stated globally and overridden for a few cases. The most specific match wins.
+          A blank grade or destination means <strong>applies to all</strong>. State one rate
+          globally, then add grade- or destination-specific rows above it — the most specific
+          match wins, so a trainee and a unit head can be priced differently without
+          restating every combination.
         </p>
 
         <div class="ts-form">
@@ -310,6 +323,14 @@ onMounted(load);
               <select v-model.number="newRate.travel_expense_category_id" class="control">
                 <option :value="null" disabled>Choose…</option>
                 <option v-for="c in categories.filter(c => c.is_active)" :key="c.id" :value="c.id">{{ c.name }}</option>
+              </select>
+            </label>
+
+            <label class="ts-field">
+              <span>Grade</span>
+              <select v-model.number="newRate.job_grade_id" class="control">
+                <option :value="null">All grades</option>
+                <option v-for="g in grades" :key="g.id" :value="g.id">{{ g.name }}</option>
               </select>
             </label>
 
@@ -353,24 +374,25 @@ onMounted(load);
         <table class="ts-table">
           <thead>
             <tr>
-              <th>Category</th><th>Destination</th><th>Amount</th><th>Per</th>
+              <th>Category</th><th>Grade</th><th>Destination</th><th>Amount</th><th>Per</th>
               <th>In force</th><th></th>
             </tr>
           </thead>
           <tbody>
             <tr v-if="rates.length === 0">
-              <td colspan="6" class="ts-empty">
+              <td colspan="7" class="ts-empty">
                 No rates yet. Nothing can be costed, so no request can be submitted.
               </td>
             </tr>
             <tr v-for="r in rates" :key="r.id" :class="{ 'ts-closed': r.effective_to }">
               <td>{{ r.category?.name ?? categoryName(r.travel_expense_category_id) }}</td>
+              <td>{{ gradeName(r.job_grade_id) }}</td>
               <td>{{ destinationName(r.travel_destination_id) }}</td>
               <td class="ts-amount">{{ r.currency }} {{ Number(r.amount).toLocaleString() }}</td>
               <td>{{ r.unit === "per_day" ? "day" : "trip" }}</td>
               <td>
-                {{ r.effective_from }}
-                <template v-if="r.effective_to"> → {{ r.effective_to }}</template>
+                {{ day(r.effective_from) }}
+                <template v-if="r.effective_to"> → {{ day(r.effective_to) }}</template>
                 <span v-else class="badge">current</span>
               </td>
               <td class="ts-actions">

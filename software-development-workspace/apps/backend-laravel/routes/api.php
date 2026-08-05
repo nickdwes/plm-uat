@@ -269,6 +269,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Rates are superseded rather than edited: a request approved in March
         // must still show March's rates in November.
+        // Grades, so the rate card can be priced by seniority without giving
+        // finance the org-chart permission.
+        Route::get('/job-grades',      [TravelSettingsController::class, 'jobGrades']);
+
         Route::get('/rates',           [TravelSettingsController::class, 'rates']);
         Route::post('/rates',          [TravelSettingsController::class, 'storeRate']);
         Route::put('/rates/{rate}',    [TravelSettingsController::class, 'updateRate']);

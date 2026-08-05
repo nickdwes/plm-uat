@@ -10,6 +10,7 @@ use App\Models\Travel\TravelExpenseCategory;
 use App\Models\Travel\TravelRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -156,6 +157,26 @@ class TravelSettingsController extends Controller
         $category->update(['is_active' => false]);
 
         return response()->json(['message' => 'Category retired.']);
+    }
+
+    /**
+     * Job grades, for pricing the rate card by seniority.
+     *
+     * Served here rather than from the org endpoint, which requires
+     * `departments.view` — a permission finance has no other reason to hold.
+     * Whoever sets what a grade is paid to travel needs to see the grades;
+     * that is not the same as needing to manage the org chart.
+     */
+    public function jobGrades(): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        return response()->json([
+            'data' => DB::table('job_grades')
+                ->where('organization_id', $this->orgId())
+                ->orderBy('level')
+                ->get(['id', 'name', 'code', 'level']),
+        ]);
     }
 
     // ── Allowance rates ───────────────────────────────────────────────────
