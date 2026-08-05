@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Travel;
 
 use App\Http\Controllers\Controller;
+use App\Models\Travel\TransportBusFare;
+use App\Models\Travel\TransportMileageRate;
+use App\Models\Travel\TransportVehicleType;
 use App\Models\Travel\TravelAllowanceRate;
 use App\Models\Travel\TravelApprovalStage;
 use App\Models\Travel\TravelDestination;
@@ -271,6 +274,152 @@ class TravelSettingsController extends Controller
             'effective_from' => ['required', 'date'],
             'effective_to'   => ['nullable', 'date', 'after:effective_from'],
         ]);
+    }
+
+
+    // ── Transport ─────────────────────────────────────────────────────────
+    //
+    // Transport is computed from distance, fuel and mode rather than looked up
+    // against a grade. What is configured here is the arithmetic; the journey
+    // supplies the rest.
+    //
+    // Fuel price is deliberately not here. It is entered per request, because
+    // a pump price held centrally is stale within a week and every journey
+    // would be costed against a number nobody updated.
+
+    public function mileageRates(Request $request): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        $q = TransportMileageRate::orderByDesc('effective_from');
+
+        if (! $request->boolean('include_history')) {
+            $today = now()->toDateString();
+            $q->whereDate('effective_from', '<=', $today)
+              ->where(fn ($w) => $w->whereNull('effective_to')->orWhereDate('effective_to', '>=', $today));
+        }
+
+        return response()->json(['data' => $q->get()]);
+    }
+
+    public function storeMileageRate(Request $request): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        $data = $request->validate([
+            'rate_per_km'    => ['required', 'numeric', 'min:0'],
+            'currency'       => ['sometimes', 'string', 'size:3'],
+            'effective_from' => ['required', 'date'],
+        ]);
+
+        /*
+         * A new rate closes the one it replaces.
+         *
+         * Two rates in force at once would make the calculator pick one
+         * silently, and a reimbursement nobody can reproduce is worse than one
+         * that is merely wrong.
+         */
+        TransportMileageRate::whereNull('effective_to')
+            ->whereDate('effective_from', '<', $data['effective_from'])
+            ->update(['effective_to' => \Carbon\Carbon::parse($data['effective_from'])->subDay()->toDateString()]);
+
+        return response()->json([
+            'data' => TransportMileageRate::create($data + ['organization_id' => $this->orgId()]),
+        ], 201);
+    }
+
+    public function vehicleTypes(): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        return response()->json(['data' => TransportVehicleType::orderBy('name')->get()]);
+    }
+
+    public function storeVehicleType(Request $request): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:120',
+                Rule::unique('transport_vehicle_types', 'name')->where('organization_id', $this->orgId())],
+            // Without this a hired vehicle cannot be costed at all, so it is
+            // worth prompting for even though the schema allows null.
+            'km_per_litre'     => ['nullable', 'numeric', 'min:0.1', 'max:100'],
+            'load_capacity_kg' => ['nullable', 'numeric', 'min:0'],
+            'is_active'        => ['sometimes', 'boolean'],
+        ]);
+
+        return response()->json([
+            'data' => TransportVehicleType::create($data + ['organization_id' => $this->orgId()]),
+        ], 201);
+    }
+
+    public function updateVehicleType(Request $request, TransportVehicleType $vehicleType): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        $data = $request->validate([
+            'name' => ['sometimes', 'string', 'max:120',
+                Rule::unique('transport_vehicle_types', 'name')
+                    ->where('organization_id', $this->orgId())->ignore($vehicleType->id)],
+            'km_per_litre'     => ['nullable', 'numeric', 'min:0.1', 'max:100'],
+            'load_capacity_kg' => ['nullable', 'numeric', 'min:0'],
+            'is_active'        => ['sometimes', 'boolean'],
+        ]);
+
+        $vehicleType->update($data);
+
+        return response()->json(['data' => $vehicleType->fresh()]);
+    }
+
+    public function destroyVehicleType(TransportVehicleType $vehicleType): JsonResponse
+    {
+        $this->authorizeSettings();
+        // Retired, not deleted: legs already costed against it hold a foreign
+        // key and would otherwise show no vehicle at all.
+        $vehicleType->update(['is_active' => false]);
+
+        return response()->json(['message' => 'Vehicle type retired.']);
+    }
+
+    public function busFares(): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        return response()->json(['data' => TransportBusFare::with('destination')->get()]);
+    }
+
+    public function saveBusFare(Request $request): JsonResponse
+    {
+        $this->authorizeSettings();
+
+        $data = $request->validate([
+            'travel_destination_id' => ['required', 'integer',
+                Rule::exists('travel_destinations', 'id')->where('organization_id', $this->orgId())],
+            'round_trip_amount' => ['required', 'numeric', 'min:0'],
+            'currency'          => ['sometimes', 'string', 'size:3'],
+            'is_active'         => ['sometimes', 'boolean'],
+        ]);
+
+        // One fare per route, so setting it again replaces it. A published
+        // price has no history worth keeping the way a rate card does.
+        $fare = TransportBusFare::updateOrCreate(
+            [
+                'organization_id'       => $this->orgId(),
+                'travel_destination_id' => $data['travel_destination_id'],
+            ],
+            $data,
+        );
+
+        return response()->json(['data' => $fare->load('destination')]);
+    }
+
+    public function destroyBusFare(TransportBusFare $busFare): JsonResponse
+    {
+        $this->authorizeSettings();
+        $busFare->delete();
+
+        return response()->json(['message' => 'Fare removed.']);
     }
 
     // ── Approval stages ───────────────────────────────────────────────────

@@ -286,6 +286,20 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Saved as a set: the chain only makes sense whole, and saving stage
         // by stage can leave it briefly empty.
+        // Transport: the arithmetic, not the journey. Fuel price is entered
+        // per request because a pump price held centrally is stale in a week.
+        Route::get('/mileage-rates',   [TravelSettingsController::class, 'mileageRates']);
+        Route::post('/mileage-rates',  [TravelSettingsController::class, 'storeMileageRate']);
+
+        Route::get('/vehicle-types',                 [TravelSettingsController::class, 'vehicleTypes']);
+        Route::post('/vehicle-types',                [TravelSettingsController::class, 'storeVehicleType']);
+        Route::put('/vehicle-types/{vehicleType}',   [TravelSettingsController::class, 'updateVehicleType']);
+        Route::delete('/vehicle-types/{vehicleType}',[TravelSettingsController::class, 'destroyVehicleType']);
+
+        Route::get('/bus-fares',            [TravelSettingsController::class, 'busFares']);
+        Route::post('/bus-fares',           [TravelSettingsController::class, 'saveBusFare']);
+        Route::delete('/bus-fares/{busFare}',[TravelSettingsController::class, 'destroyBusFare']);
+
         Route::get('/approval-stages',  [TravelSettingsController::class, 'stages']);
         Route::put('/approval-stages',  [TravelSettingsController::class, 'saveStages']);
     });

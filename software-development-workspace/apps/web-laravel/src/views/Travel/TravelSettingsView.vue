@@ -16,7 +16,7 @@ import { ref, computed, onMounted } from "vue";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 
-type Tab = "rates" | "destinations" | "categories" | "chain";
+type Tab = "rates" | "transport" | "destinations" | "categories" | "chain";
 
 interface Destination { id: number; name: string; country: string | null; is_international: boolean; is_active: boolean }
 interface Category {
@@ -34,6 +34,9 @@ interface Rate {
   effective_from: string; effective_to: string | null;
   category?: { id: number; name: string };
 }
+interface MileageRate { id: number; rate_per_km: string; currency: string; effective_from: string; effective_to: string | null }
+interface VehicleType { id: number; name: string; km_per_litre: string | null; load_capacity_kg: string | null; is_active: boolean }
+interface BusFare { id: number; travel_destination_id: number; round_trip_amount: string; currency: string; destination?: { id: number; name: string } }
 interface Stage {
   stage: string; sequence: number;
   required_above_amount: string | null; currency: string; is_active: boolean;
@@ -56,6 +59,9 @@ const destinations = ref<Destination[]>([]);
 const categories   = ref<Category[]>([]);
 const rates        = ref<Rate[]>([]);
 const grades       = ref<Grade[]>([]);
+const mileageRates = ref<MileageRate[]>([]);
+const vehicleTypes = ref<VehicleType[]>([]);
+const busFares     = ref<BusFare[]>([]);
 const stages       = ref<Stage[]>([]);
 const showHistory  = ref(false);
 
@@ -75,7 +81,7 @@ function fail(e: unknown) {
 async function load() {
   loading.value = true;
   try {
-    const [d, c, r, s, g] = await Promise.all([
+    const [d, c, r, s, g, m, v, b] = await Promise.all([
       api<{ data: Destination[] }>("GET", "/api/v1/travel/settings/destinations", { org: org() }),
       api<{ data: Category[] }>("GET", "/api/v1/travel/settings/categories", { org: org() }),
       api<{ data: Rate[] }>("GET", "/api/v1/travel/settings/rates", {
@@ -83,12 +89,18 @@ async function load() {
       }),
       api<{ data: Stage[] }>("GET", "/api/v1/travel/settings/approval-stages", { org: org() }),
       api<{ data: Grade[] }>("GET", "/api/v1/travel/settings/job-grades", { org: org() }),
+      api<{ data: MileageRate[] }>("GET", "/api/v1/travel/settings/mileage-rates", { org: org() }),
+      api<{ data: VehicleType[] }>("GET", "/api/v1/travel/settings/vehicle-types", { org: org() }),
+      api<{ data: BusFare[] }>("GET", "/api/v1/travel/settings/bus-fares", { org: org() }),
     ]);
     destinations.value = d.data;
     categories.value   = c.data;
     rates.value        = r.data;
     stages.value       = seedChain(s.data);
     grades.value       = g.data;
+    mileageRates.value = m.data;
+    vehicleTypes.value = v.data;
+    busFares.value     = b.data;
   } catch (e) { fail(e); } finally { loading.value = false; }
 }
 
@@ -237,6 +249,79 @@ const day = (v: string | null) => (v ? String(v).slice(0, 10) : null);
 const categoryName = (id: number) =>
   categories.value.find((c) => c.id === id)?.name ?? "—";
 
+// ── Transport ───────────────────────────────────────────────────────────────
+const newMileage = ref({ rate_per_km: "", effective_from: new Date().toISOString().slice(0, 10) });
+const newVehicle = ref({ name: "", km_per_litre: "", load_capacity_kg: "" });
+const newFare    = ref({ travel_destination_id: null as number | null, round_trip_amount: "" });
+
+const currentMileage = computed(() => mileageRates.value.find((r) => !r.effective_to) ?? null);
+
+async function saveMileageRate() {
+  if (!newMileage.value.rate_per_km) return;
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/travel/settings/mileage-rates", { org: org(), body: newMileage.value });
+    newMileage.value = { rate_per_km: "", effective_from: new Date().toISOString().slice(0, 10) };
+    notify("Mileage rate set. The previous one is closed and kept.");
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+async function addVehicleType() {
+  if (!newVehicle.value.name.trim()) return;
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/travel/settings/vehicle-types", {
+      org: org(),
+      body: {
+        name: newVehicle.value.name,
+        km_per_litre: newVehicle.value.km_per_litre || null,
+        load_capacity_kg: newVehicle.value.load_capacity_kg || null,
+      },
+    });
+    newVehicle.value = { name: "", km_per_litre: "", load_capacity_kg: "" };
+    notify("Vehicle type added.");
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+async function saveVehicleType(v: VehicleType) {
+  try {
+    await api("PUT", `/api/v1/travel/settings/vehicle-types/${v.id}`, {
+      org: org(), body: { km_per_litre: v.km_per_litre || null, load_capacity_kg: v.load_capacity_kg || null },
+    });
+    notify(`${v.name} updated.`);
+  } catch (e) { fail(e); }
+}
+
+async function retireVehicleType(v: VehicleType) {
+  if (!confirm(`Retire ${v.name}? Journeys already costed against it keep it.`)) return;
+  try {
+    await api("DELETE", `/api/v1/travel/settings/vehicle-types/${v.id}`, { org: org() });
+    notify("Vehicle type retired.");
+    await load();
+  } catch (e) { fail(e); }
+}
+
+async function saveFare() {
+  if (!newFare.value.travel_destination_id || !newFare.value.round_trip_amount) return;
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/travel/settings/bus-fares", { org: org(), body: newFare.value });
+    newFare.value = { travel_destination_id: null, round_trip_amount: "" };
+    notify("Fare saved.");
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+async function removeFare(f: BusFare) {
+  try {
+    await api("DELETE", `/api/v1/travel/settings/bus-fares/${f.id}`, { org: org() });
+    notify("Fare removed.");
+    await load();
+  } catch (e) { fail(e); }
+}
+
 // ── Approval chain ──────────────────────────────────────────────────────────
 const activeStages = computed(() => stages.value.filter((s) => s.is_active));
 
@@ -293,6 +378,7 @@ onMounted(load);
     <template v-else>
       <nav class="ts-tabs" role="tablist">
         <button :class="['ts-tab', { active: tab === 'rates' }]" @click="tab = 'rates'">Allowance Rates</button>
+        <button :class="['ts-tab', { active: tab === 'transport' }]" @click="tab = 'transport'">Transport</button>
         <button :class="['ts-tab', { active: tab === 'destinations' }]" @click="tab = 'destinations'">Destinations</button>
         <button :class="['ts-tab', { active: tab === 'categories' }]" @click="tab = 'categories'">Expense Categories</button>
         <button :class="['ts-tab', { active: tab === 'chain' }]" @click="tab = 'chain'">Approval Chain</button>
@@ -398,6 +484,134 @@ onMounted(load);
               <td class="ts-actions">
                 <button v-if="!r.effective_to" class="link-btn" @click="supersede(r)">Change</button>
                 <button v-if="!r.effective_to" class="link-btn link-danger" @click="closeRate(r)">Close</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── Transport ──────────────────────────────────────────────────── -->
+      <section v-else-if="tab === 'transport'" class="ts-panel">
+        <p class="ts-note">
+          Transport is worked out from distance, fuel and mode rather than looked up against
+          a grade — a 40&nbsp;km errand and a 600&nbsp;km round trip are not the same claim.
+          What you set here is the arithmetic; the journey supplies the rest.
+          <strong>Fuel price is not set here</strong> — it is entered on each request, because a
+          pump price held centrally is out of date within a week.
+        </p>
+
+        <h2 class="ts-form-title">Mileage rate</h2>
+        <p class="ts-note">
+          Paid per kilometre for self-drive journeys. It covers fuel and wear together, which
+          is why a self-drive claim does not also reimburse fuel.
+        </p>
+
+        <div class="ts-form">
+          <div class="ts-row">
+            <label class="ts-field">
+              <span>Rate per km</span>
+              <input v-model="newMileage.rate_per_km" class="control" type="number" min="0" step="0.01"
+                     :placeholder="currentMileage ? `currently ${Number(currentMileage.rate_per_km).toLocaleString()}` : 'not set'" />
+            </label>
+            <label class="ts-field">
+              <span>Effective from</span>
+              <input v-model="newMileage.effective_from" class="control" type="date" />
+            </label>
+            <button class="btn-primary" :disabled="saving" @click="saveMileageRate">
+              {{ currentMileage ? "Replace" : "Set" }}
+            </button>
+          </div>
+        </div>
+
+        <table class="ts-table">
+          <thead><tr><th>Rate per km</th><th>In force</th></tr></thead>
+          <tbody>
+            <tr v-if="mileageRates.length === 0">
+              <td colspan="2" class="ts-empty">
+                No mileage rate set. Self-drive journeys cannot be costed until there is one.
+              </td>
+            </tr>
+            <tr v-for="r in mileageRates" :key="r.id" :class="{ 'ts-closed': r.effective_to }">
+              <td class="ts-amount">{{ r.currency }} {{ Number(r.rate_per_km).toLocaleString() }}</td>
+              <td>
+                {{ day(r.effective_from) }}
+                <template v-if="r.effective_to"> → {{ day(r.effective_to) }}</template>
+                <span v-else class="badge">current</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 class="ts-form-title">Vehicle types</h2>
+        <p class="ts-note">
+          Consumption is held per class rather than per vehicle — real figures vary more by
+          driver and load than by chassis. A hired vehicle cannot be costed without it.
+        </p>
+
+        <div class="ts-form">
+          <div class="ts-row">
+            <label class="ts-field"><span>Name</span>
+              <input v-model="newVehicle.name" class="control" placeholder="4x4" /></label>
+            <label class="ts-field"><span>Km per litre</span>
+              <input v-model="newVehicle.km_per_litre" class="control" type="number" min="0.1" step="0.1" /></label>
+            <label class="ts-field"><span>Load capacity (kg)</span>
+              <input v-model="newVehicle.load_capacity_kg" class="control" type="number" min="0" /></label>
+            <button class="btn-primary" :disabled="saving" @click="addVehicleType">Add</button>
+          </div>
+        </div>
+
+        <table class="ts-table">
+          <thead><tr><th>Vehicle</th><th>Km/litre</th><th>Load (kg)</th><th></th></tr></thead>
+          <tbody>
+            <tr v-if="vehicleTypes.length === 0"><td colspan="4" class="ts-empty">No vehicle types yet.</td></tr>
+            <tr v-for="v in vehicleTypes" :key="v.id" :class="{ 'ts-closed': !v.is_active }">
+              <td>{{ v.name }}</td>
+              <td>
+                <input v-model="v.km_per_litre" class="control control-xs" type="number" min="0.1" step="0.1"
+                       :disabled="!v.is_active" @change="saveVehicleType(v)" />
+              </td>
+              <td>
+                <input v-model="v.load_capacity_kg" class="control control-sm" type="number" min="0"
+                       :disabled="!v.is_active" @change="saveVehicleType(v)" />
+              </td>
+              <td class="ts-actions">
+                <span v-if="!v.is_active" class="badge">retired</span>
+                <button v-else class="link-btn link-danger" @click="retireVehicleType(v)">Retire</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h2 class="ts-form-title">Bus fares</h2>
+        <p class="ts-note">
+          A published round-trip price per route. Fares are not a function of distance, so
+          computing one would produce a figure no ticket office recognises.
+        </p>
+
+        <div class="ts-form">
+          <div class="ts-row">
+            <label class="ts-field">
+              <span>Route</span>
+              <select v-model.number="newFare.travel_destination_id" class="control">
+                <option :value="null">Choose a destination…</option>
+                <option v-for="d in destinations.filter(d => d.is_active)" :key="d.id" :value="d.id">{{ d.name }}</option>
+              </select>
+            </label>
+            <label class="ts-field"><span>Round trip</span>
+              <input v-model="newFare.round_trip_amount" class="control" type="number" min="0" /></label>
+            <button class="btn-primary" :disabled="saving" @click="saveFare">Save</button>
+          </div>
+        </div>
+
+        <table class="ts-table">
+          <thead><tr><th>Route</th><th>Round trip</th><th></th></tr></thead>
+          <tbody>
+            <tr v-if="busFares.length === 0"><td colspan="3" class="ts-empty">No fares set.</td></tr>
+            <tr v-for="f in busFares" :key="f.id">
+              <td>{{ f.destination?.name ?? "—" }}</td>
+              <td class="ts-amount">{{ f.currency }} {{ Number(f.round_trip_amount).toLocaleString() }}</td>
+              <td class="ts-actions">
+                <button class="link-btn link-danger" @click="removeFare(f)">Remove</button>
               </td>
             </tr>
           </tbody>
