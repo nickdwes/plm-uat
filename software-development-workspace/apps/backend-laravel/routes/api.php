@@ -262,6 +262,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     //
     // Destinations, expense categories, the allowance rate card and the
     // approval chain. Gated on travel.manage_rates, held by Finance.
+    // What a requester needs to fill the form in. Reading what is on offer
+    // is not the same authority as setting it.
+    Route::get('/travel/lookups', [TravelSettingsController::class, 'lookups']);
+
     Route::prefix('travel/settings')->group(function () {
         Route::get('/destinations',                 [TravelSettingsController::class, 'destinations']);
         Route::post('/destinations',                [TravelSettingsController::class, 'storeDestination']);

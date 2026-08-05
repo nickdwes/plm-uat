@@ -28,6 +28,20 @@ interface Item {
   exceeds_policy: boolean;
 }
 interface Itinerary { id: number; starts_on: string; activity: string; estimated_cost: string | null }
+interface VehicleType { id: number; name: string; km_per_litre: string | null; load_capacity_kg: string | null }
+interface Leg {
+  id: number; mode: string; travel_type: string; is_delivery: boolean;
+  estimated_km: string | null; estimated_cost: string | null;
+  from_location: string | null; to_location: string | null;
+  item_description: string | null;
+}
+interface Lookups {
+  destinations: Option[];
+  expense_categories: Option[];
+  vehicle_types: VehicleType[];
+  has_mileage_rate: boolean;
+  bus_routes: number[];
+}
 
 const router = useRouter();
 const org = () => currentOrgSlug.value;
@@ -40,7 +54,11 @@ const submitted = ref(false);
 
 const destinations = ref<Option[]>([]);
 const categories   = ref<Option[]>([]);
-const accounts     = ref<Option[]>([]);
+const accounts       = ref<Option[]>([]);
+const vehicleTypes   = ref<VehicleType[]>([]);
+const hasMileageRate = ref(true);
+const busRoutes      = ref<number[]>([]);
+const legs           = ref<Leg[]>([]);
 
 const items     = ref<Item[]>([]);
 const itinerary = ref<Itinerary[]>([]);
@@ -67,11 +85,88 @@ const newExpense  = ref({ travel_expense_category_id: null as number | null, amo
 const newItinerary = ref({ starts_on: "", activity: "", estimated_cost: "" });
 
 const STEPS = [
-  { n: 1, title: "Travel Details",         hint: "Purpose, location, dates" },
-  { n: 2, title: "Expenses & Advance",     hint: "Estimated cost and advance" },
-  { n: 3, title: "Itinerary",              hint: "Plans and supporting detail" },
-  { n: 4, title: "Review & Submit",        hint: "Review and submit request" },
+  { n: 1, title: "Travel Details",     hint: "Purpose, location, dates" },
+  { n: 2, title: "Transport",          hint: "How you are getting there" },
+  { n: 3, title: "Expenses & Advance", hint: "Allowances and advance" },
+  { n: 4, title: "Itinerary",          hint: "Plans and supporting detail" },
+  { n: 5, title: "Review & Submit",    hint: "Review and submit request" },
 ];
+
+/*
+ * What each mode needs, and what it cannot be asked for.
+ *
+ * A taxi fare is not knowable in advance, so the form does not pretend it is;
+ * a bus fare is a published price, so distance is irrelevant to it. Showing
+ * every field for every mode invites figures that are then quietly ignored.
+ */
+const MODES: Record<string, { label: string; needs: string[]; note: string }> = {
+  self_drive:    { label: "Self-drive",     needs: ["km"],
+                   note: "Paid per kilometre. The rate covers fuel and wear, so fuel is not claimed separately." },
+  hired_vehicle: { label: "Hired vehicle",  needs: ["km", "vehicle", "fuel"],
+                   note: "Costed as the fuel the journey burns." },
+  bus:           { label: "Bus",            needs: ["destination"],
+                   note: "Uses the published round-trip fare for the route." },
+  taxi:          { label: "Taxi / Uber",    needs: [],
+                   note: "No estimate — enter what it actually cost when you reconcile, with receipts." },
+  flight:        { label: "Flight",         needs: ["quote"],
+                   note: "Enter the quoted round-trip ticket cost." },
+  visa:          { label: "Visa",           needs: ["quote"],
+                   note: "Enter the visa application or processing fee." },
+};
+
+const blankLeg = () => ({
+  mode: "self_drive",
+  travel_type: "local",
+  from_location: "", to_location: "",
+  travel_destination_id: null as number | null,
+  estimated_km: "", fuel_price_per_litre: "",
+  transport_vehicle_type_id: null as number | null,
+  estimated_cost: "",
+  is_delivery: false, item_description: "", item_weight_kg: "",
+});
+const newLeg = ref(blankLeg());
+
+const legNeeds = (field: string) => (MODES[newLeg.value.mode]?.needs ?? []).includes(field);
+
+/** Blocks adding a journey the system cannot cost, rather than valuing it at nothing. */
+const legBlocker = computed(() => {
+  const m = newLeg.value.mode;
+  if (m === "self_drive" && !hasMileageRate.value)
+    return "No mileage rate is configured, so a self-drive journey cannot be costed. Ask finance to set one.";
+  if (m === "hired_vehicle" && vehicleTypes.value.length === 0)
+    return "No vehicle types are configured, so fuel cannot be estimated.";
+  if (m === "bus" && newLeg.value.travel_destination_id
+      && !busRoutes.value.includes(newLeg.value.travel_destination_id))
+    return "No standard fare is set for that route.";
+  return null;
+});
+
+async function addLeg() {
+  saving.value = true;
+  error.value = null;
+  try {
+    const body: Record<string, unknown> = { ...newLeg.value };
+    Object.keys(body).forEach((k) => (body[k] === "" || body[k] === null) && delete body[k]);
+    body.mode = newLeg.value.mode;
+    body.is_delivery = newLeg.value.is_delivery;
+
+    const res = await api<{ data: any }>("POST", `/api/v1/travel-requests/${requestId.value}/legs`,
+      { org: org(), body });
+    absorb(res.data);
+    newLeg.value = blankLeg();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+async function removeLeg(leg: Leg) {
+  try {
+    const res = await api<{ data: any }>("DELETE",
+      `/api/v1/travel-requests/${requestId.value}/legs/${leg.id}`, { org: org() });
+    absorb(res.data);
+  } catch (e) { fail(e); }
+}
+
+const legTotal = computed(() =>
+  legs.value.reduce((sum, l) => sum + Number(l.estimated_cost ?? 0), 0));
 
 function fail(e: unknown) {
   error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Something went wrong.";
@@ -79,13 +174,19 @@ function fail(e: unknown) {
 
 onMounted(async () => {
   try {
-    const [d, c, a] = await Promise.all([
-      api<{ data: Option[] }>("GET", "/api/v1/travel/settings/destinations", { org: org() }).catch(() => ({ data: [] })),
-      api<{ data: Option[] }>("GET", "/api/v1/travel/settings/categories", { org: org() }).catch(() => ({ data: [] })),
-      api<{ data: Option[] }>("GET", "/api/v1/accounts", { org: org(), params: { per_page: 100 } }).catch(() => ({ data: [] })),
+    // One call, and no longer the settings endpoints: those need
+    // travel.manage_rates, so an ordinary employee got a 403 that the form
+    // swallowed into empty dropdowns with no error.
+    const [l, a] = await Promise.all([
+      api<Lookups>("GET", "/api/v1/travel/lookups", { org: org() }),
+      api<{ data: Option[] }>("GET", "/api/v1/accounts", { org: org(), params: { per_page: 100 } })
+        .catch(() => ({ data: [] })),
     ]);
-    destinations.value = d.data;
-    categories.value   = c.data;
+    destinations.value = l.destinations;
+    categories.value   = l.expense_categories;
+    vehicleTypes.value = l.vehicle_types;
+    hasMileageRate.value = l.has_mileage_rate;
+    busRoutes.value    = l.bus_routes;
     accounts.value     = a.data;
   } catch (e) { fail(e); }
 });
@@ -114,6 +215,7 @@ async function saveDetails(): Promise<boolean> {
 
 function absorb(data: any) {
   items.value     = data.items ?? items.value;
+  legs.value      = data.transport_legs ?? legs.value;
   itinerary.value = data.itinerary ?? itinerary.value;
   totals.value    = { currency: data.currency ?? "KES", total_claimed: data.total_claimed ?? "0" };
 }
@@ -123,7 +225,7 @@ async function next() {
     if (!canLeaveStepOne.value) { error.value = "Dates and purpose are required."; return; }
     if (!(await saveDetails())) return;
   }
-  step.value = Math.min(4, step.value + 1);
+  step.value = Math.min(5, step.value + 1);
 }
 
 async function addExpense() {
@@ -207,8 +309,9 @@ const accountName = computed(() =>
         </div>
         <div class="wz-actions">
           <button class="btn-ghost" @click="router.push({ name: 'travel-requests' })">Cancel</button>
-          <button v-if="step < 4" class="btn-primary" :disabled="saving" @click="next">Next</button>
-          <button v-else class="btn-primary" :disabled="saving || items.length === 0" @click="submit">Submit</button>
+          <button v-if="step < 5" class="btn-primary" :disabled="saving" @click="next">Next</button>
+          <button v-else class="btn-primary"
+                  :disabled="saving || (items.length === 0 && legs.length === 0)" @click="submit">Submit</button>
         </div>
       </header>
 
@@ -295,8 +398,112 @@ const accountName = computed(() =>
             </label>
           </template>
 
-          <!-- ── 2. Expenses ───────────────────────────────────────────── -->
+          <!-- ── 2. Transport ──────────────────────────────────────────── -->
           <template v-else-if="step === 2">
+            <h2 class="wz-panel-title">How you are getting there</h2>
+            <p class="wz-note">
+              Transport is worked out from distance, fuel and mode — not from your grade.
+              Add a journey for each leg: a flight out, and taxis once you are there.
+            </p>
+
+            <div class="wz-form-block">
+              <div class="wz-row">
+                <label class="wz-field">
+                  <span>Mode</span>
+                  <select v-model="newLeg.mode" class="control">
+                    <option v-for="(m, key) in MODES" :key="key" :value="key">{{ m.label }}</option>
+                  </select>
+                </label>
+
+                <label v-if="legNeeds('km')" class="wz-field">
+                  <span>Estimated distance (km)</span>
+                  <input v-model="newLeg.estimated_km" class="control" type="number" min="0" />
+                </label>
+
+                <label v-if="legNeeds('vehicle')" class="wz-field">
+                  <span>Vehicle</span>
+                  <select v-model.number="newLeg.transport_vehicle_type_id" class="control">
+                    <option :value="null">Choose…</option>
+                    <option v-for="v in vehicleTypes" :key="v.id" :value="v.id">
+                      {{ v.name }}<template v-if="v.km_per_litre"> ({{ v.km_per_litre }} km/l)</template>
+                    </option>
+                  </select>
+                </label>
+
+                <label v-if="legNeeds('fuel')" class="wz-field">
+                  <!-- Asked for here because a pump price held centrally is
+                       out of date within a week. -->
+                  <span>Fuel price today</span>
+                  <input v-model="newLeg.fuel_price_per_litre" class="control" type="number" min="0" step="0.01" />
+                </label>
+
+                <label v-if="legNeeds('destination')" class="wz-field">
+                  <span>Route</span>
+                  <select v-model.number="newLeg.travel_destination_id" class="control">
+                    <option :value="null">Choose…</option>
+                    <option v-for="d in destinations" :key="d.id" :value="d.id">{{ d.name }}</option>
+                  </select>
+                </label>
+
+                <label v-if="legNeeds('quote')" class="wz-field">
+                  <span>Quoted cost</span>
+                  <input v-model="newLeg.estimated_cost" class="control" type="number" min="0" />
+                </label>
+              </div>
+
+              <div class="wz-row">
+                <label class="wz-field"><span>From</span>
+                  <input v-model="newLeg.from_location" class="control" placeholder="Nairobi" /></label>
+                <label class="wz-field"><span>To</span>
+                  <input v-model="newLeg.to_location" class="control" placeholder="Mombasa" /></label>
+                <label class="wz-check">
+                  <input v-model="newLeg.is_delivery" type="checkbox" /> This journey delivers an item
+                </label>
+              </div>
+
+              <!-- A delivery routes to finance rather than a line manager, so
+                   what is being moved is part of the record. -->
+              <div v-if="newLeg.is_delivery" class="wz-row">
+                <label class="wz-field wz-grow"><span>What is being delivered</span>
+                  <input v-model="newLeg.item_description" class="control" placeholder="2 rack servers" /></label>
+                <label class="wz-field"><span>Weight (kg)</span>
+                  <input v-model="newLeg.item_weight_kg" class="control" type="number" min="0" /></label>
+              </div>
+
+              <p class="wz-note">{{ MODES[newLeg.mode]?.note }}</p>
+              <p v-if="legBlocker" class="wz-breach">{{ legBlocker }}</p>
+
+              <button class="btn-ghost" :disabled="saving || !!legBlocker" @click="addLeg">Add journey</button>
+            </div>
+
+            <table class="wz-table">
+              <thead><tr><th>Mode</th><th>Route</th><th>Distance</th><th>Estimated</th><th></th></tr></thead>
+              <tbody>
+                <tr v-if="legs.length === 0"><td colspan="5" class="wz-none">No journeys added yet.</td></tr>
+                <tr v-for="l in legs" :key="l.id">
+                  <td>
+                    {{ MODES[l.mode]?.label ?? l.mode }}
+                    <span v-if="l.is_delivery" class="pill pill-neutral">delivery</span>
+                  </td>
+                  <td>{{ l.from_location || "—" }} → {{ l.to_location || "—" }}</td>
+                  <td class="wz-amount">{{ l.estimated_km ? Number(l.estimated_km).toLocaleString() + " km" : "—" }}</td>
+                  <td class="wz-amount">
+                    <template v-if="l.estimated_cost">{{ totals.currency }} {{ Number(l.estimated_cost).toLocaleString() }}</template>
+                    <span v-else class="pill pill-neutral">on reconciliation</span>
+                  </td>
+                  <td><button class="link-btn link-danger" @click="removeLeg(l)">Remove</button></td>
+                </tr>
+                <tr v-if="legTotal > 0" class="wz-total">
+                  <td colspan="3">Transport total</td>
+                  <td class="wz-amount">{{ totals.currency }} {{ legTotal.toLocaleString() }}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+
+          <!-- ── 3. Expenses ───────────────────────────────────────────── -->
+          <template v-else-if="step === 3">
             <h2 class="wz-panel-title">Advance Request</h2>
             <div class="wz-grid">
               <label class="wz-field">
@@ -353,8 +560,8 @@ const accountName = computed(() =>
             </div>
           </template>
 
-          <!-- ── 3. Itinerary ──────────────────────────────────────────── -->
-          <template v-else-if="step === 3">
+          <!-- ── 4. Itinerary ──────────────────────────────────────────── -->
+          <template v-else-if="step === 4">
             <h2 class="wz-panel-title">Itinerary</h2>
             <p class="wz-note">
               What you will be doing, day by day. An approver reads this to judge whether the
@@ -384,7 +591,7 @@ const accountName = computed(() =>
             </table>
           </template>
 
-          <!-- ── 4. Review ─────────────────────────────────────────────── -->
+          <!-- ── 5. Review ─────────────────────────────────────────────── -->
           <template v-else>
             <h2 class="wz-panel-title">Review</h2>
 
@@ -398,6 +605,20 @@ const accountName = computed(() =>
             </dl>
 
             <p class="wz-purpose">{{ form.purpose }}</p>
+
+            <table v-if="legs.length" class="wz-table">
+              <thead><tr><th>Journey</th><th>Route</th><th>Estimated</th></tr></thead>
+              <tbody>
+                <tr v-for="l in legs" :key="l.id">
+                  <td>{{ MODES[l.mode]?.label ?? l.mode }}</td>
+                  <td>{{ l.from_location || "—" }} → {{ l.to_location || "—" }}</td>
+                  <td class="wz-amount">
+                    <template v-if="l.estimated_cost">{{ totals.currency }} {{ Number(l.estimated_cost).toLocaleString() }}</template>
+                    <span v-else class="pill pill-neutral">on reconciliation</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
             <table class="wz-table">
               <thead><tr><th>Category</th><th>Estimated</th><th>Policy</th></tr></thead>
@@ -418,9 +639,9 @@ const accountName = computed(() =>
               </tbody>
             </table>
 
-            <p v-if="items.length === 0" class="wz-note">
-              Add at least one estimated expense before submitting — an empty request tells
-              an approver nothing about what is being asked for.
+            <p v-if="items.length === 0 && legs.length === 0" class="wz-note">
+              Add a journey or an expense before submitting — an empty request tells an
+              approver nothing about what is being asked for.
             </p>
           </template>
         </section>
@@ -542,6 +763,15 @@ const accountName = computed(() =>
 .wz-review { @apply grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); margin: 0; }
 .wz-review dt { font-size: var(--text-xs-size); color: var(--color-text-muted); }
 .wz-review dd { font-size: var(--text-sm-size); color: var(--color-text); margin: 0; }
+
+.wz-form-block {
+  padding: var(--space-4);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  @apply flex flex-col;
+  gap: var(--space-3);
+}
 
 .wz-breach {
   padding: var(--space-3) var(--space-4);

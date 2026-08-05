@@ -41,6 +41,47 @@ class TravelSettingsController extends Controller
         return app('current.organization_id');
     }
 
+
+    /**
+     * Everything a requester needs to fill the form in.
+     *
+     * Separate from the settings endpoints, which require `travel.manage_rates`
+     * — a permission a traveller has no reason to hold. The wizard was reading
+     * destinations and categories from those, catching the 403 and rendering
+     * empty dropdowns: no error, no options, and no way for the person filling
+     * the form to tell which.
+     *
+     * Reading what is on offer is not the same authority as setting it.
+     */
+    public function lookups(Request $request): JsonResponse
+    {
+        $this->authorize('create', TravelRequest::class);
+
+        $today = now()->toDateString();
+
+        return response()->json([
+            'destinations' => TravelDestination::where('is_active', true)->orderBy('name')
+                ->get(['id', 'name', 'country', 'is_international']),
+
+            'expense_categories' => TravelExpenseCategory::where('is_active', true)->orderBy('name')
+                ->get(['id', 'name', 'evidence_type', 'evidence_provider']),
+
+            'vehicle_types' => TransportVehicleType::where('is_active', true)->orderBy('name')
+                ->get(['id', 'name', 'km_per_litre', 'load_capacity_kg']),
+
+            /*
+             * So the form can say "self-drive cannot be costed yet" rather
+             * than accepting a journey and silently valuing it at nothing.
+             */
+            'has_mileage_rate' => TransportMileageRate::whereDate('effective_from', '<=', $today)
+                ->where(fn ($q) => $q->whereNull('effective_to')->orWhereDate('effective_to', '>=', $today))
+                ->exists(),
+
+            'bus_routes' => TransportBusFare::where('is_active', true)
+                ->pluck('travel_destination_id'),
+        ]);
+    }
+
     // ── Destinations ──────────────────────────────────────────────────────
 
     public function destinations(): JsonResponse
