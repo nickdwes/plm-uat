@@ -19,7 +19,7 @@ const props = defineProps<{ id: string }>();
 const router = useRouter();
 const org = () => currentOrgSlug.value;
 
-type Tab = "description" | "itinerary" | "expenses" | "bookings" | "activity";
+type Tab = "description" | "itinerary" | "expenses" | "bookings" | "reconciliation" | "activity";
 
 const STAGE_LABELS: Record<string, string> = {
   department_head: "Head of Department",
@@ -41,6 +41,76 @@ const newBooking  = ref({
   from_location: "", to_location: "", booking_date: "", total_cost: "", currency: "KES",
 });
 const decisionComment = ref("");
+
+// ── Reconciliation ──────────────────────────────────────────────────────────
+const evidenceFor = ref<any>(null);
+const evidenceForm = ref({ explanation: "", amount: "", file: null as File | null });
+
+const NEEDS: Record<string, string> = {
+  receipt: "A receipt", acknowledgement: "Your confirmation", none: "Nothing",
+};
+const FROM: Record<string, string> = {
+  requestor: "the traveller", finance: "finance", either: "either party",
+};
+
+/** Only once a trip has been approved is there anything to reconcile. */
+const canReconcile = computed(() =>
+  ["approved", "disbursed"].includes(request.value?.status));
+
+const outstanding = computed(() =>
+  (request.value?.items ?? []).filter((i: any) => i.awaiting_evidence));
+
+function openEvidence(item: any) {
+  evidenceFor.value = item;
+  evidenceForm.value = { explanation: "", amount: item.amount_claimed ?? "", file: null };
+}
+
+function pickFile(e: Event) {
+  evidenceForm.value.file = (e.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+async function submitEvidence() {
+  const item = evidenceFor.value;
+  if (!item || !evidenceForm.value.explanation.trim()) return;
+
+  saving.value = true;
+  error.value = null;
+  try {
+    if (item.evidence_type === "receipt") {
+      // Multipart, because a receipt is a file.
+      const fd = new FormData();
+      fd.append("kind", "receipt");
+      fd.append("explanation", evidenceForm.value.explanation);
+      if (evidenceForm.value.amount) fd.append("amount", String(evidenceForm.value.amount));
+      if (evidenceForm.value.file) fd.append("receipt", evidenceForm.value.file);
+
+      await api("POST", `/api/v1/travel-requests/${props.id}/items/${item.id}/evidence`,
+        { org: org(), formData: fd });
+    } else {
+      await api("POST", `/api/v1/travel-requests/${props.id}/items/${item.id}/evidence`, {
+        org: org(),
+        body: { kind: "acknowledgement", explanation: evidenceForm.value.explanation },
+      });
+    }
+    evidenceFor.value = null;
+    notice.value = "Evidence recorded.";
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+async function closeRequest() {
+  saving.value = true;
+  error.value = null;
+  try {
+    await api("POST", `/api/v1/travel-requests/${props.id}/close`, { org: org() });
+    notice.value = "Trip closed.";
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+function evidenceUrl(id: number): string {
+  return `/api/v1/travel-requests/${props.id}/evidence/${id}/download`;
+}
 
 function fail(e: unknown) {
   error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Something went wrong.";
@@ -161,7 +231,7 @@ onMounted(load);
       </section>
 
       <nav class="td-tabs" role="tablist">
-        <button v-for="t in (['description','itinerary','expenses','bookings','activity'] as Tab[])"
+        <button v-for="t in (['description','itinerary','expenses','bookings','reconciliation','activity'] as Tab[])"
                 :key="t" :class="['td-tab', { active: tab === t }]" @click="tab = t">
           {{ t.charAt(0).toUpperCase() + t.slice(1) }}
         </button>
@@ -255,6 +325,63 @@ onMounted(load);
           </table>
         </template>
 
+        <!-- Reconciliation -->
+        <template v-else-if="tab === 'reconciliation'">
+          <p v-if="!canReconcile" class="td-note">
+            Reconciliation opens once the trip is approved. There is nothing to evidence
+            until the money has been committed.
+          </p>
+
+          <template v-else>
+            <div class="td-panel-head">
+              <p class="td-note">
+                What each line needs to close, and whose job it is. Asking the wrong party is
+                what leaves requests open indefinitely.
+              </p>
+              <button v-if="request.can_close && outstanding.length === 0 && request.status !== 'closed'"
+                      class="btn-primary" :disabled="saving" @click="closeRequest">
+                Close trip
+              </button>
+            </div>
+
+            <table class="td-table">
+              <thead><tr><th>Category</th><th>To close</th><th>From</th><th>Evidence</th><th></th></tr></thead>
+              <tbody>
+                <tr v-for="i in request.items" :key="i.id">
+                  <td>{{ i.category?.name ?? "—" }}</td>
+                  <td>{{ NEEDS[i.evidence_type] ?? "—" }}</td>
+                  <td class="td-cap">{{ i.evidence_type === 'none' ? "—" : FROM[i.evidence_provider] }}</td>
+                  <td>
+                    <span v-if="i.evidence_type === 'none'" class="pill pill-neutral">Settled</span>
+                    <ul v-else-if="i.evidence?.length" class="td-evidence">
+                      <li v-for="e in i.evidence" :key="e.id">
+                        <a v-if="e.has_file" :href="evidenceUrl(e.id)" target="_blank" class="link-btn">
+                          {{ e.original_name }}
+                        </a>
+                        <span v-else class="pill pill-ok">Acknowledged</span>
+                        <em>{{ e.explanation }}</em>
+                        <em v-if="e.submitted_by" class="td-evidence-who">— {{ e.submitted_by }}</em>
+                      </li>
+                    </ul>
+                    <span v-else class="pill pill-warn">Outstanding</span>
+                  </td>
+                  <td>
+                    <button v-if="i.awaiting_evidence && request.status !== 'closed'"
+                            class="link-btn" @click="openEvidence(i)">
+                      {{ i.evidence_type === 'receipt' ? "Upload receipt" : "Acknowledge" }}
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p v-if="outstanding.length && request.can_close" class="td-note">
+              Cannot close yet — still waiting on
+              {{ outstanding.map((i: any) => i.category?.name).join(", ") }}.
+            </p>
+          </template>
+        </template>
+
         <!-- Activity -->
         <template v-else>
           <ol class="td-timeline">
@@ -271,6 +398,45 @@ onMounted(load);
         </template>
       </section>
     </template>
+
+    <!-- Evidence -->
+    <div v-if="evidenceFor" class="td-modal-backdrop" @click.self="evidenceFor = null">
+      <div class="td-modal">
+        <h3 class="td-modal-title">
+          {{ evidenceFor.evidence_type === "receipt" ? "Upload receipt" : "Acknowledge receipt" }}
+          — {{ evidenceFor.category?.name }}
+        </h3>
+
+        <p v-if="evidenceFor.evidence_type !== 'receipt'" class="td-note">
+          There is no document to produce for this, but an allowance nobody confirms
+          receiving is one nobody can show was paid.
+        </p>
+
+        <label v-if="evidenceFor.evidence_type === 'receipt'" class="td-field">
+          <span>Receipt (PDF or image)</span>
+          <input class="control" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" @change="pickFile" />
+        </label>
+
+        <label v-if="evidenceFor.evidence_type === 'receipt'" class="td-field">
+          <span>Amount actually spent</span>
+          <input v-model="evidenceForm.amount" class="control" type="number" min="0" />
+        </label>
+
+        <label class="td-field">
+          <!-- Required: a receipt nobody explained cannot be checked without
+               asking the person who uploaded it. -->
+          <span>Explanation</span>
+          <textarea v-model="evidenceForm.explanation" class="control" rows="3"
+                    placeholder="What this was for"></textarea>
+        </label>
+
+        <div class="td-modal-actions">
+          <button class="btn-ghost" @click="evidenceFor = null">Cancel</button>
+          <button class="btn-primary" :disabled="saving || !evidenceForm.explanation.trim()"
+                  @click="submitEvidence">Save</button>
+        </div>
+      </div>
+    </div>
 
     <!-- New booking -->
     <div v-if="showBooking" class="td-modal-backdrop" @click.self="showBooking = false">
@@ -378,6 +544,11 @@ onMounted(load);
 .td-event-what { @apply flex flex-col; }
 .td-event-what em { font-style: normal; font-size: var(--text-xs-size); color: var(--color-text-muted); }
 .td-event-who { color: var(--color-text-light); }
+
+.td-evidence { list-style: none; margin: 0; padding: 0; @apply flex flex-col; gap: var(--space-1); }
+.td-evidence li { @apply flex flex-wrap items-baseline; gap: var(--space-2); }
+.td-evidence em { font-style: normal; font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.td-evidence-who { color: var(--color-text-light); }
 
 .control {
   font-family: inherit; font-size: var(--text-sm-size);

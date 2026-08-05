@@ -108,7 +108,8 @@ class TravelRequestController extends Controller
 
         return new TravelRequestResource(
             $travelRequest->load([
-                'items.category', 'approvals.expectedApprover', 'approvals.request',
+                'items.category', 'items.evidence.submittedBy',
+                'approvals.expectedApprover', 'approvals.request',
                 'employee', 'destination', 'account',
                 'itinerary', 'bookings', 'activity.actor',
             ])

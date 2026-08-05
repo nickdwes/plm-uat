@@ -64,6 +64,9 @@ class TravelRequestResource extends JsonResource
              */
             'can_decide' => $request->user()?->can('decide', $this->resource) ?? false,
 
+            'reconciled_at' => $this->reconciled_at?->toIso8601String(),
+            'can_close'     => $request->user()?->hasPermission(\App\Support\Authorization\Permission::TRAVEL_ASSESS_FINANCE) ?? false,
+
             'submitted_at' => $this->submitted_at?->toIso8601String(),
             'completed_at' => $this->completed_at?->toIso8601String(),
             'created_at'   => $this->created_at?->toIso8601String(),

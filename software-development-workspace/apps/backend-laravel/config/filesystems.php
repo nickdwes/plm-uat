@@ -116,6 +116,28 @@ return [
         ],
 
         /*
+         * Travel receipts.
+         *
+         * Private, like every other document class. A receipt names a person,
+         * a place and a date, and often carries a card number — none of which
+         * belongs on a URL that needs no authentication.
+         */
+        'travel_evidence' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'travel-evidence',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/travel-evidence'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Database backups. Written by infra/azure/backup-database.sh, read
          * here only so `backup:check` can tell whether last night's dump
          * actually arrived.

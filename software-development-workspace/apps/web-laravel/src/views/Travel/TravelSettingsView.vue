@@ -19,7 +19,11 @@ import { currentOrgSlug } from "../../stores/auth";
 type Tab = "rates" | "destinations" | "categories" | "chain";
 
 interface Destination { id: number; name: string; country: string | null; is_international: boolean; is_active: boolean }
-interface Category { id: number; name: string; code: string | null; requires_receipt: boolean; is_active: boolean }
+interface Category {
+  id: number; name: string; code: string | null; is_active: boolean;
+  evidence_type: "none" | "acknowledgement" | "receipt";
+  evidence_provider: "requestor" | "finance" | "either";
+}
 interface Rate {
   id: number;
   travel_expense_category_id: number;
@@ -129,14 +133,29 @@ async function retireDestination(d: Destination) {
 }
 
 // ── Categories ──────────────────────────────────────────────────────────────
-const newCategory = ref({ name: "", requires_receipt: false });
+const newCategory = ref({
+  name: "",
+  evidence_type: "none" as Category["evidence_type"],
+  evidence_provider: "requestor" as Category["evidence_provider"],
+});
+
+/** Saved inline, because changing a policy is a one-field decision. */
+async function saveCategory(c: Category) {
+  try {
+    await api("PUT", `/api/v1/travel/settings/categories/${c.id}`, {
+      org: org(),
+      body: { evidence_type: c.evidence_type, evidence_provider: c.evidence_provider },
+    });
+    notify(`${c.name} updated.`);
+  } catch (e) { fail(e); }
+}
 
 async function addCategory() {
   if (!newCategory.value.name.trim()) return;
   saving.value = true;
   try {
     await api("POST", "/api/v1/travel/settings/categories", { org: org(), body: newCategory.value });
-    newCategory.value = { name: "", requires_receipt: false };
+    newCategory.value = { name: "", evidence_type: "none", evidence_provider: "requestor" };
     notify("Category added.");
     await load();
   } catch (e) { fail(e); } finally { saving.value = false; }
@@ -407,27 +426,62 @@ onMounted(load);
           Each category is priced separately in the rate card.
         </p>
 
+        <p class="ts-note">
+          Closing a trip needs different things from different people. A taxi fare needs a
+          receipt from the traveller, an airline ticket a receipt from finance, and a per
+          diem only the traveller's confirmation that they received it. Asking the wrong
+          party is what leaves requests open indefinitely.
+        </p>
+
         <div class="ts-form">
           <div class="ts-row">
             <label class="ts-field">
               <span>Name</span>
               <input v-model="newCategory.name" class="control" placeholder="Meals" />
             </label>
-            <label class="ts-check">
-              <input v-model="newCategory.requires_receipt" type="checkbox" />
-              Receipt expected
+            <label class="ts-field">
+              <span>To close, needs</span>
+              <select v-model="newCategory.evidence_type" class="control">
+                <option value="none">Nothing</option>
+                <option value="acknowledgement">Acknowledgement</option>
+                <option value="receipt">A receipt</option>
+              </select>
+            </label>
+            <label class="ts-field">
+              <span>Provided by</span>
+              <select v-model="newCategory.evidence_provider" class="control"
+                      :disabled="newCategory.evidence_type === 'none'">
+                <option value="requestor">The traveller</option>
+                <option value="finance">Finance</option>
+                <option value="either">Either</option>
+              </select>
             </label>
             <button class="btn-primary" :disabled="saving" @click="addCategory">Add</button>
           </div>
         </div>
 
         <table class="ts-table">
-          <thead><tr><th>Name</th><th>Receipt</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>To close, needs</th><th>Provided by</th><th></th></tr></thead>
           <tbody>
-            <tr v-if="categories.length === 0"><td colspan="3" class="ts-empty">No categories yet.</td></tr>
+            <tr v-if="categories.length === 0"><td colspan="4" class="ts-empty">No categories yet.</td></tr>
             <tr v-for="c in categories" :key="c.id" :class="{ 'ts-closed': !c.is_active }">
               <td>{{ c.name }}</td>
-              <td>{{ c.requires_receipt ? "Required" : "—" }}</td>
+              <td>
+                <select v-model="c.evidence_type" class="control control-sm"
+                        :disabled="!c.is_active" @change="saveCategory(c)">
+                  <option value="none">Nothing</option>
+                  <option value="acknowledgement">Acknowledgement</option>
+                  <option value="receipt">A receipt</option>
+                </select>
+              </td>
+              <td>
+                <select v-model="c.evidence_provider" class="control control-sm"
+                        :disabled="!c.is_active || c.evidence_type === 'none'" @change="saveCategory(c)">
+                  <option value="requestor">The traveller</option>
+                  <option value="finance">Finance</option>
+                  <option value="either">Either</option>
+                </select>
+              </td>
               <td class="ts-actions">
                 <span v-if="!c.is_active" class="badge">retired</span>
                 <button v-else class="link-btn link-danger" @click="retireCategory(c)">Retire</button>

@@ -10,6 +10,9 @@ storage/logs/
 storage/framework/cache/
 storage/framework/sessions/
 storage/framework/views/
+# Storage::fake() writes here as root when tests run in a container, and the
+# build context then cannot read it.
+storage/framework/testing/
 bootstrap/cache/
 
 # ── Test artifacts ─────────────────────────────────────────────────────────────

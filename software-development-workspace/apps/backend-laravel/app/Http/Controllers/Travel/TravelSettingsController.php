@@ -114,6 +114,11 @@ class TravelSettingsController extends Controller
                 Rule::unique('travel_expense_categories', 'name')->where('organization_id', $this->orgId())],
             'code'             => ['nullable', 'string', 'max:32'],
             'requires_receipt' => ['sometimes', 'boolean'],
+            // What closing a line of this category needs, and whose job it is
+            // to supply it. Asking the wrong party is what leaves requests
+            // open indefinitely.
+            'evidence_type'     => ['sometimes', Rule::in(TravelExpenseCategory::EVIDENCE_TYPES)],
+            'evidence_provider' => ['sometimes', Rule::in(TravelExpenseCategory::EVIDENCE_PROVIDERS)],
             'is_active'        => ['sometimes', 'boolean'],
         ]);
 
@@ -132,6 +137,11 @@ class TravelSettingsController extends Controller
                     ->where('organization_id', $this->orgId())->ignore($category->id)],
             'code'             => ['nullable', 'string', 'max:32'],
             'requires_receipt' => ['sometimes', 'boolean'],
+            // What closing a line of this category needs, and whose job it is
+            // to supply it. Asking the wrong party is what leaves requests
+            // open indefinitely.
+            'evidence_type'     => ['sometimes', Rule::in(TravelExpenseCategory::EVIDENCE_TYPES)],
+            'evidence_provider' => ['sometimes', Rule::in(TravelExpenseCategory::EVIDENCE_PROVIDERS)],
             'is_active'        => ['sometimes', 'boolean'],
         ]);
 

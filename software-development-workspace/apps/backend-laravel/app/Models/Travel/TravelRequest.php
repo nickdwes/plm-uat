@@ -31,7 +31,8 @@ class TravelRequest extends Model
     use BelongsToOrganization, SoftDeletes;
 
     public const STATUSES = [
-        'draft', 'submitted', 'in_approval', 'approved', 'rejected', 'cancelled', 'disbursed',
+        'draft', 'submitted', 'in_approval', 'approved', 'rejected',
+        'cancelled', 'disbursed', 'closed',
     ];
 
     protected $fillable = [
@@ -40,7 +41,8 @@ class TravelRequest extends Model
         'priority', 'accommodation_needed', 'flexible_days',
         'advance_justification', 'departure_date', 'return_date',
         'days', 'purpose', 'business_impact', 'currency', 'total_claimed', 'total_approved',
-        'advance_required', 'status', 'submitted_at', 'completed_at', 'created_by',
+        'advance_required', 'status', 'submitted_at', 'completed_at',
+        'reconciled_at', 'reconciled_by_employee_id', 'created_by',
     ];
 
     protected $casts = [
@@ -54,6 +56,7 @@ class TravelRequest extends Model
         'flexible_days'        => 'boolean',
         'submitted_at'     => 'datetime',
         'completed_at'     => 'datetime',
+        'reconciled_at'    => 'datetime',
     ];
 
     protected $attributes = [

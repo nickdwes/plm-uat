@@ -37,6 +37,7 @@ use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\TravelRequestController;
+use App\Http\Controllers\Travel\TravelReconciliationController;
 use App\Http\Controllers\Travel\TravelSettingsController;
 use App\Http\Controllers\Authorization\RoleController;
 use App\Http\Controllers\Goals\GoalController;
@@ -231,6 +232,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         Route::post('/{travelRequest}/bookings',           [TravelRequestController::class, 'storeBooking']);
         Route::delete('/{travelRequest}/bookings/{booking}',[TravelRequestController::class, 'destroyBooking']);
+
+        // ── Reconciliation ────────────────────────────────────────────────
+        //
+        // Who may supply evidence is decided by the expense category, not by a
+        // blanket permission: the traveller has the Uber receipt, finance has
+        // the airline invoice, and a per diem needs neither.
+        Route::get('/{travelRequest}/outstanding', [TravelReconciliationController::class, 'outstanding']);
+        Route::post('/{travelRequest}/items/{item}/evidence', [TravelReconciliationController::class, 'storeEvidence']);
+        Route::get('/{travelRequest}/evidence/{evidence}/download', [TravelReconciliationController::class, 'downloadEvidence']);
+        Route::delete('/{travelRequest}/evidence/{evidence}', [TravelReconciliationController::class, 'destroyEvidence']);
+        Route::post('/{travelRequest}/close', [TravelReconciliationController::class, 'close']);
 
         Route::post('/{travelRequest}/submit', [TravelRequestController::class, 'submit']);
 

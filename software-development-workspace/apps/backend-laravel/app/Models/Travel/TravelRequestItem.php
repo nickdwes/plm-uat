@@ -28,6 +28,23 @@ class TravelRequestItem extends Model
         return $this->belongsTo(TravelRequest::class, 'travel_request_id');
     }
 
+    public function evidence(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TravelExpenseEvidence::class, 'travel_request_item_id');
+    }
+
+    /**
+     * Whether this line still needs something before the trip can close.
+     *
+     * A category requiring nothing is settled the moment it is approved.
+     */
+    public function awaitsEvidence(): bool
+    {
+        $required = $this->category?->evidence_type ?? 'none';
+
+        return $required !== 'none' && ! $this->evidence()->exists();
+    }
+
     public function category(): BelongsTo
     {
         return $this->belongsTo(TravelExpenseCategory::class, 'travel_expense_category_id');
