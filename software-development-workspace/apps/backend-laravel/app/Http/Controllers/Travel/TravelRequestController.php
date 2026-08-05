@@ -8,7 +8,9 @@ use App\Http\Resources\Travel\TravelRequestResource;
 use App\Models\Travel\TravelRequest;
 use App\Models\Travel\TravelBooking;
 use App\Models\Travel\TravelItineraryItem;
+use App\Models\Travel\TravelTransportLeg;
 use App\Models\Travel\TravelRequestItem;
+use App\Services\Travel\TransportCalculator;
 use App\Services\Travel\TravelRequestService;
 use App\Support\Authorization\Permission;
 use Illuminate\Http\JsonResponse;
@@ -108,7 +110,7 @@ class TravelRequestController extends Controller
 
         return new TravelRequestResource(
             $travelRequest->load([
-                'items.category', 'items.evidence.submittedBy',
+                'items.category', 'items.evidence.submittedBy', 'transportLegs.vehicleType',
                 'approvals.expectedApprover', 'approvals.request',
                 'employee', 'destination', 'account',
                 'itinerary', 'bookings', 'activity.actor',
@@ -303,6 +305,101 @@ class TravelRequestController extends Controller
         $booking->delete();
 
         return new TravelRequestResource($travelRequest->fresh(['bookings', 'activity.actor']));
+    }
+
+    // ── Transport legs ────────────────────────────────────────────────────
+    //
+    // A journey, by one mode. Costed from distance, fuel and mode rather than
+    // from a grade allowance — a 40 km errand and a 600 km round trip are not
+    // the same entitlement.
+
+    private function legRules(): array
+    {
+        $orgId = app('current.organization_id');
+
+        return [
+            'mode'        => ['required', Rule::in(TransportCalculator::MODES)],
+            'travel_type' => ['sometimes', Rule::in(TravelTransportLeg::TRAVEL_TYPES)],
+            'purpose'     => ['nullable', 'string', 'max:255'],
+
+            'from_location'         => ['nullable', 'string', 'max:255'],
+            'to_location'           => ['nullable', 'string', 'max:255'],
+            'travel_destination_id' => ['nullable', 'integer',
+                Rule::exists('travel_destinations', 'id')->where('organization_id', $orgId)],
+
+            'estimated_km'         => ['nullable', 'numeric', 'min:0', 'max:100000'],
+            'actual_km'            => ['nullable', 'numeric', 'min:0', 'max:100000'],
+            // Asked for per request because a pump price held centrally is
+            // stale within a week.
+            'fuel_price_per_litre' => ['nullable', 'numeric', 'min:0'],
+            'transport_vehicle_type_id' => ['nullable', 'integer',
+                Rule::exists('transport_vehicle_types', 'id')->where('organization_id', $orgId)],
+            'days' => ['nullable', 'integer', 'min:1', 'max:365'],
+
+            'is_delivery'      => ['sometimes', 'boolean'],
+            'item_description' => ['nullable', 'string', 'max:500'],
+            'item_weight_kg'   => ['nullable', 'numeric', 'min:0'],
+            'item_dimensions'  => ['nullable', 'string', 'max:120'],
+
+            // Entered for the modes that cannot be estimated — a taxi fare is
+            // not knowable in advance, and a ticket is a quote.
+            'estimated_cost' => ['nullable', 'numeric', 'min:0'],
+            'actual_cost'    => ['nullable', 'numeric', 'min:0'],
+            'notes'          => ['nullable', 'string', 'max:2000'],
+        ];
+    }
+
+    public function storeLeg(Request $request, TravelRequest $travelRequest): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+
+        try {
+            $updated = $this->service->addLeg($travelRequest, $request->validate($this->legRules()));
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['status' => $e->getMessage()]);
+        }
+
+        return new TravelRequestResource($updated->load(['transportLegs.vehicleType', 'items.category']));
+    }
+
+    public function updateLeg(Request $request, TravelRequest $travelRequest, TravelTransportLeg $leg): TravelRequestResource
+    {
+        abort_unless($leg->travel_request_id === $travelRequest->id, 404);
+
+        // Recording distance driven happens after approval, so it is gated on
+        // being able to see the request rather than edit it.
+        //
+        // `keys()` includes query parameters, so the org slug in the URL made
+        // every update look like an estimate change.
+        $reconciling = collect($request->keys())
+            ->diff(['actual_km', 'actual_cost', 'org'])
+            ->isEmpty();
+        $this->authorize($reconciling ? 'view' : 'update', $travelRequest);
+
+        $rules = $this->legRules();
+        $rules['mode'] = ['sometimes', Rule::in(TransportCalculator::MODES)];
+
+        try {
+            $updated = $this->service->updateLeg($travelRequest, $leg, $request->validate($rules));
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['status' => $e->getMessage()]);
+        }
+
+        return new TravelRequestResource($updated->load(['transportLegs.vehicleType', 'items.category']));
+    }
+
+    public function destroyLeg(TravelRequest $travelRequest, TravelTransportLeg $leg): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+        abort_unless($leg->travel_request_id === $travelRequest->id, 404);
+
+        try {
+            $updated = $this->service->removeLeg($travelRequest, $leg);
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['status' => $e->getMessage()]);
+        }
+
+        return new TravelRequestResource($updated->load(['transportLegs.vehicleType', 'items.category']));
     }
 
     public function destroy(TravelRequest $travelRequest): JsonResponse

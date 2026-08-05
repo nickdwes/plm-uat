@@ -6,6 +6,7 @@ use App\Models\Travel\TravelApproval;
 use App\Models\Travel\TravelApprovalStage;
 use App\Models\Travel\TravelRequest;
 use App\Models\Travel\TravelRequestItem;
+use App\Models\Travel\TravelTransportLeg;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -14,6 +15,7 @@ class TravelRequestService
     public function __construct(
         private readonly TravelPlacementResolver $placement,
         private readonly TravelCostingService $costing,
+        private readonly TransportCalculator $transport,
     ) {}
 
     /**
@@ -149,8 +151,111 @@ class TravelRequestService
     private function reevaluate(TravelRequest $request): TravelRequest
     {
         $placement = $this->placement->placement($request->employee_id, $request->organization_id);
+        $this->costing->evaluate($request->fresh('items'), $placement['job_grade_id']);
 
-        return $this->costing->evaluate($request->fresh('items'), $placement['job_grade_id']);
+        // Through refreshRequest so transport legs stay in the total: costing
+        // expenses alone would silently drop the journeys from it.
+        return $this->refreshRequest($request);
+    }
+
+
+    // ── Transport legs ────────────────────────────────────────────────────
+
+    /**
+     * Add a journey, and cost it.
+     *
+     * Costing happens here rather than on read so the figure is fixed at the
+     * moment it was calculated — the mileage rate is snapshotted onto the leg
+     * exactly as an allowance ceiling is onto an expense line.
+     */
+    public function addLeg(TravelRequest $request, array $data): TravelRequest
+    {
+        if (! $request->isEditable()) {
+            throw new RuntimeException('Only a draft or rejected request can be edited.');
+        }
+
+        return DB::transaction(function () use ($request, $data) {
+            $leg = $request->transportLegs()->create($data);
+
+            return $this->recostLeg($leg);
+        });
+    }
+
+    public function updateLeg(TravelRequest $request, TravelTransportLeg $leg, array $data): TravelRequest
+    {
+        // Distance driven is recorded after the trip, so a leg stays editable
+        // once approved — but only that. Changing an estimate after approval
+        // would alter what was agreed to.
+        $reconciling = array_keys($data) === ['actual_km'] || array_keys($data) === ['actual_cost'];
+
+        if (! $request->isEditable() && ! $reconciling) {
+            throw new RuntimeException('Only a draft or rejected request can be edited.');
+        }
+
+        return DB::transaction(function () use ($leg, $data) {
+            $leg->update($data);
+
+            return $this->recostLeg($leg->fresh());
+        });
+    }
+
+    public function removeLeg(TravelRequest $request, TravelTransportLeg $leg): TravelRequest
+    {
+        if (! $request->isEditable()) {
+            throw new RuntimeException('Only a draft or rejected request can be edited.');
+        }
+
+        return DB::transaction(function () use ($request, $leg) {
+            $leg->delete();
+
+            return $this->refreshRequest($request);
+        });
+    }
+
+    /** Cost one leg, then bring the request's total and type back in line. */
+    private function recostLeg(TravelTransportLeg $leg): TravelRequest
+    {
+        $costed = $this->transport->cost($leg);
+
+        $update = ['estimated_cost' => $costed['amount']];
+
+        // Snapshot the rate the calculation used, so reconciling months later
+        // does not re-judge the decision against whatever the rate is by then.
+        if ($leg->mode === 'self_drive' && $leg->rate_per_km_applied === null
+            && $costed['amount'] !== null && (float) $leg->estimated_km > 0) {
+            $update['rate_per_km_applied'] = round($costed['amount'] / (float) $leg->estimated_km, 2);
+        }
+
+        $leg->update($update);
+
+        return $this->refreshRequest($leg->request);
+    }
+
+    /**
+     * Recompute the total, and the journey type that routes the request.
+     *
+     * The type is derived rather than declared. It decides which approval
+     * chain applies — a delivery goes to finance instead of a line manager —
+     * so leaving it to the requester makes the routing key something they can
+     * set to avoid an approver. A leg carrying an item description and weight
+     * is evidence of what the journey actually is.
+     */
+    private function refreshRequest(TravelRequest $request): TravelRequest
+    {
+        $request = $request->fresh(['items', 'transportLegs']);
+
+        $items = (float) $request->items->sum('amount_claimed');
+        $legs  = (float) $request->transportLegs->sum('estimated_cost');
+
+        $type = match (true) {
+            $request->transportLegs->contains(fn ($l) => $l->is_delivery || $l->travel_type === 'delivery') => 'delivery',
+            $request->transportLegs->contains(fn ($l) => $l->travel_type === 'international')               => 'international',
+            default => $request->travel_type ?? 'local',
+        };
+
+        $request->update(['total_claimed' => $items + $legs, 'travel_type' => $type]);
+
+        return $request->fresh(['items.category', 'transportLegs.vehicleType']);
     }
 
     /**
@@ -167,10 +272,11 @@ class TravelRequestService
             throw new RuntimeException('This request has already been submitted.');
         }
 
-        if ($request->items()->count() === 0) {
-            // An empty request in an approver's queue wastes their attention
-            // and tells them nothing about what is being asked for.
-            throw new RuntimeException('Add at least one estimated expense before submitting.');
+        if ($request->items()->count() === 0 && $request->transportLegs()->count() === 0) {
+            // Either is enough: a delivery run is a journey with no allowance,
+            // and a conference is allowances with no journey. Only a request
+            // with neither tells an approver nothing.
+            throw new RuntimeException('Add at least one expense or transport leg before submitting.');
         }
 
         return DB::transaction(function () use ($request) {

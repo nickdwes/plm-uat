@@ -244,6 +244,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::delete('/{travelRequest}/evidence/{evidence}', [TravelReconciliationController::class, 'destroyEvidence']);
         Route::post('/{travelRequest}/close', [TravelReconciliationController::class, 'close']);
 
+        // Transport legs. One per journey and mode, costed from distance and
+        // fuel rather than from a grade allowance.
+        Route::post('/{travelRequest}/legs',       [TravelRequestController::class, 'storeLeg']);
+        Route::put('/{travelRequest}/legs/{leg}',  [TravelRequestController::class, 'updateLeg']);
+        Route::delete('/{travelRequest}/legs/{leg}',[TravelRequestController::class, 'destroyLeg']);
+
         Route::post('/{travelRequest}/submit', [TravelRequestController::class, 'submit']);
 
         // One endpoint for all four stages. Which stage is being decided is a

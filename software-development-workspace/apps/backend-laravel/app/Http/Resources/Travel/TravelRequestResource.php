@@ -43,6 +43,8 @@ class TravelRequestResource extends JsonResource
             'linked_task_ref'      => $this->linked_task_ref,
 
             'items'     => TravelRequestItemResource::collection($this->whenLoaded('items')),
+            'travel_type'    => $this->travel_type,
+            'transport_legs' => $this->whenLoaded('transportLegs'),
             'itinerary' => $this->whenLoaded('itinerary'),
             'bookings'  => $this->whenLoaded('bookings'),
             'activity'  => $this->whenLoaded('activity', fn () => $this->activity->map(fn ($a) => [
