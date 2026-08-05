@@ -5,6 +5,7 @@ namespace App\Services\Travel;
 use App\Models\Travel\TravelExpenseEvidence;
 use App\Models\Travel\TravelRequest;
 use App\Models\Travel\TravelRequestItem;
+use App\Models\Travel\TravelTransportLeg;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -144,6 +145,39 @@ class TravelReconciliationService
     }
 
     /**
+     * Journeys still waiting to be settled.
+     *
+     * A trip that closes with its expenses evidenced and a 600 km self-drive
+     * claim never checked is the case this exists for: the money leaves
+     * against an estimate nobody compared to what happened.
+     *
+     * What settles a leg depends on how it was costed. Mileage modes need the
+     * distance actually driven, because that is what the reimbursement is
+     * computed from — a fuel receipt proves money was spent, not that the
+     * journey happened. Everything else needs what was actually paid.
+     *
+     * @return array<int, array{leg_id: int, mode: string, needs: string}>
+     */
+    public function outstandingLegs(TravelRequest $request): array
+    {
+        return $request->transportLegs
+            ->filter(function (TravelTransportLeg $leg) {
+                return in_array($leg->mode, ['self_drive', 'hired_vehicle'], true)
+                    ? $leg->actual_km === null
+                    : $leg->actual_cost === null;
+            })
+            ->map(fn (TravelTransportLeg $leg) => [
+                'leg_id' => $leg->id,
+                'mode'   => $leg->mode,
+                'needs'  => in_array($leg->mode, ['self_drive', 'hired_vehicle'], true)
+                    ? 'distance driven'
+                    : 'what it actually cost',
+            ])
+            ->values()
+            ->all();
+    }
+
+    /**
      * Close the trip.
      *
      * Refused while anything is outstanding: a closed request is the record
@@ -162,6 +196,15 @@ class TravelReconciliationService
             throw new RuntimeException(
                 'Still waiting on evidence for: '
                 . implode(', ', array_column($outstanding, 'category')) . '.'
+            );
+        }
+
+        $legs = $this->outstandingLegs($request->load('transportLegs'));
+
+        if ($legs !== []) {
+            throw new RuntimeException(
+                'Still waiting on ' . implode(', ', array_column($legs, 'needs'))
+                . ' for ' . count($legs) . ' journey(s).'
             );
         }
 

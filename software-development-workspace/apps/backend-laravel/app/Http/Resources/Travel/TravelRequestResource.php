@@ -44,7 +44,20 @@ class TravelRequestResource extends JsonResource
 
             'items'     => TravelRequestItemResource::collection($this->whenLoaded('items')),
             'travel_type'    => $this->travel_type,
-            'transport_legs' => $this->whenLoaded('transportLegs'),
+            'transport_legs' => $this->whenLoaded('transportLegs', fn () => $this->transportLegs->map(function ($leg) {
+                $calc = app(\App\Services\Travel\TransportCalculator::class);
+                $r = $calc->reconcile($leg);
+
+                return $leg->toArray() + [
+                    'vehicle_type' => $leg->vehicleType?->name,
+                    // What was approved against what happened. Null variance
+                    // is "not yet settled", which is a different statement
+                    // from "spent exactly what was approved".
+                    'actual_value' => $r['actual'],
+                    'variance'     => $r['variance'],
+                    'basis'        => $r['basis'],
+                ];
+            })),
             'delivery_reference' => $this->delivery_reference,
             'delivery_note_attachment_id' => $this->delivery_note_attachment_id,
             'manifest'    => $this->whenLoaded('manifest'),

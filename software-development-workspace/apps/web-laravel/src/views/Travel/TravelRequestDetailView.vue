@@ -19,7 +19,7 @@ const props = defineProps<{ id: string }>();
 const router = useRouter();
 const org = () => currentOrgSlug.value;
 
-type Tab = "description" | "itinerary" | "expenses" | "bookings" | "reconciliation" | "activity";
+type Tab = "description" | "transport" | "itinerary" | "expenses" | "bookings" | "reconciliation" | "activity";
 
 const STAGE_LABELS: Record<string, string> = {
   department_head: "Head of Department",
@@ -104,6 +104,40 @@ async function closeRequest() {
   try {
     await api("POST", `/api/v1/travel-requests/${props.id}/close`, { org: org() });
     notice.value = "Trip closed.";
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+// ── Transport ───────────────────────────────────────────────────────────────
+const MODE_LABELS: Record<string, string> = {
+  self_drive: "Self-drive", hired_vehicle: "Hired vehicle", bus: "Bus",
+  taxi: "Taxi / Uber", flight: "Flight", visa: "Visa",
+};
+
+/** Mileage modes settle on distance; everything else on what was paid. */
+const settlesOnDistance = (mode: string) => ["self_drive", "hired_vehicle"].includes(mode);
+
+const unsettledLegs = computed(() =>
+  (request.value?.transport_legs ?? []).filter((l: any) =>
+    settlesOnDistance(l.mode) ? l.actual_km === null : l.actual_cost === null));
+
+/**
+ * Record what actually happened on a journey.
+ *
+ * Sent on its own so it stays gated on seeing the request rather than editing
+ * it — the trip has happened by the time this is known, and the request is no
+ * longer editable.
+ */
+async function settleLeg(leg: any) {
+  saving.value = true;
+  error.value = null;
+  try {
+    const body = settlesOnDistance(leg.mode)
+      ? { actual_km: leg.actual_km }
+      : { actual_cost: leg.actual_cost };
+
+    await api("PUT", `/api/v1/travel-requests/${props.id}/legs/${leg.id}`, { org: org(), body });
+    notice.value = "Journey settled.";
     await load();
   } catch (e) { fail(e); } finally { saving.value = false; }
 }
@@ -231,7 +265,7 @@ onMounted(load);
       </section>
 
       <nav class="td-tabs" role="tablist">
-        <button v-for="t in (['description','itinerary','expenses','bookings','reconciliation','activity'] as Tab[])"
+        <button v-for="t in (['description','transport','itinerary','expenses','bookings','reconciliation','activity'] as Tab[])"
                 :key="t" :class="['td-tab', { active: tab === t }]" @click="tab = t">
           {{ t.charAt(0).toUpperCase() + t.slice(1) }}
         </button>
@@ -251,6 +285,69 @@ onMounted(load);
               {{ request.advance_justification || "no justification given" }}
             </p>
           </template>
+        </template>
+
+        <!-- Transport -->
+        <template v-else-if="tab === 'transport'">
+          <p class="td-note">
+            Costed from distance, fuel and mode rather than from a grade. Once the trip has
+            happened, record what it actually was — the difference between the two is the
+            reason to reconcile at all.
+          </p>
+
+          <table class="td-table">
+            <thead>
+              <tr><th>Mode</th><th>Route</th><th>Estimated</th><th>Actual</th><th>Variance</th><th>Basis</th></tr>
+            </thead>
+            <tbody>
+              <tr v-if="!request.transport_legs?.length">
+                <td colspan="6" class="td-none">No journeys on this request.</td>
+              </tr>
+              <tr v-for="l in request.transport_legs" :key="l.id">
+                <td>
+                  {{ MODE_LABELS[l.mode] ?? l.mode }}
+                  <span v-if="l.is_delivery" class="pill pill-neutral">delivery</span>
+                </td>
+                <td>{{ l.from_location || "—" }} → {{ l.to_location || "—" }}</td>
+                <td class="td-num">
+                  <template v-if="l.estimated_cost">{{ request.currency }} {{ money(l.estimated_cost) }}</template>
+                  <span v-else class="pill pill-neutral">no estimate</span>
+                </td>
+
+                <td>
+                  <!-- Recorded here rather than on a separate screen: the
+                       person who drove is the one reading this. -->
+                  <template v-if="canReconcile && request.status !== 'closed'">
+                    <input v-if="settlesOnDistance(l.mode)" v-model="l.actual_km"
+                           class="control control-xs" type="number" min="0"
+                           placeholder="km driven" @change="settleLeg(l)" />
+                    <input v-else v-model="l.actual_cost"
+                           class="control control-sm" type="number" min="0"
+                           placeholder="actual cost" @change="settleLeg(l)" />
+                  </template>
+                  <template v-else>
+                    <span v-if="l.actual_value !== null" class="td-num">{{ money(l.actual_value) }}</span>
+                    <span v-else class="pill pill-warn">outstanding</span>
+                  </template>
+                </td>
+
+                <td class="td-num">
+                  <!-- Null is "not settled yet", which is a different
+                       statement from spending exactly what was approved. -->
+                  <span v-if="l.variance === null" class="pill pill-neutral">—</span>
+                  <span v-else :class="['pill', Number(l.variance) > 0 ? 'pill-warn' : 'pill-ok']">
+                    {{ Number(l.variance) > 0 ? "+" : "" }}{{ money(l.variance) }}
+                  </span>
+                </td>
+                <td class="td-basis">{{ l.basis }}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <p v-if="canReconcile && unsettledLegs.length" class="td-warn">
+            {{ unsettledLegs.length }} journey(s) still to settle. The trip cannot be closed
+            until each records what actually happened.
+          </p>
         </template>
 
         <!-- Itinerary -->
@@ -549,6 +646,14 @@ onMounted(load);
 .td-evidence li { @apply flex flex-wrap items-baseline; gap: var(--space-2); }
 .td-evidence em { font-style: normal; font-size: var(--text-xs-size); color: var(--color-text-muted); }
 .td-evidence-who { color: var(--color-text-light); }
+
+.td-basis { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.td-warn {
+  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
+  background: var(--color-warning-subtle); color: var(--color-warning-text);
+  font-size: var(--text-sm-size); margin: 0;
+}
+.control-xs { width: 6.5rem; }
 
 .control {
   font-family: inherit; font-size: var(--text-sm-size);

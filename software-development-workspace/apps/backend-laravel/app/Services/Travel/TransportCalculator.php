@@ -29,13 +29,18 @@ class TransportCalculator
      * are snapshotted onto an expense line: reconciling months later against
      * whatever the rate is by then would re-judge a decision already made.
      *
+     * `$useActual` selects the distance driven rather than the distance
+     * planned. Without the distinction, recording what was actually driven
+     * overwrote the figure the request was approved against, and the variance
+     * — the entire point of reconciling — computed to zero every time.
+     *
      * @return array{amount: float|null, basis: string}
      */
-    public function cost(TravelTransportLeg $leg): array
+    public function cost(TravelTransportLeg $leg, bool $useActual = false): array
     {
         return match ($leg->mode) {
-            'self_drive'    => $this->selfDrive($leg),
-            'hired_vehicle' => $this->hiredVehicle($leg),
+            'self_drive'    => $this->selfDrive($leg, $useActual),
+            'hired_vehicle' => $this->hiredVehicle($leg, $useActual),
             'bus'           => $this->bus($leg),
             // Entered, not derived. Both are quotes or actuals the requester
             // holds; the system's job is to record and reconcile them.
@@ -55,9 +60,9 @@ class TransportCalculator
      * The rate covers fuel and wear together, which is why fuel price does not
      * enter here — paying both would reimburse the same litre twice.
      */
-    private function selfDrive(TravelTransportLeg $leg): array
+    private function selfDrive(TravelTransportLeg $leg, bool $useActual = false): array
     {
-        $km = (float) ($leg->actual_km ?? $leg->estimated_km ?? 0);
+        $km = (float) (($useActual ? $leg->actual_km : $leg->estimated_km) ?? 0);
 
         if ($km <= 0) {
             return ['amount' => null, 'basis' => 'No distance entered'];
@@ -85,9 +90,9 @@ class TransportCalculator
      * an organisation that cannot maintain per-vehicle data ends up with one
      * stale row per car instead of one good row per class.
      */
-    private function hiredVehicle(TravelTransportLeg $leg): array
+    private function hiredVehicle(TravelTransportLeg $leg, bool $useActual = false): array
     {
-        $km = (float) ($leg->actual_km ?? $leg->estimated_km ?? 0);
+        $km = (float) (($useActual ? $leg->actual_km : $leg->estimated_km) ?? 0);
         $kmPerLitre = (float) ($leg->vehicleType?->km_per_litre ?? 0);
         $fuelPrice  = (float) ($leg->fuel_price_per_litre ?? 0);
 
@@ -158,7 +163,7 @@ class TransportCalculator
         // at the rate the request was approved against.
         $actual = match ($leg->mode) {
             'self_drive', 'hired_vehicle' => $leg->actual_km !== null
-                ? $this->cost($leg)['amount']
+                ? $this->cost($leg, useActual: true)['amount']
                 : ($leg->actual_cost !== null ? (float) $leg->actual_cost : null),
             default => $leg->actual_cost !== null ? (float) $leg->actual_cost : null,
         };
