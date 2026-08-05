@@ -45,6 +45,14 @@ services:
       MICROSOFT_CLIENT_ID: "9b75caba-59a6-4b2a-b700-59ae3c7bc824"
       MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET}
       AZURE_REDIRECT_URI: "https://hrms-be.bitwyse.co.ke/api/auth/azure/callback"
+      # Blob storage for documents. The client credentials are read by
+      # DefaultAzureCredential; on an Azure host they are omitted entirely and
+      # managed identity answers instead, leaving no secret to rotate.
+      DOCUMENT_DISK: ${DOCUMENT_DISK:-local}
+      AZURE_STORAGE_ACCOUNT: ${AZURE_STORAGE_ACCOUNT}
+      AZURE_TENANT_ID: ${AZURE_TENANT_ID}
+      AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
+      AZURE_CLIENT_SECRET: ${AZURE_CLIENT_SECRET}
       CORS_ALLOWED_ORIGINS: "https://hrms.bitwyse.co.ke,https://vacancy.bitwyse.co.ke,https://vacancy.bitwyse.com,http://localhost:3000,http://localhost:5173,http://localhost:8080"
       CORS_ALLOWED_HEADERS: "Content-Type,Authorization,X-Requested-With,X-HRMS-Version,X-Organization"
     volumes:

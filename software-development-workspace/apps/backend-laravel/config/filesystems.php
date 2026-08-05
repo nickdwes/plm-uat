@@ -47,17 +47,33 @@ return [
             'report' => false,
         ],
 
-        // Private employee documents — never publicly accessible.
-        // Files live at storage/app/private/employee-documents/{org_id}/{employee_id}/
-        // and are served only through the authenticated DocumentController.
-        'employee_documents' => [
+        /*
+         * Selected by DOCUMENT_DISK: 'azure' in production, 'local' to
+         * fall back without a code change. The originals are retained
+         * under `employee_documents_local` until the Azure copies have proven
+         * themselves in production, so a rollback is one variable.
+         */
+        'employee_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/employee-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        'employee_documents_local' => [
             'driver'     => 'local',
             'root'       => storage_path('app/private/employee-documents'),
             'visibility' => 'private',
             'throw'      => true,
         ],
 
-        // Private preboarding attachments — served only through PreboardingController.
         /*
          * ── Azure Blob Storage ───────────────────────────────────────────────
          *
@@ -67,10 +83,9 @@ return [
          * records have statutory minimums, and Azure scopes both RBAC and
          * lifecycle rules at the container.
          *
-         * These sit alongside the local disks rather than replacing them. The
-         * cutover is a one-line change per disk once uploads have been verified
-         * against the real account, which keeps "does Azure work" and "is the
-         * application broken" as separate questions.
+         * These are addressed directly only by the migration command, which
+         * needs to name source and destination at the same time. Application
+         * code uses the disks above, whose backing is chosen by DOCUMENT_DISK.
          */
         'azure_candidate_docs' => [
             'driver'    => 'azure',
@@ -111,22 +126,81 @@ return [
          *
          * Private, and served only through an authorised download route.
          */
-        'candidate_docs' => [
+        /*
+         * Selected by DOCUMENT_DISK: 'azure' in production, 'local' to
+         * fall back without a code change. The originals are retained
+         * under `candidate_docs_local` until the Azure copies have proven
+         * themselves in production, so a rollback is one variable.
+         */
+        'candidate_docs' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-candidate-docs',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/candidate-docs'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        'candidate_docs_local' => [
             'driver'     => 'local',
             'root'       => storage_path('app/private/candidate-docs'),
             'visibility' => 'private',
             'throw'      => true,
         ],
 
-        'preboarding_docs' => [
+        /*
+         * Selected by DOCUMENT_DISK: 'azure' in production, 'local' to
+         * fall back without a code change. The originals are retained
+         * under `preboarding_docs_local` until the Azure copies have proven
+         * themselves in production, so a rollback is one variable.
+         */
+        'preboarding_docs' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-preboarding-docs',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/preboarding-docs'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        'preboarding_docs_local' => [
             'driver'     => 'local',
             'root'       => storage_path('app/private/preboarding-docs'),
             'visibility' => 'private',
             'throw'      => true,
         ],
 
-        // Training evidence files — served only through authenticated TrainingRecordController.
-        'training_evidence' => [
+        /*
+         * Selected by DOCUMENT_DISK: 'azure' in production, 'local' to
+         * fall back without a code change. The originals are retained
+         * under `training_evidence_local` until the Azure copies have proven
+         * themselves in production, so a rollback is one variable.
+         */
+        'training_evidence' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-training-evidence',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/training-evidence'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        'training_evidence_local' => [
             'driver'     => 'local',
             'root'       => storage_path('app/private/training-evidence'),
             'visibility' => 'private',

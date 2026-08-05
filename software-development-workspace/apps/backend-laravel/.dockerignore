@@ -29,3 +29,11 @@ Thumbs.db
 # ── Git ───────────────────────────────────────────────────────────────────────
 .git/
 .gitignore
+
+# ── Local document storage ────────────────────────────────────────────────────
+# Never part of an image: it holds real employee and candidate documents, and
+# in production it is a mounted volume anyway. It is excluded for a second
+# reason too — test runs inside a container create these directories owned by
+# root, and the build context then fails to read them.
+storage/app/private/
+storage/app/public/
