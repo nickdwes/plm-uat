@@ -234,7 +234,11 @@ for k, (exp, got) in want.items():
     ok = exp == got
     bad += not ok
     print(f"   {'OK ' if ok else 'BAD'}  {k:<20} {got}")
-ips = [r["value"] for r in a.get("networkRuleSet", {}).get("ipRules", [])]
+# The key differs by API version: newer returns "value", older
+# "iPAddressOrRange". Reading only one crashed this block after every
+# substantive check had already passed.
+rules = a.get("networkRuleSet", {}).get("ipRules", [])
+ips = [r.get("value") or r.get("iPAddressOrRange") for r in rules]
 pid = (a.get("identity") or {}).get("principalId")
 print("        {:<20} {}".format("allowed ips", ips))
 print("        {:<20} {}".format("principal id", pid))
