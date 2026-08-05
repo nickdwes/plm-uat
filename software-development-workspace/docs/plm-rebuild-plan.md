@@ -189,21 +189,16 @@ sequence.
 `account_contacts`, and lookups for type, sector, subsector. Blocks Travel.
 Small, and the least ambiguous port in the set.
 
-Decide first: are customers per-organisation or shared across the group? And
-what becomes of the existing empty `vendor_customers`, which models a
+Customers are **per organisation**, so `accounts` carries `organization_id`
+and the `BelongsToOrganization` concern like everything else.
+
+Still open: what becomes of the existing empty `vendor_customers`, which models a
 partner's customers and will otherwise sit alongside this as a second thing
 called "customer".
 
-**Phase B — Travel.** `travel_requests`, `travel_expenses`,
-`travel_per_diem_tiers`, `travel_per_diem_rates`, plus a normalised
-`travel_approvals` table rather than sixteen columns encoding four stages.
-
-The four stages become rows, which means the chain can change without a
-migration — an org restructure should not require a schema change.
-
-Decide first: are the four stages still HOD → CTO → Finance → CFO today, and
-are per-diem tiers keyed by destination, grade, or both? The legacy schema
-holds tiers as free-standing named records, so the rule lives in code.
+**Phase B — Travel.** See "Travel design" below; the decisions that were open
+when this document was first written have since been made, and they change the
+shape enough to be worth setting out properly.
 
 **Phase C — Asset characteristics.** Extend the existing Assets module with
 the per-category attribute system. This is additive to something already
@@ -236,3 +231,115 @@ Not addressed here, deliberately. Whether 9,055 tasks and 63,788 comments come
 across, or the new system starts clean with the old one kept read-only, is a
 business decision with very different costs. It should be decided before
 Phase D, not during it.
+
+## Travel design
+
+### Decisions taken
+
+| Question | Answer |
+| --- | --- |
+| Customer scope | Per organisation |
+| Approval chain | Two stages: HOD (head of department), then Finance |
+| Allowance model | Rate card by grade, destination and activity, effective-dated |
+| Legacy data migration | Deferred |
+
+The approval chain is **shorter than the legacy system's**, not longer. The old
+system ran HOD → CTO → Finance → CFO on all 102 requests; the replacement drops
+CTO and CFO. That is a deliberate reduction, and worth recording as such so it
+is not later mistaken for an incomplete port.
+
+### Approvals as rows
+
+```
+travel_approvals
+  travel_request_id
+  stage                 hod | finance
+  sequence              1, 2
+  approver_employee_id
+  status                pending | approved | rejected
+  comment
+  decided_at
+```
+
+The legacy encoded four stages as sixteen columns on the request. Storing them
+as rows means changing the chain — adding a stage, reordering, making one
+conditional on amount — is configuration rather than a migration. Given the
+chain has just changed once, it will change again.
+
+The HOD approver resolves from `departments.lead_employee_id` for the
+requester's department, which already exists. Finance resolves from the
+permission catalogue rather than a named list, so it follows role assignment
+like everything else.
+
+### The rate card
+
+Allowances vary by **grade**, **destination** and **activity**, and change over
+time. All three vary independently, so they are three dimensions of one table
+rather than three tables.
+
+```
+travel_expense_categories
+  organization_id, name, code, requires_receipt, is_active
+  -- transport, meals, accommodation, facilitation, incidentals
+
+travel_destinations
+  organization_id, name, country, city, is_active
+
+travel_allowance_rates
+  organization_id
+  category_id           -> travel_expense_categories
+  job_grade_id          nullable  -- null: applies to every grade
+  destination_id        nullable  -- null: applies to every destination
+  amount, currency
+  unit                  per_day | per_trip
+  effective_from        date
+  effective_to          date, nullable
+```
+
+Grade comes from the employee's designation
+(`employee_organization_map.designation_id` → `designations.job_grade_id`),
+so nothing new is needed to answer "what is this person entitled to".
+
+**Resolution.** For each category, take the effective-dated row matching the
+traveller's grade and destination, preferring the most specific:
+
+1. grade **and** destination both match
+2. destination matches, grade null
+3. grade matches, destination null
+4. both null — the default
+
+Nulls mean "applies to all" rather than "unset", which is what lets an
+organisation state one meals rate globally and override it for two expensive
+cities without enumerating every combination.
+
+**Effective dating is the point.** A request approved in March must keep
+March's rates when someone opens it in November. Rates are therefore never
+edited in place: a change closes the current row with an `effective_to` and
+inserts a new one.
+
+### Snapshotting
+
+```
+travel_request_items
+  travel_request_id
+  category_id
+  quantity              days, or 1 for per-trip
+  rate_applied          the amount resolved at submission
+  amount_claimed
+  amount_approved       nullable, set by Finance
+```
+
+`rate_applied` is copied onto the item at submission and never recalculated.
+Without it, correcting a rate silently rewrites the value of every historical
+request that used it — the kind of change that is invisible until someone
+audits a payment.
+
+Claimed and approved are separate because Finance can approve less than was
+asked for, which the legacy schema could not express.
+
+### What is deliberately not built
+
+Reconciliation. The legacy `travel_r_reconsiliation` table holds zero rows
+across 102 requests, so the receipts-against-advance workflow was built and
+never used. `requires_receipt` on the category is kept so the option exists,
+but no reconciliation workflow is built until someone asks with a use case.
