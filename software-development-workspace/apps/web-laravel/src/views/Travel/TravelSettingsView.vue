@@ -185,6 +185,124 @@ const blankRate = () => ({
 const newRate  = ref(blankRate());
 const superseding = ref<Rate | null>(null);
 
+/*
+ * The rate card as a grid: categories down, grades across.
+ *
+ * Five categories against five grades is twenty-five rates, and adding them
+ * through a one-at-a-time form is where an organisation gives up and prices
+ * everything the same. The grid shows what is set and what is inherited in one
+ * view, which is the question being asked — not "what rates exist" but "what
+ * does a unit head get for accommodation".
+ *
+ * One destination at a time, because the third dimension does not fit on a
+ * screen and most organisations price by grade first and vary a few cities.
+ */
+const rateView    = ref<"grid" | "list">("grid");
+const gridDest    = ref<number | null>(null);
+const gridFrom    = ref(new Date().toISOString().slice(0, 10));
+const gridEdits   = ref<Record<string, string>>({});
+const savingGrid  = ref(false);
+
+const cellKey = (categoryId: number, gradeId: number | null) => `${categoryId}:${gradeId ?? "all"}`;
+
+/** The rate set for exactly this cell, if one is. */
+function rateAt(categoryId: number, gradeId: number | null): Rate | undefined {
+  return rates.value.find((r) =>
+    r.travel_expense_category_id === categoryId &&
+    r.job_grade_id === gradeId &&
+    r.travel_destination_id === gridDest.value &&
+    !r.effective_to);
+}
+
+/**
+ * What this cell resolves to when nothing is set on it.
+ *
+ * Shown greyed so the grid distinguishes "priced at 12,000" from "inherits
+ * 12,000" — a cell that looks set but is not is how an override silently fails
+ * to happen.
+ */
+function inheritedAt(categoryId: number, gradeId: number | null): string | null {
+  if (gradeId === null && gridDest.value === null) return null;
+
+  const fallback =
+    rateAt(categoryId, null) ??
+    rates.value.find((r) =>
+      r.travel_expense_category_id === categoryId &&
+      r.job_grade_id === null &&
+      r.travel_destination_id === null &&
+      !r.effective_to);
+
+  return fallback ? Number(fallback.amount).toLocaleString() : null;
+}
+
+function cellValue(categoryId: number, gradeId: number | null): string {
+  const key = cellKey(categoryId, gradeId);
+  if (key in gridEdits.value) return gridEdits.value[key];
+  const existing = rateAt(categoryId, gradeId);
+  return existing ? String(Number(existing.amount)) : "";
+}
+
+function editCell(categoryId: number, gradeId: number | null, value: string) {
+  gridEdits.value[cellKey(categoryId, gradeId)] = value;
+}
+
+const pendingEdits = computed(() => Object.keys(gridEdits.value).length);
+
+/**
+ * Save every changed cell.
+ *
+ * A changed cell supersedes rather than edits, exactly as the single-rate form
+ * does — a request approved last month must keep last month's ceiling.
+ */
+async function saveGrid() {
+  savingGrid.value = true;
+  error.value = null;
+
+  let created = 0, replaced = 0, cleared = 0;
+
+  try {
+    for (const [key, raw] of Object.entries(gridEdits.value)) {
+      const [categoryPart, gradePart] = key.split(":");
+      const categoryId = Number(categoryPart);
+      const gradeId    = gradePart === "all" ? null : Number(gradePart);
+      const existing   = rateAt(categoryId, gradeId);
+      const value      = raw.trim();
+
+      if (value === "") {
+        // Blanking a cell closes the override so it inherits again, rather
+        // than leaving a zero that reads as "nothing allowed".
+        if (existing) {
+          await api("DELETE", `/api/v1/travel/settings/rates/${existing.id}`, { org: org() });
+          cleared++;
+        }
+        continue;
+      }
+
+      const body = {
+        travel_expense_category_id: categoryId,
+        job_grade_id: gradeId,
+        travel_destination_id: gridDest.value,
+        amount: value,
+        currency: "KES",
+        unit: existing?.unit ?? "per_day",
+        effective_from: gridFrom.value,
+      };
+
+      if (existing && Number(existing.amount) !== Number(value)) {
+        await api("PUT", `/api/v1/travel/settings/rates/${existing.id}`, { org: org(), body });
+        replaced++;
+      } else if (!existing) {
+        await api("POST", "/api/v1/travel/settings/rates", { org: org(), body });
+        created++;
+      }
+    }
+
+    gridEdits.value = {};
+    notify(`${created} added, ${replaced} replaced, ${cleared} cleared.`);
+    await load();
+  } catch (e) { fail(e); } finally { savingGrid.value = false; }
+}
+
 async function saveRate() {
   const r = newRate.value;
   if (!r.travel_expense_category_id || !r.amount) return;
@@ -307,6 +425,77 @@ onMounted(load);
           restating every combination.
         </p>
 
+        <div class="ts-switch">
+          <button :class="['ts-switch-btn', { active: rateView === 'grid' }]" @click="rateView = 'grid'">Grid</button>
+          <button :class="['ts-switch-btn', { active: rateView === 'list' }]" @click="rateView = 'list'">List</button>
+        </div>
+
+        <!-- ── Grid: every category against every grade ─────────────────── -->
+        <template v-if="rateView === 'grid'">
+          <div class="ts-grid-bar">
+            <label class="ts-field">
+              <span>Destination</span>
+              <select v-model.number="gridDest" class="control">
+                <option :value="null">All destinations (default)</option>
+                <option v-for="d in destinations.filter(d => d.is_active)" :key="d.id" :value="d.id">{{ d.name }}</option>
+              </select>
+            </label>
+            <label class="ts-field">
+              <span>Changes effective from</span>
+              <input v-model="gridFrom" class="control" type="date" />
+            </label>
+            <button class="btn-primary" :disabled="savingGrid || pendingEdits === 0" @click="saveGrid">
+              Save {{ pendingEdits || "" }} change{{ pendingEdits === 1 ? "" : "s" }}
+            </button>
+          </div>
+
+          <p class="ts-note">
+            Type an amount to price that grade; leave a cell blank and it inherits the
+            <strong>All grades</strong> column. A greyed figure is inherited, not set —
+            so you only state the exceptions.
+          </p>
+
+          <div class="ts-scroll">
+            <table class="ts-table ts-matrix">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>All grades</th>
+                  <th v-for="g in grades" :key="g.id">{{ g.name }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="categories.filter(c => c.is_active).length === 0">
+                  <td :colspan="grades.length + 2" class="ts-empty">
+                    No expense categories yet. Add them first — there is nothing to price.
+                  </td>
+                </tr>
+                <tr v-for="c in categories.filter(c => c.is_active)" :key="c.id">
+                  <th class="ts-matrix-row">{{ c.name }}</th>
+                  <td>
+                    <input class="control control-cell" type="number" min="0" placeholder="—"
+                           :value="cellValue(c.id, null)"
+                           @input="editCell(c.id, null, ($event.target as HTMLInputElement).value)" />
+                  </td>
+                  <td v-for="g in grades" :key="g.id">
+                    <input class="control control-cell" type="number" min="0"
+                           :placeholder="inheritedAt(c.id, g.id) ?? '—'"
+                           :value="cellValue(c.id, g.id)"
+                           @input="editCell(c.id, g.id, ($event.target as HTMLInputElement).value)" />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="ts-note">
+            Changing a figure closes the current rate and opens a new one from the date
+            above. Requests already costed against it keep their original ceilings.
+          </p>
+        </template>
+
+        <!-- ── List: one rate at a time, and the full history ───────────── -->
+        <template v-else>
         <div class="ts-form">
           <h2 class="ts-form-title">
             {{ superseding ? "Replace an existing rate" : "Add a rate" }}
@@ -402,6 +591,7 @@ onMounted(load);
             </tr>
           </tbody>
         </table>
+        </template>
       </section>
 
       <!-- ── Destinations ───────────────────────────────────────────────── -->
@@ -616,6 +806,31 @@ onMounted(load);
 .control-xs { width: 5rem; }
 
 .ts-toggle { @apply flex items-center; gap: var(--space-2); font-size: var(--text-sm-size); color: var(--color-text-muted); }
+
+.ts-switch { @apply flex; gap: 2px; width: fit-content; padding: 2px;
+  background: var(--color-surface-sunken); border-radius: var(--radius-md); }
+.ts-switch-btn {
+  @apply cursor-pointer border-none bg-transparent;
+  padding: 4px var(--space-3); border-radius: var(--radius-sm);
+  font-family: inherit; font-size: var(--text-sm-size); color: var(--color-text-muted);
+}
+.ts-switch-btn.active { background: var(--color-surface); color: var(--color-text); font-weight: 500; }
+
+.ts-grid-bar { @apply flex flex-wrap items-end; gap: var(--space-3); }
+
+/* The matrix scrolls on its own rather than pushing the page sideways. */
+.ts-scroll { overflow-x: auto; }
+
+.ts-matrix th { white-space: nowrap; }
+.ts-matrix-row {
+  text-align: left; font-weight: 500; color: var(--color-text);
+  font-size: var(--text-sm-size); text-transform: none; letter-spacing: normal;
+  white-space: nowrap;
+}
+.control-cell { width: 7rem; font-variant-numeric: tabular-nums; }
+/* An inherited figure shows as placeholder text, so a set rate and an
+   inherited one never look the same. */
+.control-cell::placeholder { color: var(--color-text-light); }
 
 .ts-table { @apply w-full; border-collapse: collapse; font-size: var(--text-sm-size); }
 .ts-table th {
