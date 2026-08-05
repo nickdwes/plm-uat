@@ -49,6 +49,7 @@ services:
       # DefaultAzureCredential; on an Azure host they are omitted entirely and
       # managed identity answers instead, leaving no secret to rotate.
       DOCUMENT_DISK: ${DOCUMENT_DISK:-local}
+      BACKUP_ALERT_EMAIL: ${BACKUP_ALERT_EMAIL}
       AZURE_STORAGE_ACCOUNT: ${AZURE_STORAGE_ACCOUNT}
       AZURE_TENANT_ID: ${AZURE_TENANT_ID}
       AZURE_CLIENT_ID: ${AZURE_CLIENT_ID}
