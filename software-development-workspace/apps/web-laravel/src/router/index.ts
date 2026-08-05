@@ -28,6 +28,7 @@ import RoleAssignmentsView from "../views/RoleAssignmentsView.vue";
 import TravelSettingsView from "../views/Travel/TravelSettingsView.vue";
 import TravelRequestsView from "../views/Travel/TravelRequestsView.vue";
 import TravelRequestWizard from "../views/Travel/TravelRequestWizard.vue";
+import TravelRequestDetailView from "../views/Travel/TravelRequestDetailView.vue";
 import AssetsView          from "../views/Asset/AssetsView.vue";
 import AssetDetailView     from "../views/Asset/AssetDetailView.vue";
 
@@ -100,6 +101,7 @@ const routes: RouteRecordRaw[] = [
   // ── Operations ───────────────────────────────────────────────────────────
   { path: "/travel",          name: "travel-requests",   component: TravelRequestsView },
   { path: "/travel/new",      name: "travel-request-new", component: TravelRequestWizard },
+  { path: "/travel/:id",      name: "travel-request",     component: TravelRequestDetailView, props: true },
   { path: "/travel/settings", name: "travel-settings",   component: TravelSettingsView },
   { path: "/assets",          name: "assets",        component: AssetsView },
   { path: "/assets/:id",      name: "asset-detail",  component: AssetDetailView, props: true },

@@ -44,7 +44,25 @@ class TravelRequestResource extends JsonResource
 
             'items'     => TravelRequestItemResource::collection($this->whenLoaded('items')),
             'itinerary' => $this->whenLoaded('itinerary'),
+            'bookings'  => $this->whenLoaded('bookings'),
+            'activity'  => $this->whenLoaded('activity', fn () => $this->activity->map(fn ($a) => [
+                'id'          => $a->id,
+                'event'       => $a->event,
+                'description' => $a->description,
+                'actor'       => $a->actor?->full_name,
+                'occurred_at' => $a->occurred_at?->toIso8601String(),
+            ])),
             'approvals' => TravelApprovalResource::collection($this->whenLoaded('approvals')),
+
+            /*
+             * Whether this viewer may decide the stage now pending.
+             *
+             * Answered by the policy rather than re-derived in the client,
+             * which would drift from it — the policy also honours named
+             * delegates acting on a head's behalf, a rule the browser has no
+             * way to know.
+             */
+            'can_decide' => $request->user()?->can('decide', $this->resource) ?? false,
 
             'submitted_at' => $this->submitted_at?->toIso8601String(),
             'completed_at' => $this->completed_at?->toIso8601String(),

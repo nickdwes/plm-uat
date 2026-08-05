@@ -117,6 +117,27 @@ class TravelRequest extends Model
         return $this->hasMany(TravelItineraryItem::class)->orderBy('starts_on')->orderBy('position');
     }
 
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(TravelBooking::class)->orderBy('booking_date');
+    }
+
+    public function activity(): HasMany
+    {
+        return $this->hasMany(TravelActivity::class)->orderByDesc('occurred_at');
+    }
+
+    /** Record an event on the trail. */
+    public function recordActivity(string $event, ?string $description = null, ?int $actorEmployeeId = null): void
+    {
+        $this->activity()->create([
+            'event'             => $event,
+            'description'       => $description,
+            'actor_employee_id' => $actorEmployeeId,
+            'occurred_at'       => now(),
+        ]);
+    }
+
     public function approvals(): HasMany
     {
         return $this->hasMany(TravelApproval::class)->orderBy('sequence');

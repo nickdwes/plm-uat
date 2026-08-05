@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Travel\StoreTravelRequest;
 use App\Http\Resources\Travel\TravelRequestResource;
 use App\Models\Travel\TravelRequest;
+use App\Models\Travel\TravelBooking;
 use App\Models\Travel\TravelItineraryItem;
 use App\Models\Travel\TravelRequestItem;
 use App\Services\Travel\TravelRequestService;
@@ -106,7 +107,11 @@ class TravelRequestController extends Controller
         $this->authorize('view', $travelRequest);
 
         return new TravelRequestResource(
-            $travelRequest->load(['items.category', 'approvals.expectedApprover', 'employee', 'destination', 'account'])
+            $travelRequest->load([
+                'items.category', 'approvals.expectedApprover', 'approvals.request',
+                'employee', 'destination', 'account',
+                'itinerary', 'bookings', 'activity.actor',
+            ])
         );
     }
 
@@ -257,6 +262,46 @@ class TravelRequestController extends Controller
         $itinerary->delete();
 
         return new TravelRequestResource($travelRequest->fresh(['itinerary', 'items.category']));
+    }
+
+    // ── Bookings ──────────────────────────────────────────────────────────
+    //
+    // What was bought, as opposed to what was approved. Recorded after the
+    // fact, so an approved request stays editable here while its estimate does
+    // not.
+
+    public function storeBooking(Request $request, TravelRequest $travelRequest): TravelRequestResource
+    {
+        $this->authorize('view', $travelRequest);
+
+        $data = $request->validate([
+            'booking_type'  => ['required', Rule::in(TravelBooking::TYPES)],
+            'vendor'        => ['nullable', 'string', 'max:255'],
+            'status'        => ['sometimes', Rule::in(['pending', 'confirmed', 'cancelled'])],
+            'reference'     => ['nullable', 'string', 'max:128'],
+            'from_location' => ['nullable', 'string', 'max:255'],
+            'to_location'   => ['nullable', 'string', 'max:255'],
+            'booking_date'  => ['nullable', 'date'],
+            'total_cost'    => ['nullable', 'numeric', 'min:0'],
+            'currency'      => ['sometimes', 'string', 'size:3'],
+        ]);
+
+        $travelRequest->bookings()->create($data + ['created_by' => $request->user()->id]);
+        $travelRequest->recordActivity('booked',
+            ucfirst($data['booking_type']) . ' booked' . (isset($data['vendor']) ? ' with ' . $data['vendor'] : ''),
+            $request->user()->employeeId());
+
+        return new TravelRequestResource($travelRequest->fresh(['bookings', 'activity.actor']));
+    }
+
+    public function destroyBooking(TravelRequest $travelRequest, TravelBooking $booking): TravelRequestResource
+    {
+        $this->authorize('view', $travelRequest);
+        abort_unless($booking->travel_request_id === $travelRequest->id, 404);
+
+        $booking->delete();
+
+        return new TravelRequestResource($travelRequest->fresh(['bookings', 'activity.actor']));
     }
 
     public function destroy(TravelRequest $travelRequest): JsonResponse

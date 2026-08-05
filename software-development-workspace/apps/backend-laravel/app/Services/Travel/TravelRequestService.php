@@ -55,6 +55,7 @@ class TravelRequestService
             ])->all());
 
             $request->update(['reference' => $this->reference($request)]);
+            $request->recordActivity('created', 'Draft created', $employeeId);
 
             // A new request has no lines yet: the traveller adds them in the
             // expenses step, and each is checked against policy as it lands.
@@ -200,6 +201,11 @@ class TravelRequestService
             }
 
             $request->update(['status' => 'in_approval', 'submitted_at' => now()]);
+            $request->recordActivity(
+                'submitted',
+                'Submitted for approval (' . $stages->count() . ' stage' . ($stages->count() > 1 ? 's' : '') . ')',
+                $request->employee_id,
+            );
 
             return $request->fresh(['approvals', 'items']);
         });
@@ -227,6 +233,12 @@ class TravelRequestService
                 'comment'                => $comment,
                 'decided_at'             => now(),
             ]);
+
+            $request->recordActivity(
+                $decision === 'approve' ? 'approved' : 'rejected',
+                ucfirst(str_replace('_', ' ', $approval->stage)) . ($comment ? ': ' . $comment : ''),
+                $employeeId,
+            );
 
             if ($decision !== 'approve') {
                 // Remaining stages are marked skipped rather than left pending,

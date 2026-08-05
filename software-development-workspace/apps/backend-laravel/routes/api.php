@@ -229,6 +229,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{travelRequest}/itinerary',              [TravelRequestController::class, 'storeItinerary']);
         Route::delete('/{travelRequest}/itinerary/{itinerary}', [TravelRequestController::class, 'destroyItinerary']);
 
+        Route::post('/{travelRequest}/bookings',           [TravelRequestController::class, 'storeBooking']);
+        Route::delete('/{travelRequest}/bookings/{booking}',[TravelRequestController::class, 'destroyBooking']);
+
         Route::post('/{travelRequest}/submit', [TravelRequestController::class, 'submit']);
 
         // One endpoint for all four stages. Which stage is being decided is a

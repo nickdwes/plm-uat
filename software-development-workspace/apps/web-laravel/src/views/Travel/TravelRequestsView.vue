@@ -149,9 +149,11 @@ onMounted(load);
             <td class="tr-amount">{{ r.currency }} {{ Number(r.total_claimed).toLocaleString() }}</td>
             <td>{{ r.submitted_at ? r.submitted_at.slice(0, 10) : "—" }}</td>
             <td><span :class="['pill', `pill-${statusTone(r.status)}`]">{{ statusLabel(r) }}</span></td>
-            <!-- The detail view lands next; a link to a route that does not
-                 exist yet would throw when clicked. -->
-            <td class="tr-pending">Detail view coming</td>
+            <td>
+              <button class="link-btn" @click="router.push({ name: 'travel-request', params: { id: r.id } })">
+                View
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>
