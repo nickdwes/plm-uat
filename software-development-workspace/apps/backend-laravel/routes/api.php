@@ -199,9 +199,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     Route::prefix('accounts')->group(function () {
         Route::get('/',                [AccountController::class, 'index']);
         Route::post('/',               [AccountController::class, 'store']);
+
+        // Before /{account}: a literal segment declared after a route
+        // parameter is never reached.
+        Route::get('/lookups',         [AccountController::class, 'lookups']);
+
         Route::get('/{account}',       [AccountController::class, 'show']);
         Route::put('/{account}',       [AccountController::class, 'update']);
         Route::delete('/{account}',    [AccountController::class, 'destroy']);
+
+        // Who works the account, beyond the manager who owns it.
+        Route::post('/{account}/team',           [AccountController::class, 'storeTeamMember']);
+        Route::delete('/{account}/team/{member}',[AccountController::class, 'destroyTeamMember']);
+
+        // What we have agreed to do for them, and until when.
+        Route::post('/{account}/contracts',             [AccountController::class, 'storeContract']);
+        Route::put('/{account}/contracts/{contract}',   [AccountController::class, 'updateContract']);
+        Route::delete('/{account}/contracts/{contract}',[AccountController::class, 'destroyContract']);
 
         Route::post('/{account}/contacts',              [AccountController::class, 'storeContact']);
         Route::put('/{account}/contacts/{contact}',     [AccountController::class, 'updateContact']);

@@ -63,9 +63,31 @@ class Account extends Model
         return $this->belongsTo(AccountSubsector::class, 'account_subsector_id');
     }
 
+    /**
+     * The people who work this account.
+     *
+     * The manager owns it; the team serves it. Keeping them apart means one
+     * place names who is accountable and the two cannot disagree.
+     */
+    public function team(): HasMany
+    {
+        return $this->hasMany(AccountTeamMember::class);
+    }
+
     public function contacts(): HasMany
     {
         return $this->hasMany(AccountContact::class);
+    }
+
+    /**
+     * What we have agreed to do for them.
+     *
+     * Newest first: the live agreement is what people open the record to
+     * check, not the one that ran out three years ago.
+     */
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(AccountContract::class)->orderByDesc('end_date');
     }
 
     public function primaryContact(): HasMany

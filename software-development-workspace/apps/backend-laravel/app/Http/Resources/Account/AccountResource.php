@@ -32,6 +32,12 @@ class AccountResource extends JsonResource
             'details'             => $this->details,
 
             'contacts'   => AccountContactResource::collection($this->whenLoaded('contacts')),
+            'contracts'  => AccountContractResource::collection($this->whenLoaded('contracts')),
+            'team'       => $this->whenLoaded('team', fn () => $this->team->map(fn ($m) => [
+                'id'       => $m->id,
+                'employee' => ['id' => $m->employee?->id, 'name' => $m->employee?->full_name],
+                'role'     => $m->role,
+            ])),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

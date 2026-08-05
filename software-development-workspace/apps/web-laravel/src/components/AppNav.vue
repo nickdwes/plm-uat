@@ -245,6 +245,18 @@ watch(() => route.name, () => {
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Operations</div>
 
+      <!-- ── Customers ──────────────────────────────────────────────────────── -->
+      <!-- Before Travel, because a travel request names the customer it is
+           for — you reach for this to file one, not after. -->
+      <router-link :to="{ name: 'accounts' }" :class="['nav-item', { active: isActive('account') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 16.5v-9l4-2.5 4 2.5v9M11 16.5v-6l3-2 3 2v6M2 16.5h16" />
+          <path d="M5.5 9h1M5.5 12h1M13.5 12h1" />
+        </svg>
+        Customers
+      </router-link>
+
       <!-- ── Travel ─────────────────────────────────────────────────────────── -->
       <button
         :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('travel') }]"

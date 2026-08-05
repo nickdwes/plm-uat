@@ -5,6 +5,7 @@ namespace App\Http\Controllers\HR;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Models\Role;
+use App\Support\Account\DefaultReferenceData;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -95,6 +96,11 @@ class OrganizationController extends Controller
             'country'   => $data['country']  ?? 'KE',
             'is_active' => true,
         ]));
+
+        // Customer types and sectors, so the customer form has something in
+        // its dropdowns from the first day rather than after somebody works
+        // out that the lists are per-tenant and arrive empty.
+        DefaultReferenceData::seedFor($org->id);
 
         // Assign user as Org HR Admin on this new organisation
         $role = Role::where('name', 'org_hr')->first();

@@ -70,6 +70,10 @@ import EnrollmentManagerView      from "../views/Training/EnrollmentManagerView.
 import ManagerTrainingApprovalsView from "../views/Training/ManagerTrainingApprovalsView.vue";
 import VendorComplianceView          from "../views/Training/VendorComplianceView.vue";
 
+// Accounts (customer master)
+import AccountsView                  from "../views/Account/AccountsView.vue";
+import AccountDetailView             from "../views/Account/AccountDetailView.vue";
+
 // Vendor Module
 import VendorsView                   from "../views/Vendor/VendorsView.vue";
 import VendorProfileView             from "../views/Vendor/VendorProfileView.vue";
@@ -142,6 +146,10 @@ const routes: RouteRecordRaw[] = [
   { path: "/training/enroll",             name: "training-enroll",         component: EnrollmentManagerView },
   { path: "/training/approvals",          name: "training-approvals",       component: ManagerTrainingApprovalsView },
   { path: "/training/vendor-compliance",  name: "vendor-compliance",        component: VendorComplianceView },
+  // ── Accounts (customer master) ────────────────────────────────────────────
+  { path: "/accounts",      name: "accounts",       component: AccountsView },
+  { path: "/accounts/:id",  name: "account",        component: AccountDetailView, props: true },
+
   // ── Vendor Module ─────────────────────────────────────────────────────────
   { path: "/vendors",       name: "vendors",        component: VendorsView },
   { path: "/vendors/:id",   name: "vendor-profile", component: VendorProfileView, props: true },
