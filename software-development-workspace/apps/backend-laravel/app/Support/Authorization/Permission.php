@@ -164,7 +164,18 @@ final class Permission
     public const TRAVEL_APPROVE   = 'travel.approve';
     public const TRAVEL_REJECT    = 'travel.reject';
     public const TRAVEL_MANAGE    = 'travel.manage';
-    /** Reserved for the finance stage added in the travel second pass. */
+    /**
+     * The finance stages are separate authorities and must not collapse into
+     * one. With a single `travel.approve`, anyone able to approve a trip could
+     * also release the money — precisely the separation a four-stage chain
+     * exists to enforce.
+     */
+    public const TRAVEL_ASSESS_FINANCE    = 'travel.assess_finance';
+    public const TRAVEL_APPROVE_EXECUTIVE = 'travel.approve_executive';
+    /** Destinations, expense categories and the allowance rate card. */
+    public const TRAVEL_MANAGE_RATES      = 'travel.manage_rates';
+    /** Reserved. No reconciliation workflow is built: the legacy table held
+     *  zero rows across 102 requests. */
     public const TRAVEL_RECONCILE = 'travel.reconcile';
 
     /**
@@ -238,7 +249,8 @@ final class Permission
             'travel'        => [
                 self::TRAVEL_VIEW, self::TRAVEL_VIEW_OWN, self::TRAVEL_VIEW_TEAM,
                 self::TRAVEL_SUBMIT, self::TRAVEL_APPROVE, self::TRAVEL_REJECT,
-                self::TRAVEL_MANAGE, self::TRAVEL_RECONCILE,
+                self::TRAVEL_ASSESS_FINANCE, self::TRAVEL_APPROVE_EXECUTIVE,
+                self::TRAVEL_MANAGE_RATES, self::TRAVEL_MANAGE, self::TRAVEL_RECONCILE,
             ],
         ];
     }
