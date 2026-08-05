@@ -112,6 +112,11 @@ class TravelRequest extends Model
         return $this->hasMany(TravelRequestItem::class);
     }
 
+    public function itinerary(): HasMany
+    {
+        return $this->hasMany(TravelItineraryItem::class)->orderBy('starts_on')->orderBy('position');
+    }
+
     public function approvals(): HasMany
     {
         return $this->hasMany(TravelApproval::class)->orderBy('sequence');

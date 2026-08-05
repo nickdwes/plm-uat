@@ -26,6 +26,8 @@ import RoleAssignmentsView from "../views/RoleAssignmentsView.vue";
 
 // Assets
 import TravelSettingsView from "../views/Travel/TravelSettingsView.vue";
+import TravelRequestsView from "../views/Travel/TravelRequestsView.vue";
+import TravelRequestWizard from "../views/Travel/TravelRequestWizard.vue";
 import AssetsView          from "../views/Asset/AssetsView.vue";
 import AssetDetailView     from "../views/Asset/AssetDetailView.vue";
 
@@ -96,7 +98,9 @@ const routes: RouteRecordRaw[] = [
   { path: "/org/payroll-config",   name: "payroll-config",   component: PayrollConfigView },
   { path: "/org/role-assignments", name: "role-assignments", component: RoleAssignmentsView },
   // ── Operations ───────────────────────────────────────────────────────────
-  { path: "/travel/settings", name: "travel-settings", component: TravelSettingsView },
+  { path: "/travel",          name: "travel-requests",   component: TravelRequestsView },
+  { path: "/travel/new",      name: "travel-request-new", component: TravelRequestWizard },
+  { path: "/travel/settings", name: "travel-settings",   component: TravelSettingsView },
   { path: "/assets",          name: "assets",        component: AssetsView },
   { path: "/assets/:id",      name: "asset-detail",  component: AssetDetailView, props: true },
   { path: "/performance",          name: "performance",      component: PerformanceView },

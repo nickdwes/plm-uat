@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Travel\StoreTravelRequest;
 use App\Http\Resources\Travel\TravelRequestResource;
 use App\Models\Travel\TravelRequest;
+use App\Models\Travel\TravelItineraryItem;
 use App\Models\Travel\TravelRequestItem;
 use App\Services\Travel\TravelRequestService;
 use App\Support\Authorization\Permission;
@@ -59,9 +60,29 @@ class TravelRequestController extends Controller
     {
         $this->authorize('create', TravelRequest::class);
 
+        $data = $request->validated();
+        $self = $request->user()->employeeId();
+
+        // Default to the caller. Naming someone else is raising a request on
+        // their behalf, which is a different act and needs travel.manage —
+        // otherwise anyone could commit a colleague's budget.
+        if (! array_key_exists('employee_id', $data) || (int) $data['employee_id'] === $self) {
+            $data['employee_id'] = $self;
+        } elseif (! $request->user()->hasPermission(Permission::TRAVEL_MANAGE)) {
+            throw ValidationException::withMessages([
+                'employee_id' => 'You can only raise travel requests for yourself.',
+            ]);
+        }
+
+        if (! $data['employee_id']) {
+            throw ValidationException::withMessages([
+                'employee_id' => 'Your user account is not linked to an employee record, so travel cannot be raised.',
+            ]);
+        }
+
         try {
             $created = $this->service->create(
-                data: $request->validated(),
+                data: $data,
                 organizationId: app('current.organization_id'),
                 actorId: $request->user()->id,
             );
@@ -206,6 +227,36 @@ class TravelRequestController extends Controller
         }
 
         return new TravelRequestResource($updated->load(['items.category']));
+    }
+
+    // ── Itinerary ─────────────────────────────────────────────────────────
+
+    public function storeItinerary(Request $request, TravelRequest $travelRequest): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+
+        $data = $request->validate([
+            'starts_on'      => ['required', 'date'],
+            'ends_on'        => ['nullable', 'date', 'after_or_equal:starts_on'],
+            'at_time'        => ['nullable', 'date_format:H:i'],
+            'activity'       => ['required', 'string', 'max:255'],
+            'category'       => ['nullable', 'string', 'max:64'],
+            'estimated_cost' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $travelRequest->itinerary()->create($data);
+
+        return new TravelRequestResource($travelRequest->fresh(['itinerary', 'items.category']));
+    }
+
+    public function destroyItinerary(TravelRequest $travelRequest, TravelItineraryItem $itinerary): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+        abort_unless($itinerary->travel_request_id === $travelRequest->id, 404);
+
+        $itinerary->delete();
+
+        return new TravelRequestResource($travelRequest->fresh(['itinerary', 'items.category']));
     }
 
     public function destroy(TravelRequest $travelRequest): JsonResponse

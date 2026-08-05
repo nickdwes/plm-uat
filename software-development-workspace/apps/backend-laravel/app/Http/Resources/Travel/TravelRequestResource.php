@@ -36,7 +36,14 @@ class TravelRequestResource extends JsonResource
             'total_approved'   => $this->total_approved,
             'advance_required' => $this->advance_required,
 
+            'priority'             => $this->priority,
+            'accommodation_needed' => $this->accommodation_needed,
+            'flexible_days'        => $this->flexible_days,
+            'advance_justification'=> $this->advance_justification,
+            'linked_task_ref'      => $this->linked_task_ref,
+
             'items'     => TravelRequestItemResource::collection($this->whenLoaded('items')),
+            'itinerary' => $this->whenLoaded('itinerary'),
             'approvals' => TravelApprovalResource::collection($this->whenLoaded('approvals')),
 
             'submitted_at' => $this->submitted_at?->toIso8601String(),

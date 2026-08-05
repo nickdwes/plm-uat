@@ -17,9 +17,12 @@ class StoreTravelRequest extends FormRequest
         $orgId = app('current.organization_id');
 
         return [
+            // Optional: a traveller raising their own request should not have
+            // to state who they are. The controller defaults it to the caller,
+            // and raising on someone else's behalf needs travel.manage.
             // Membership in this organisation is checked in the service, which
             // has to consider secondments as well as primary placement.
-            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'employee_id' => ['sometimes', 'integer', 'exists:employees,id'],
 
             // Every reference is confirmed to belong to this organisation.
             // `exists` alone would let a request name another tenant's
