@@ -39,7 +39,8 @@ class TravelRequest extends Model
 
     protected $fillable = [
         'organization_id', 'reference', 'employee_id', 'department_id', 'functional_unit_id',
-        'account_id', 'linked_task_ref', 'travel_destination_id', 'travel_mode', 'travel_type',
+        'account_id', 'linked_task_ref', 'delivery_reference', 'delivery_note_attachment_id',
+        'travel_destination_id', 'travel_mode', 'travel_type',
         'priority', 'accommodation_needed', 'flexible_days',
         'advance_justification', 'departure_date', 'return_date',
         'days', 'purpose', 'business_impact', 'currency', 'total_claimed', 'total_approved',
@@ -132,6 +133,62 @@ class TravelRequest extends Model
     public function transportLegs(): HasMany
     {
         return $this->hasMany(TravelTransportLeg::class);
+    }
+
+    /** What is in the vehicle, for a delivery. */
+    public function manifest(): HasMany
+    {
+        return $this->hasMany(\App\Models\Delivery\DeliveryManifestItem::class);
+    }
+
+    /** Who is delivering it. */
+    public function couriers(): HasMany
+    {
+        return $this->hasMany(\App\Models\Delivery\DeliveryCourier::class);
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(TravelAttachment::class);
+    }
+
+    public function isDelivery(): bool
+    {
+        return $this->travel_type === 'delivery';
+    }
+
+    /**
+     * Whether this delivery has everything it needs to close.
+     *
+     * A signed note, and every manifest line accounted for. "Has an
+     * attachment" is not the same statement — a quotation would satisfy that,
+     * and a delivery where four of five items arrived would close silently.
+     *
+     * @return string[] what is still missing
+     */
+    public function deliveryGaps(): array
+    {
+        if (! $this->isDelivery()) {
+            return [];
+        }
+
+        $gaps = [];
+
+        if ($this->delivery_note_attachment_id === null) {
+            $gaps[] = 'a signed delivery note';
+        }
+
+        if ($this->manifest->isEmpty()) {
+            $gaps[] = 'a manifest of what was delivered';
+        }
+
+        $unreceived = $this->manifest->reject->isFullyReceived();
+
+        if ($unreceived->isNotEmpty()) {
+            $gaps[] = $unreceived->count() . ' manifest line(s) not signed for';
+        }
+
+        return $gaps;
     }
 
     public function bookings(): HasMany

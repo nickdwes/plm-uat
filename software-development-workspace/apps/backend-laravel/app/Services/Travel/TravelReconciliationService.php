@@ -165,6 +165,19 @@ class TravelReconciliationService
             );
         }
 
+        /*
+         * A delivery closes against its paperwork, not against fuel receipts.
+         *
+         * The note proves it arrived and the manifest proves what arrived —
+         * and a delivery where four of five items turned up is exactly the
+         * case a single "delivered" flag would close silently.
+         */
+        $gaps = $request->load('manifest')->deliveryGaps();
+
+        if ($gaps !== []) {
+            throw new RuntimeException('This delivery still needs ' . implode(', ', $gaps) . '.');
+        }
+
         $request->update([
             'status'                    => 'closed',
             'reconciled_at'             => now(),
