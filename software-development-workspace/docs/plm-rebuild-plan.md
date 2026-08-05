@@ -241,6 +241,7 @@ Phase D, not during it.
 | Customer scope | Per organisation |
 | Approval chain | Four stages: HOD, function head, finance officer, CFO |
 | Allowance model | Rate card by grade, destination and activity, effective-dated |
+| Stage thresholds | Configurable per organisation, by amount |
 | Legacy data migration | Deferred |
 
 ### The chain
@@ -316,10 +317,53 @@ one conditional on amount — is configuration rather than a migration. Rows als
 make the common ask answerable: where is this request, and who is it waiting
 on.
 
-A threshold rule is worth considering here rather than later: sending a small
-domestic trip through all four stages is what makes approval chains get
-bypassed informally. The structure supports skipping stages by amount without
-any schema change.
+### Thresholds
+
+Stages are configurable, so a small domestic trip need not collect four
+signatures. Sending trivial amounts through the full chain is what makes
+approval processes get bypassed informally — people travel first and raise the
+request afterwards, or stop raising them at all.
+
+```
+travel_approval_stages          -- per organisation, configuration
+  organization_id
+  stage                  department_head | function_head | finance | executive
+  sequence               1, 2, 3, 4
+  required_above_amount  nullable  -- null: always required
+  currency
+  is_active
+```
+
+So an organisation might require the department head on everything, the
+function head above 50,000, finance on everything, and the CFO above 200,000.
+At submission the request total is compared against each active stage and the
+`travel_approvals` rows are created for those that apply.
+
+Four constraints on this, each of which turns a convenience into a hole if
+missed:
+
+**The chain is snapshotted at submission**, exactly like the rate. If the
+policy is edited while a request is in flight, that request keeps the chain it
+started with. Otherwise a request can gain an approver after being approved, or
+lose one before being paid.
+
+**At least one stage is always required.** A configuration that resolves to
+zero approvals must be rejected at save time, not discovered when a request
+self-approves. The department head stage should not be given a threshold.
+
+**Thresholds are per currency.** A limit of 50,000 means nothing without one,
+and if requests can be raised in more than one currency the comparison needs
+either per-currency rows or a conversion at submission. Per-currency rows are
+simpler and do not silently depend on an exchange rate nobody recorded.
+
+**Splitting is the obvious way round it.** Two trips of 30,000 avoid a
+threshold that one of 60,000 would meet. Worth a report of repeated requests by
+the same employee to the same destination within a window, rather than trying
+to prevent it — the control is visibility, not blocking.
+
+Still to decide: is the threshold measured on total estimated cost, or on the
+advance actually requested? Those differ, and the second is easier to keep
+under a limit while the first is what the organisation is committing to.
 
 ### The rate card
 
