@@ -30,6 +30,8 @@ class TravelRequest extends Model
 {
     use BelongsToOrganization, SoftDeletes;
 
+    public const TRAVEL_TYPES = ['local', 'international', 'delivery'];
+
     public const STATUSES = [
         'draft', 'submitted', 'in_approval', 'approved', 'rejected',
         'cancelled', 'disbursed', 'closed',
@@ -37,7 +39,7 @@ class TravelRequest extends Model
 
     protected $fillable = [
         'organization_id', 'reference', 'employee_id', 'department_id', 'functional_unit_id',
-        'account_id', 'linked_task_ref', 'travel_destination_id', 'travel_mode',
+        'account_id', 'linked_task_ref', 'travel_destination_id', 'travel_mode', 'travel_type',
         'priority', 'accommodation_needed', 'flexible_days',
         'advance_justification', 'departure_date', 'return_date',
         'days', 'purpose', 'business_impact', 'currency', 'total_claimed', 'total_approved',

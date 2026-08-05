@@ -275,11 +275,18 @@ class TravelSettingsController extends Controller
 
     // ── Approval stages ───────────────────────────────────────────────────
 
-    public function stages(): JsonResponse
+    public function stages(Request $request): JsonResponse
     {
         $this->authorizeSettings();
 
-        return response()->json(['data' => TravelApprovalStage::orderBy('sequence')->get()]);
+        $q = TravelApprovalStage::orderBy('sequence');
+
+        // A type is asked for explicitly. Returning every chain at once would
+        // make the caller separate them, and the screen edits one at a time.
+        $type = $request->input('travel_type');
+        $type ? $q->where('travel_type', $type) : $q->whereNull('travel_type');
+
+        return response()->json(['data' => $q->get()]);
     }
 
     /**
@@ -294,6 +301,10 @@ class TravelSettingsController extends Controller
         $this->authorizeSettings();
 
         $data = $request->validate([
+            // Null is the default chain, used by any journey type without one
+            // of its own. A delivery chain replaces it rather than adding to
+            // it, because a delivery is not approved by a line manager.
+            'travel_type'                     => ['nullable', Rule::in(\App\Models\Travel\TravelRequest::TRAVEL_TYPES)],
             'stages'                          => ['required', 'array', 'min:1'],
             'stages.*.stage'                  => ['required', Rule::in(TravelApprovalStage::STAGES)],
             'stages.*.sequence'               => ['required', 'integer', 'min:1'],
@@ -318,9 +329,11 @@ class TravelSettingsController extends Controller
             throw ValidationException::withMessages(['stages' => 'Each stage may appear only once.']);
         }
 
+        $type = $data['travel_type'] ?? null;
+
         foreach ($data['stages'] as $stage) {
             TravelApprovalStage::updateOrCreate(
-                ['organization_id' => $this->orgId(), 'stage' => $stage['stage']],
+                ['organization_id' => $this->orgId(), 'stage' => $stage['stage'], 'travel_type' => $type],
                 [
                     'sequence'              => $stage['sequence'],
                     'required_above_amount' => $stage['required_above_amount'] ?? null,
@@ -330,6 +343,8 @@ class TravelSettingsController extends Controller
             );
         }
 
-        return response()->json(['data' => TravelApprovalStage::orderBy('sequence')->get()]);
+        return response()->json([
+            'data' => TravelApprovalStage::where('travel_type', $type)->orderBy('sequence')->get(),
+        ]);
     }
 }

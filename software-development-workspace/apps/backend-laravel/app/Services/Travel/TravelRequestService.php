@@ -49,7 +49,7 @@ class TravelRequestService
                 'created_by'         => $actorId,
                 'days'               => $this->days($data['departure_date'], $data['return_date']),
             ] + collect($data)->only([
-                'account_id', 'travel_destination_id', 'travel_mode',
+                'account_id', 'travel_destination_id', 'travel_mode', 'travel_type',
                 'departure_date', 'return_date', 'purpose', 'business_impact',
                 'currency', 'advance_required',
             ])->all());
@@ -71,7 +71,7 @@ class TravelRequestService
 
         return DB::transaction(function () use ($request, $data) {
             $request->update(collect($data)->only([
-                'account_id', 'travel_destination_id', 'travel_mode',
+                'account_id', 'travel_destination_id', 'travel_mode', 'travel_type',
                 'departure_date', 'return_date', 'purpose', 'business_impact', 'advance_required',
             ])->all() + [
                 'days' => $this->days(
@@ -174,12 +174,7 @@ class TravelRequestService
         }
 
         return DB::transaction(function () use ($request) {
-            $stages = TravelApprovalStage::where('organization_id', $request->organization_id)
-                ->where('is_active', true)
-                ->orderBy('sequence')
-                ->get()
-                ->filter(fn (TravelApprovalStage $s) => $s->appliesTo((float) $request->total_claimed, $request->currency))
-                ->values();
+            $stages = $this->stagesFor($request);
 
             // A configuration that resolves to no approvals would let a
             // request approve itself. Refused here rather than discovered when
@@ -265,6 +260,40 @@ class TravelRequestService
 
             return $request->fresh(['approvals', 'items']);
         });
+    }
+
+
+    /**
+     * The chain this request passes through.
+     *
+     * A delivery is not approved by the requester's line manager: moving
+     * equipment is a finance and operations decision, and routing it through a
+     * department head asks someone to sign for a judgement that was never
+     * theirs. So a type-specific chain, when one is configured, replaces the
+     * default entirely rather than adding to it.
+     *
+     * Thresholds then decide which of those stages also apply. They never
+     * decide whether a request is approved at all — every request goes through
+     * the chain.
+     */
+    private function stagesFor(TravelRequest $request)
+    {
+        $all = TravelApprovalStage::where('organization_id', $request->organization_id)
+            ->where('is_active', true)
+            ->orderBy('sequence')
+            ->get();
+
+        $specific = $all->where('travel_type', $request->travel_type);
+
+        // Fall back to the default chain when this type has none of its own,
+        // rather than leaving a delivery with no approvers.
+        $applicable = $specific->isNotEmpty()
+            ? $specific
+            : $all->whereNull('travel_type');
+
+        return $applicable
+            ->filter(fn (TravelApprovalStage $s) => $s->appliesTo((float) $request->total_claimed, $request->currency))
+            ->values();
     }
 
     /** Inclusive of both travel days: a same-day trip is one day, not zero. */

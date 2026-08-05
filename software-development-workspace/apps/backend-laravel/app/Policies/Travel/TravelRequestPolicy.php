@@ -102,7 +102,11 @@ class TravelRequestPolicy extends BasePolicy
                 && $this->mayActOnStage($user, $request, $pending->stage, $pending->expected_approver_id),
 
             'finance'   => $this->can($user, Permission::TRAVEL_ASSESS_FINANCE),
-            'executive' => $this->can($user, Permission::TRAVEL_APPROVE_EXECUTIVE),
+            'executive'            => $this->can($user, Permission::TRAVEL_APPROVE_EXECUTIVE),
+            // A large consignment is signed off by the COO. Separate from the
+            // CFO's authority because it is an operations judgement, and the
+            // two are held by different people.
+            'operations_executive' => $this->can($user, Permission::TRAVEL_APPROVE_OPERATIONS),
 
             default => false,
         };

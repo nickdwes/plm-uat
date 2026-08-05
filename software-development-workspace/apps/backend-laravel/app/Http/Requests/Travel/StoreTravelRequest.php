@@ -33,6 +33,9 @@ class StoreTravelRequest extends FormRequest
                 Rule::exists('travel_destinations', 'id')->where('organization_id', $orgId)],
 
             'travel_mode'     => ['nullable', 'string', 'max:32'],
+            // Decides which approval chain applies, so it is part of the
+            // request rather than derived from the legs.
+            'travel_type'     => ['sometimes', Rule::in(\App\Models\Travel\TravelRequest::TRAVEL_TYPES)],
             'departure_date'  => ['required', 'date'],
             // Same-day travel is one day, so equal dates are valid.
             'return_date'     => ['required', 'date', 'after_or_equal:departure_date'],

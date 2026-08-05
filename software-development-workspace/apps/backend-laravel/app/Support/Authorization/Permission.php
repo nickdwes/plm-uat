@@ -172,6 +172,14 @@ final class Permission
      */
     public const TRAVEL_ASSESS_FINANCE    = 'travel.assess_finance';
     public const TRAVEL_APPROVE_EXECUTIVE = 'travel.approve_executive';
+    /**
+     * The COO stage on a delivery.
+     *
+     * Separate from the CFO's: signing off a large consignment of equipment is
+     * an operations judgement, not a financial one, and the two are held by
+     * different people.
+     */
+    public const TRAVEL_APPROVE_OPERATIONS = 'travel.approve_operations';
     /** Destinations, expense categories and the allowance rate card. */
     public const TRAVEL_MANAGE_RATES      = 'travel.manage_rates';
     /** Reserved. No reconciliation workflow is built: the legacy table held
@@ -250,6 +258,7 @@ final class Permission
                 self::TRAVEL_VIEW, self::TRAVEL_VIEW_OWN, self::TRAVEL_VIEW_TEAM,
                 self::TRAVEL_SUBMIT, self::TRAVEL_APPROVE, self::TRAVEL_REJECT,
                 self::TRAVEL_ASSESS_FINANCE, self::TRAVEL_APPROVE_EXECUTIVE,
+                self::TRAVEL_APPROVE_OPERATIONS,
                 self::TRAVEL_MANAGE_RATES, self::TRAVEL_MANAGE, self::TRAVEL_RECONCILE,
             ],
         ];

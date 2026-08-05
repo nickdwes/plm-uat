@@ -15,10 +15,16 @@ class TravelApprovalStage extends Model
 {
     use BelongsToOrganization;
 
-    public const STAGES = ['department_head', 'function_head', 'finance', 'executive'];
+    public const STAGES = [
+        'department_head', 'function_head', 'finance', 'executive',
+        // The COO, on deliveries. An operations judgement rather than a
+        // financial one, and held by a different person from the CFO.
+        'operations_executive',
+    ];
 
     protected $fillable = [
-        'organization_id', 'stage', 'sequence', 'required_above_amount', 'currency', 'is_active',
+        'organization_id', 'stage', 'travel_type', 'sequence',
+        'required_above_amount', 'currency', 'is_active',
     ];
 
     protected $casts = [
