@@ -34,6 +34,7 @@ use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\WorkLocationController;
+use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Authorization\RoleController;
 use App\Http\Controllers\Goals\GoalController;
@@ -185,6 +186,22 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/users/{user}/assignments', [RoleController::class, 'assignmentsFor']);
         Route::post('/assignments',       [RoleController::class, 'grant']);
         Route::delete('/assignments/{assignment}', [RoleController::class, 'revoke']);
+    });
+
+    // ── Accounts (customer master) ────────────────────────────────────────────
+    //
+    // Exists ahead of Travel: a travel request names the customer it is for,
+    // and 94 of 102 legacy requests did.
+    Route::prefix('accounts')->group(function () {
+        Route::get('/',                [AccountController::class, 'index']);
+        Route::post('/',               [AccountController::class, 'store']);
+        Route::get('/{account}',       [AccountController::class, 'show']);
+        Route::put('/{account}',       [AccountController::class, 'update']);
+        Route::delete('/{account}',    [AccountController::class, 'destroy']);
+
+        Route::post('/{account}/contacts',              [AccountController::class, 'storeContact']);
+        Route::put('/{account}/contacts/{contact}',     [AccountController::class, 'updateContact']);
+        Route::delete('/{account}/contacts/{contact}',  [AccountController::class, 'destroyContact']);
     });
 
     // ── Assets ────────────────────────────────────────────────────────────────

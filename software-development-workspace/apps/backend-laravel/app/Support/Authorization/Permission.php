@@ -144,6 +144,18 @@ final class Permission
     public const ASSETS_REPORT_ISSUE  = 'assets.report_issue';
     public const ASSETS_RESOLVE_ISSUE = 'assets.resolve_issue';
 
+    // ── Accounts (customer master) ────────────────────────────────────────
+    public const ACCOUNTS_VIEW       = 'accounts.view';
+    /** An account manager seeing only the customers assigned to them. */
+    public const ACCOUNTS_VIEW_OWN   = 'accounts.view_own';
+    public const ACCOUNTS_CREATE     = 'accounts.create';
+    public const ACCOUNTS_UPDATE     = 'accounts.update';
+    public const ACCOUNTS_DELETE     = 'accounts.delete';
+    /** Reassigning the account manager is a commercial decision, not an edit. */
+    public const ACCOUNTS_ASSIGN     = 'accounts.assign';
+    /** Types, sectors and sub-sectors — the axes customers are reported on. */
+    public const ACCOUNTS_MANAGE_REF = 'accounts.manage_reference_data';
+
     // ── Travel ────────────────────────────────────────────────────────────
     public const TRAVEL_VIEW      = 'travel.view';
     public const TRAVEL_VIEW_OWN  = 'travel.view_own';
@@ -163,6 +175,11 @@ final class Permission
     public static function grouped(): array
     {
         return [
+            'accounts'      => [
+                self::ACCOUNTS_VIEW, self::ACCOUNTS_VIEW_OWN, self::ACCOUNTS_CREATE,
+                self::ACCOUNTS_UPDATE, self::ACCOUNTS_DELETE, self::ACCOUNTS_ASSIGN,
+                self::ACCOUNTS_MANAGE_REF,
+            ],
             'employees'     => [
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,
                 self::EMPLOYEES_CREATE, self::EMPLOYEES_UPDATE, self::EMPLOYEES_DELETE,
