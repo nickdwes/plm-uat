@@ -1,0 +1,26 @@
+{
+  "rules": [
+    {
+      "enabled": true,
+      "name": "expire-candidate-documents-after-6-months",
+      "type": "Lifecycle",
+      "definition": {
+        "filters": {
+          "blobTypes": ["blockBlob"],
+          "prefixMatch": ["hrms-candidate-docs/"]
+        },
+        "actions": {
+          "baseBlob": {
+            "delete": { "daysAfterCreationGreaterThan": 180 }
+          },
+          "snapshot": {
+            "delete": { "daysAfterCreationGreaterThan": 30 }
+          },
+          "version": {
+            "delete": { "daysAfterCreationGreaterThan": 30 }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -8,6 +8,8 @@ use App\Models\Preboarding\PreboardingReference;
 use App\Models\Preboarding\PreboardingSection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
+use App\Services\Recruitment\CandidateDocumentArchiver;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -378,6 +380,30 @@ class PreboardingService
             'employee_id' => $employeeId,
             'status'      => 'converted',
         ]);
+
+        /*
+         * Preserve the CV before retention reaches it.
+         *
+         * Candidate documents expire after six months, which is right for
+         * applicants and wrong for the person who was hired. This is the
+         * moment the outcome is known, and the last point at which the file
+         * is guaranteed to still exist.
+         *
+         * Deliberately not allowed to fail the conversion: someone has been
+         * hired either way, and the archiver logs its own failures.
+         */
+        app(CandidateDocumentArchiver::class)->archiveForEmployee(
+            organizationId: $record->organization_id,
+            employeeId:     $employeeId,
+            candidateId:    $record->candidate_id,
+            email:          $record->email,
+            // employee_documents.uploaded_by is NOT NULL. A conversion driven
+            // from a console command or a queued job has no authenticated
+            // user, so fall back to whoever started the preboarding — the
+            // person who actually caused the document to exist.
+            actorId:        Auth::id() ?? $record->initiated_by,
+        );
+
         return $record->fresh();
     }
 }
