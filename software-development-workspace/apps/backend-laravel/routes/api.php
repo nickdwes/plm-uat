@@ -219,6 +219,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Submission fixes the approval chain that will apply, so it is an
         // action rather than a status field on update.
+        // Estimated expenses. The traveller states the amount; the rate card
+        // decides whether it is within policy, and going over is flagged
+        // rather than blocked.
+        Route::post('/{travelRequest}/items',         [TravelRequestController::class, 'storeItem']);
+        Route::put('/{travelRequest}/items/{item}',   [TravelRequestController::class, 'updateItem']);
+        Route::delete('/{travelRequest}/items/{item}',[TravelRequestController::class, 'destroyItem']);
+
         Route::post('/{travelRequest}/submit', [TravelRequestController::class, 'submit']);
 
         // One endpoint for all four stages. Which stage is being decided is a

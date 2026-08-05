@@ -5,6 +5,7 @@ namespace App\Services\Travel;
 use App\Models\Travel\TravelApproval;
 use App\Models\Travel\TravelApprovalStage;
 use App\Models\Travel\TravelRequest;
+use App\Models\Travel\TravelRequestItem;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
@@ -55,7 +56,9 @@ class TravelRequestService
 
             $request->update(['reference' => $this->reference($request)]);
 
-            return $this->costing->cost($request, $placement['job_grade_id']);
+            // A new request has no lines yet: the traveller adds them in the
+            // expenses step, and each is checked against policy as it lands.
+            return $request->fresh();
         });
     }
 
@@ -78,9 +81,75 @@ class TravelRequestService
 
             $placement = $this->placement->placement($request->employee_id, $request->organization_id);
 
-            // Re-costed because destination and duration both move the rate.
-            return $this->costing->cost($request->fresh(), $placement['job_grade_id']);
+            // Re-checked rather than re-costed: changing the destination or
+            // the dates moves the ceiling, so a line that was within policy
+            // may no longer be.
+            return $this->costing->evaluate($request->fresh('items'), $placement['job_grade_id']);
         });
+    }
+
+    /**
+     * Add an estimated expense, and check it against policy.
+     *
+     * The traveller states the amount; the rate card decides whether it is
+     * within the allowance. Going over is recorded, not refused — an approver
+     * seeing "exceeds policy by 2,000" makes a decision, and one seeing a
+     * blocked form makes none, because the trip happens anyway and the
+     * approval moves to email.
+     */
+    public function addItem(TravelRequest $request, array $data): TravelRequest
+    {
+        if (! $request->isEditable()) {
+            throw new RuntimeException('Only a draft or rejected request can be edited.');
+        }
+
+        return DB::transaction(function () use ($request, $data) {
+            $request->items()->create([
+                'travel_expense_category_id' => $data['travel_expense_category_id'],
+                'description'                => $data['description'] ?? null,
+                'quantity'                   => $data['quantity'] ?? 1,
+                'unit'                       => $data['unit'] ?? 'per_trip',
+                'amount_claimed'             => $data['amount_claimed'],
+            ]);
+
+            return $this->reevaluate($request);
+        });
+    }
+
+    public function updateItem(TravelRequest $request, TravelRequestItem $item, array $data): TravelRequest
+    {
+        if (! $request->isEditable()) {
+            throw new RuntimeException('Only a draft or rejected request can be edited.');
+        }
+
+        return DB::transaction(function () use ($request, $item, $data) {
+            $item->update(collect($data)->only([
+                'travel_expense_category_id', 'description', 'quantity', 'unit', 'amount_claimed',
+            ])->all());
+
+            return $this->reevaluate($request);
+        });
+    }
+
+    public function removeItem(TravelRequest $request, TravelRequestItem $item): TravelRequest
+    {
+        if (! $request->isEditable()) {
+            throw new RuntimeException('Only a draft or rejected request can be edited.');
+        }
+
+        return DB::transaction(function () use ($request, $item) {
+            $item->delete();
+
+            return $this->reevaluate($request);
+        });
+    }
+
+    /** Re-check every line, since the total decides which approvals apply. */
+    private function reevaluate(TravelRequest $request): TravelRequest
+    {
+        $placement = $this->placement->placement($request->employee_id, $request->organization_id);
+
+        return $this->costing->evaluate($request->fresh('items'), $placement['job_grade_id']);
     }
 
     /**
@@ -98,10 +167,9 @@ class TravelRequestService
         }
 
         if ($request->items()->count() === 0) {
-            // Nothing is priced, so there is nothing to approve. Submitting
-            // would put an empty request in a queue and waste an approver's
-            // attention.
-            throw new RuntimeException('This request has no costed lines. Check the allowance rates for this destination and grade.');
+            // An empty request in an approver's queue wastes their attention
+            // and tells them nothing about what is being asked for.
+            throw new RuntimeException('Add at least one estimated expense before submitting.');
         }
 
         return DB::transaction(function () use ($request) {

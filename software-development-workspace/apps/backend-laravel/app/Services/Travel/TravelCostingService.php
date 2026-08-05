@@ -3,68 +3,66 @@
 namespace App\Services\Travel;
 
 use App\Models\Travel\TravelAllowanceRate;
-use App\Models\Travel\TravelExpenseCategory;
 use App\Models\Travel\TravelRequest;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Costs a travel request against the organisation's allowance rate card.
+ * Checks a traveller's estimates against the organisation's allowance policy.
  *
- * The rate that applies depends on the traveller's grade, where they are
- * going, what the money is for, and when they are going. Resolution takes the
- * most specific row in force on the departure date, and a null grade or
- * destination on a rate means "applies to all" rather than "unset" — which is
- * what lets an organisation state one meals rate globally and override it for
- * two expensive cities.
+ * The rate card is a ceiling, not a calculator. A traveller enters what the
+ * trip will actually cost — a real flight has a real price — and each line is
+ * measured against the rate that applies to their grade, destination and the
+ * date they travel.
+ *
+ * Going over is flagged, never blocked. A request that cannot be submitted
+ * because the only available fare exceeds the limit does not stop the trip; it
+ * stops the record of it, and the approval then happens over email where
+ * nobody can audit it. An approver seeing "exceeds policy by 2,000" makes a
+ * decision. An approver seeing nothing makes none.
+ *
+ * `policy_limit` and `exceeds_policy` are written onto each line rather than
+ * derived on read, for the same reason the rate used to be: revising the rate
+ * card afterwards must not silently re-judge a decision an approver already
+ * made against the old one.
  */
 class TravelCostingService
 {
     /**
-     * Rebuild the costed lines for a request.
+     * Re-evaluate every line of a request against the policy in force.
      *
-     * The resolved rate is written onto each line and never recalculated
-     * afterwards. Without that, correcting the rate card silently rewrites the
-     * value of every historical request that used it — a change that is
-     * invisible until someone audits a payment.
+     * @return TravelRequest the request with totals and flags refreshed
      */
-    public function cost(TravelRequest $request, ?int $jobGradeId): TravelRequest
+    public function evaluate(TravelRequest $request, ?int $jobGradeId): TravelRequest
     {
         return DB::transaction(function () use ($request, $jobGradeId) {
-            $categories = TravelExpenseCategory::where('organization_id', $request->organization_id)
-                ->where('is_active', true)
-                ->get();
+            $onDate = $request->departure_date?->toDateString() ?? now()->toDateString();
+            $total  = 0.0;
 
-            $request->items()->delete();
-            $total = 0.0;
-
-            foreach ($categories as $category) {
+            foreach ($request->items as $item) {
                 $rate = $this->rateFor(
                     organizationId: $request->organization_id,
-                    categoryId: $category->id,
+                    categoryId: $item->travel_expense_category_id,
                     jobGradeId: $jobGradeId,
                     destinationId: $request->travel_destination_id,
-                    onDate: $request->departure_date?->toDateString() ?? now()->toDateString(),
+                    onDate: $onDate,
                 );
 
-                // No rate is not zero. A category the organisation has not
-                // priced for this grade or destination is left off the request
-                // entirely, rather than appearing as a legitimate nil claim.
-                if (! $rate) {
-                    continue;
-                }
+                // The ceiling for a per-day allowance is the daily rate across
+                // the whole trip; a per-trip one is flat however long it runs.
+                $limit = $rate
+                    ? (float) $rate->amount * ($rate->unit === 'per_trip' ? 1 : max(1, (int) $request->days))
+                    : null;
 
-                $quantity = $rate->unit === 'per_trip' ? 1 : max(1, (int) $request->days);
-                $amount   = (float) $rate->amount * $quantity;
-
-                $request->items()->create([
-                    'travel_expense_category_id' => $category->id,
-                    'quantity'                   => $quantity,
-                    'rate_applied'               => $rate->amount,
-                    'unit'                       => $rate->unit,
-                    'amount_claimed'             => $amount,
+                $item->update([
+                    'rate_applied'   => $rate?->amount,
+                    'policy_limit'   => $limit,
+                    // An unpriced category is not an over-spend. Flagging it
+                    // would tell an approver the traveller broke a rule that
+                    // was never set.
+                    'exceeds_policy' => $limit !== null && (float) $item->amount_claimed > $limit,
                 ]);
 
-                $total += $amount;
+                $total += (float) $item->amount_claimed;
             }
 
             $request->update(['total_claimed' => $total]);
@@ -74,7 +72,11 @@ class TravelCostingService
     }
 
     /**
-     * The rate in force for one category, or null when none is priced.
+     * The allowance in force for one category, or null when none is priced.
+     *
+     * Candidates are the specific match plus the "applies to all" rows, ordered
+     * by specificity rather than filtered — so a missing grade-specific rate
+     * falls back to the default instead of finding nothing.
      */
     public function rateFor(
         int $organizationId,
@@ -86,13 +88,28 @@ class TravelCostingService
         return TravelAllowanceRate::withoutGlobalScopes()
             ->where('organization_id', $organizationId)
             ->where('travel_expense_category_id', $categoryId)
-            // Candidates are the specific match and the "applies to all" rows;
-            // ordering then picks the most specific rather than filtering, so
-            // a missing specific rate falls back instead of costing nothing.
             ->where(fn ($q) => $q->whereNull('job_grade_id')->orWhere('job_grade_id', $jobGradeId))
             ->where(fn ($q) => $q->whereNull('travel_destination_id')->orWhere('travel_destination_id', $destinationId))
             ->effectiveOn($onDate)
             ->mostSpecificFirst()
             ->first();
+    }
+
+    /**
+     * The lines that went over, for the compliance summary an approver reads
+     * before deciding.
+     *
+     * @return array<int, array{category: string, over_by: float}>
+     */
+    public function breaches(TravelRequest $request): array
+    {
+        return $request->items
+            ->where('exceeds_policy', true)
+            ->map(fn ($item) => [
+                'category' => $item->category?->name ?? 'Uncategorised',
+                'over_by'  => round((float) $item->amount_claimed - (float) $item->policy_limit, 2),
+            ])
+            ->values()
+            ->all();
     }
 }

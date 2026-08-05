@@ -36,7 +36,9 @@ class TravelRequest extends Model
 
     protected $fillable = [
         'organization_id', 'reference', 'employee_id', 'department_id', 'functional_unit_id',
-        'account_id', 'travel_destination_id', 'travel_mode', 'departure_date', 'return_date',
+        'account_id', 'linked_task_ref', 'travel_destination_id', 'travel_mode',
+        'priority', 'accommodation_needed', 'flexible_days',
+        'advance_justification', 'departure_date', 'return_date',
         'days', 'purpose', 'business_impact', 'currency', 'total_claimed', 'total_approved',
         'advance_required', 'status', 'submitted_at', 'completed_at', 'created_by',
     ];
@@ -48,6 +50,8 @@ class TravelRequest extends Model
         'total_claimed'    => 'decimal:2',
         'total_approved'   => 'decimal:2',
         'advance_required' => 'decimal:2',
+        'accommodation_needed' => 'boolean',
+        'flexible_days'        => 'boolean',
         'submitted_at'     => 'datetime',
         'completed_at'     => 'datetime',
     ];

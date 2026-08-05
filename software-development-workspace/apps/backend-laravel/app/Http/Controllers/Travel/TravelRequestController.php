@@ -6,11 +6,13 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Travel\StoreTravelRequest;
 use App\Http\Resources\Travel\TravelRequestResource;
 use App\Models\Travel\TravelRequest;
+use App\Models\Travel\TravelRequestItem;
 use App\Services\Travel\TravelRequestService;
 use App\Support\Authorization\Permission;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use RuntimeException;
 
@@ -141,6 +143,69 @@ class TravelRequestController extends Controller
         }
 
         return new TravelRequestResource($decided->load(['approvals.expectedApprover', 'items']));
+    }
+
+    // ── Estimated expenses ────────────────────────────────────────────────
+
+    public function storeItem(Request $request, TravelRequest $travelRequest): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+
+        $data = $request->validate([
+            'travel_expense_category_id' => ['required', 'integer',
+                Rule::exists('travel_expense_categories', 'id')
+                    ->where('organization_id', app('current.organization_id'))],
+            'description'    => ['nullable', 'string', 'max:500'],
+            'quantity'       => ['sometimes', 'numeric', 'min:0.01'],
+            'unit'           => ['sometimes', Rule::in(['per_day', 'per_trip'])],
+            'amount_claimed' => ['required', 'numeric', 'min:0'],
+        ]);
+
+        try {
+            $updated = $this->service->addItem($travelRequest, $data);
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['status' => $e->getMessage()]);
+        }
+
+        return new TravelRequestResource($updated->load(['items.category']));
+    }
+
+    public function updateItem(Request $request, TravelRequest $travelRequest, TravelRequestItem $item): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+        abort_unless($item->travel_request_id === $travelRequest->id, 404);
+
+        $data = $request->validate([
+            'travel_expense_category_id' => ['sometimes', 'integer',
+                Rule::exists('travel_expense_categories', 'id')
+                    ->where('organization_id', app('current.organization_id'))],
+            'description'    => ['nullable', 'string', 'max:500'],
+            'quantity'       => ['sometimes', 'numeric', 'min:0.01'],
+            'unit'           => ['sometimes', Rule::in(['per_day', 'per_trip'])],
+            'amount_claimed' => ['sometimes', 'numeric', 'min:0'],
+        ]);
+
+        try {
+            $updated = $this->service->updateItem($travelRequest, $item, $data);
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['status' => $e->getMessage()]);
+        }
+
+        return new TravelRequestResource($updated->load(['items.category']));
+    }
+
+    public function destroyItem(TravelRequest $travelRequest, TravelRequestItem $item): TravelRequestResource
+    {
+        $this->authorize('update', $travelRequest);
+        abort_unless($item->travel_request_id === $travelRequest->id, 404);
+
+        try {
+            $updated = $this->service->removeItem($travelRequest, $item);
+        } catch (RuntimeException $e) {
+            throw ValidationException::withMessages(['status' => $e->getMessage()]);
+        }
+
+        return new TravelRequestResource($updated->load(['items.category']));
     }
 
     public function destroy(TravelRequest $travelRequest): JsonResponse

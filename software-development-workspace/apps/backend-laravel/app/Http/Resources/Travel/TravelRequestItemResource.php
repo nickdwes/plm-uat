@@ -14,12 +14,18 @@ class TravelRequestItemResource extends JsonResource
             'category'        => $this->whenLoaded('category', fn () => [
                 'id' => $this->category?->id, 'name' => $this->category?->name,
             ]),
+            'description'     => $this->description,
             'quantity'        => $this->quantity,
             // The rate as resolved at submission, not as it stands today.
             'rate_applied'    => $this->rate_applied,
             'unit'            => $this->unit,
             'amount_claimed'  => $this->amount_claimed,
             'amount_approved' => $this->amount_approved,
+            'actual_cost'     => $this->actual_cost,
+            // What the allowance was when this line was entered, and whether
+            // the estimate went over it — both recorded, not recalculated.
+            'policy_limit'    => $this->policy_limit,
+            'exceeds_policy'  => $this->exceeds_policy,
             'note'            => $this->note,
         ];
     }

@@ -109,18 +109,73 @@ class TravelWorkflowTest extends TestCase
         ];
     }
 
+
+    /** Raise a request and state one estimated expense on it. */
+    private function raiseWith(Employee $traveller, float $amount = 4500): int
+    {
+        $id = $this->postJson($this->url(), $this->payload($traveller))->assertCreated()->json('data.id');
+
+        $this->postJson($this->url("/{$id}/items"), [
+            'travel_expense_category_id' => $this->meals->id,
+            'amount_claimed'             => $amount,
+        ])->assertOk();
+
+        return $id;
+    }
+
     // ── Raising ───────────────────────────────────────────────────────────
 
-    public function test_a_request_is_costed_from_the_rate_card_on_creation(): void
+    public function test_an_estimate_within_the_allowance_is_not_flagged(): void
     {
+        // 1,500 a day across three days: a 4,000 estimate is inside the 4,500
+        // ceiling.
         $this->rate(1500);
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
 
-        $res = $this->postJson($this->url(), $this->payload($traveller))->assertCreated();
+        $id  = $this->postJson($this->url(), $this->payload($traveller))->assertCreated()->json('data.id');
+        $res = $this->postJson($this->url("/{$id}/items"), [
+            'travel_expense_category_id' => $this->meals->id,
+            'unit'                       => 'per_day',
+            'amount_claimed'             => 4000,
+        ])->assertOk();
 
-        // Three days inclusive at 1,500 per day.
-        $this->assertSame(3, $res->json('data.days'));
-        $this->assertEquals(4500, (float) $res->json('data.total_claimed'));
+        $this->assertFalse($res->json('data.items.0.exceeds_policy'));
+        $this->assertEquals(4500, (float) $res->json('data.items.0.policy_limit'));
+        $this->assertEquals(4000, (float) $res->json('data.total_claimed'));
+    }
+
+    public function test_an_estimate_over_the_allowance_is_flagged_but_still_accepted(): void
+    {
+        // Refusing the line would not stop the trip; it would stop the record
+        // of it, and the approval would move to email where nobody can audit
+        // it. The approver is told instead.
+        $this->rate(1500);
+        $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
+
+        $id  = $this->postJson($this->url(), $this->payload($traveller))->assertCreated()->json('data.id');
+        $res = $this->postJson($this->url("/{$id}/items"), [
+            'travel_expense_category_id' => $this->meals->id,
+            'amount_claimed'             => 28000,
+        ])->assertOk();
+
+        $this->assertTrue($res->json('data.items.0.exceeds_policy'));
+        $this->assertEquals(28000, (float) $res->json('data.total_claimed'));
+    }
+
+    public function test_an_unpriced_category_is_not_treated_as_an_over_spend(): void
+    {
+        // Flagging it would tell an approver the traveller broke a rule the
+        // organisation never set.
+        $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
+
+        $id  = $this->postJson($this->url(), $this->payload($traveller))->assertCreated()->json('data.id');
+        $res = $this->postJson($this->url("/{$id}/items"), [
+            'travel_expense_category_id' => $this->meals->id,
+            'amount_claimed'             => 99000,
+        ])->assertOk();
+
+        $this->assertFalse($res->json('data.items.0.exceeds_policy'));
+        $this->assertNull($res->json('data.items.0.policy_limit'));
     }
 
     public function test_an_employee_of_another_organisation_cannot_be_named(): void
@@ -151,10 +206,10 @@ class TravelWorkflowTest extends TestCase
             ->assertStatus(422)->assertJsonValidationErrors('travel_destination_id');
     }
 
-    public function test_a_request_with_nothing_priced_cannot_be_submitted(): void
+    public function test_a_request_with_no_expenses_cannot_be_submitted(): void
     {
-        // No rate exists, so there is nothing to approve. Submitting would put
-        // an empty request in an approver's queue.
+        // An empty request in an approver's queue tells them nothing about
+        // what is being asked for.
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
         $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
 
@@ -177,26 +232,26 @@ class TravelWorkflowTest extends TestCase
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
         $this->department->update(['lead_employee_id' => $this->employee()->id]);
 
-        $id  = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
+        $id  = $this->raiseWith($traveller);
         $res = $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         $stages = collect($res->json('data.approvals'))->pluck('stage')->all();
         $this->assertSame(['department_head', 'finance'], $stages, 'The executive stage is below its threshold.');
     }
 
-    public function test_the_rate_is_snapshotted_and_survives_a_change_to_the_card(): void
+    public function test_the_policy_limit_is_snapshotted_and_survives_a_change_to_the_card(): void
     {
+        // Revising the rate card must not silently re-judge a decision an
+        // approver already made against the old one.
         $rate = $this->rate(1500);
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
+        $id = $this->raiseWith($traveller, 4000);
 
-        $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
-
-        // The organisation revises its meals rate afterwards.
-        $rate->update(['amount' => 9000]);
+        $rate->update(['amount' => 500]);
 
         $res = $this->getJson($this->url("/{$id}"))->assertOk();
-        $this->assertEquals(1500, (float) $res->json('data.items.0.rate_applied'));
-        $this->assertEquals(4500, (float) $res->json('data.total_claimed'));
+        $this->assertEquals(4500, (float) $res->json('data.items.0.policy_limit'));
+        $this->assertFalse($res->json('data.items.0.exceeds_policy'));
     }
 
     public function test_approving_a_trip_does_not_permit_releasing_the_money(): void
@@ -209,7 +264,7 @@ class TravelWorkflowTest extends TestCase
         $this->department->update(['lead_employee_id' => $head->id]);
 
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
-        $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
+        $id = $this->raiseWith($traveller);
         $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         // The department head approves stage 1.
@@ -229,7 +284,7 @@ class TravelWorkflowTest extends TestCase
         $this->department->update(['lead_employee_id' => $head->id]);
 
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
-        $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
+        $id = $this->raiseWith($traveller);
         $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         $otherManager = $this->employee();
@@ -245,7 +300,7 @@ class TravelWorkflowTest extends TestCase
         $this->department->update(['lead_employee_id' => $head->id]);
 
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
-        $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
+        $id = $this->raiseWith($traveller);
         $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         $this->actingAsWith([Permission::TRAVEL_APPROVE, Permission::TRAVEL_VIEW], $head);
@@ -268,7 +323,7 @@ class TravelWorkflowTest extends TestCase
         $this->department->update(['lead_employee_id' => $head->id]);
 
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
-        $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
+        $id = $this->raiseWith($traveller);
         $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         $this->actingAsWith([Permission::TRAVEL_APPROVE, Permission::TRAVEL_VIEW], $head);
@@ -287,7 +342,7 @@ class TravelWorkflowTest extends TestCase
         $this->department->update(['lead_employee_id' => $this->employee()->id]);
 
         $traveller = $this->actingAsWith([Permission::TRAVEL_SUBMIT, Permission::TRAVEL_VIEW_OWN]);
-        $id = $this->postJson($this->url(), $this->payload($traveller))->json('data.id');
+        $id = $this->raiseWith($traveller);
         $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         $this->putJson($this->url("/{$id}"), $this->payload($traveller) + ['purpose' => 'Changed'])

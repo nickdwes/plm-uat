@@ -111,6 +111,13 @@ class TravelDelegationTest extends TestCase
             'return_date'    => '2026-09-03',
         ])->assertCreated()->json('data.id');
 
+        // The traveller states the cost; a request with no lines cannot be
+        // submitted, because an empty request tells an approver nothing.
+        $this->postJson($this->url("/{$id}/items"), [
+            'travel_expense_category_id' => TravelExpenseCategory::first()->id,
+            'amount_claimed'             => 4500,
+        ])->assertOk();
+
         $this->postJson($this->url("/{$id}/submit"))->assertOk();
 
         return $id;
