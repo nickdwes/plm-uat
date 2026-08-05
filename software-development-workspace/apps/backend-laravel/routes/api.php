@@ -36,6 +36,7 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Asset\AssetController;
+use App\Http\Controllers\Travel\TravelRequestController;
 use App\Http\Controllers\Authorization\RoleController;
 use App\Http\Controllers\Goals\GoalController;
 use App\Http\Controllers\Roster\HandoverController;
@@ -202,6 +203,27 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{account}/contacts',              [AccountController::class, 'storeContact']);
         Route::put('/{account}/contacts/{contact}',     [AccountController::class, 'updateContact']);
         Route::delete('/{account}/contacts/{contact}',  [AccountController::class, 'destroyContact']);
+    });
+
+    // ── Travel ────────────────────────────────────────────────────────────────
+    //
+    // One tenant owns a request end to end: whose budget pays, whose rate card
+    // costs it, whose approvers act on it.
+    Route::prefix('travel-requests')->group(function () {
+        Route::get('/',                     [TravelRequestController::class, 'index']);
+        Route::post('/',                    [TravelRequestController::class, 'store']);
+        Route::get('/{travelRequest}',      [TravelRequestController::class, 'show']);
+        Route::put('/{travelRequest}',      [TravelRequestController::class, 'update']);
+        Route::delete('/{travelRequest}',   [TravelRequestController::class, 'destroy']);
+
+        // Submission fixes the approval chain that will apply, so it is an
+        // action rather than a status field on update.
+        Route::post('/{travelRequest}/submit', [TravelRequestController::class, 'submit']);
+
+        // One endpoint for all four stages. Which stage is being decided is a
+        // property of the request, not something the caller states — naming it
+        // would let a later approver decide an earlier stage.
+        Route::post('/{travelRequest}/decision', [TravelRequestController::class, 'decide']);
     });
 
     // ── Assets ────────────────────────────────────────────────────────────────

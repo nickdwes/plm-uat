@@ -67,5 +67,6 @@ class AppServiceProvider extends ServiceProvider
         // Accounts (customer master). Laravel's policy auto-discovery does not
         // follow sub-namespaces, so an unregistered policy fails open here.
         Gate::policy(\App\Models\Account\Account::class, \App\Policies\Account\AccountPolicy::class);
+        Gate::policy(\App\Models\Travel\TravelRequest::class, \App\Policies\Travel\TravelRequestPolicy::class);
     }
 }
