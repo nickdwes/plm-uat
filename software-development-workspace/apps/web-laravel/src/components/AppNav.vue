@@ -31,6 +31,7 @@ async function logout(): Promise<void> {
 const employeesOpen  = ref(isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info');
 const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin');
 const performanceOpen = ref(isActive('performance') || isActive('goals') || route.name === 'okr-cycles');
+const travelOpen      = ref(isActive('travel'));
 const trainingOpen   = ref(isActive('training'));
 const vendorOpen     = ref(isActive('vendor'));
 const orgOpen        = ref(isActive('org'));
@@ -244,13 +245,37 @@ watch(() => route.name, () => {
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Operations</div>
 
-      <router-link :to="{ name: 'travel-requests' }" :class="['nav-item', { active: isActive('travel') }]">
-        <svg class="nav-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor"
+      <!-- ── Travel ─────────────────────────────────────────────────────────── -->
+      <button
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('travel') }]"
+        @click="travelOpen = !travelOpen"
+      >
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2.5 11.5l15-5-5 15-2.5-6.5-7.5-3.5z" />
         </svg>
         <span>Travel</span>
-      </router-link>
+        <svg class="chevron" :class="{ open: travelOpen }" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+        </svg>
+      </button>
+      <div class="nav-group-children" :class="{ open: travelOpen }">
+        <router-link :to="{ name: 'travel-requests' }" :class="['nav-item', 'nav-child', { active: route.name === 'travel-requests' || route.name === 'travel-request' || route.name === 'travel-request-new' }]">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M2.5 11.5l15-5-5 15-2.5-6.5-7.5-3.5z" />
+          </svg>
+          Travel Requests
+        </router-link>
+        <router-link :to="{ name: 'travel-settings' }" :class="['nav-item', 'nav-child', { active: route.name === 'travel-settings' }]">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="10" cy="10" r="2.5" />
+            <path d="M10 2v2M10 16v2M18 10h-2M4 10H2M15.7 4.3l-1.4 1.4M5.7 14.3l-1.4 1.4M15.7 15.7l-1.4-1.4M5.7 5.7L4.3 4.3" />
+          </svg>
+          Configuration
+        </router-link>
+      </div>
       <router-link :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 10a1 1 0 00-1 1 1 1 0 001 1h10a1 1 0 001-1 1 1 0 00-1-1H5z" />
