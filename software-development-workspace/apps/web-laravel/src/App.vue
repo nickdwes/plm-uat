@@ -4,52 +4,72 @@ import { useRoute } from "vue-router";
 import AppNav from "./components/AppNav.vue";
 import AppHeader from "./components/AppHeader.vue";
 import { isAuthenticated, authStore } from "./stores/auth";
+import { resolvedTheme } from "./stores/theme";
+import { deriveBrandPalette, readableOn } from "./lib/palette";
 
 const route = useRoute();
 const showShell = computed(() => isAuthenticated.value && route.name !== "login");
 
 // ── Per-org theme ────────────────────────────────────────────────────────────
 
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const m = hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
-  return m
-    ? { r: parseInt(m[1], 16), g: parseInt(m[2], 16), b: parseInt(m[3], 16) }
-    : null;
-}
+/*
+ * An organisation chooses an accent, not a theme.
+ *
+ * Only brand tokens are overridden here. Surfaces, borders, text and the
+ * feedback ramps stay as the design system defines them, and so does the
+ * sidebar: this used to repaint it with the org colour at 38% brightness,
+ * which is why it rendered dark navy instead of the white the design calls
+ * for. Structural colour carries the product's legibility, and handing it to
+ * whatever hex an administrator types into a settings form is how three of
+ * four tenants ended up with unreadable buttons.
+ *
+ * What the organisation does get is the accent — active indicators, icons,
+ * focus rings, filled controls — derived through `deriveBrandPalette`, which
+ * enforces the contrast floor. They can make the product theirs; they cannot
+ * make it unreadable.
+ */
+const BRAND_PROPS = [
+  "--color-brand-base", "--color-brand-hover", "--color-brand-dark",
+  "--color-brand-light", "--color-brand-subtle", "--color-brand-on-surface",
+  "--color-on-brand",
+  "--color-sidebar-active-border", "--color-sidebar-accent",
+  "--color-sidebar-text-active",
+] as const;
 
-function applyOrgTheme(color: string | null | undefined): void {
+function applyOrgTheme(color: string | null | undefined, theme: "light" | "dark"): void {
   const root = document.documentElement;
-  const PROPS = [
-    "--color-brand-base", "--color-brand-hover", "--color-brand-dark",
-    "--color-brand-light", "--color-brand-subtle",
-    "--color-sidebar-bg", "--color-sidebar-hover-bg",
-    "--color-sidebar-active-border", "--color-sidebar-active-bg",
-  ];
+  const palette = color ? deriveBrandPalette(color, theme) : null;
 
-  if (!color) {
-    PROPS.forEach((p) => root.style.removeProperty(p));
+  if (!palette) {
+    // No colour, or one that cannot be parsed: leave the design system's own
+    // palette intact rather than a half-applied mixture of the two.
+    BRAND_PROPS.forEach((prop) => root.style.removeProperty(prop));
     return;
   }
 
-  const rgb = hexToRgb(color);
-  if (!rgb) return;
-  const { r, g, b } = rgb;
+  root.style.setProperty("--color-brand-base", palette.base);
+  root.style.setProperty("--color-brand-hover", palette.hover);
+  root.style.setProperty("--color-brand-dark", palette.dark);
+  root.style.setProperty("--color-brand-light", palette.light);
+  root.style.setProperty("--color-brand-subtle", palette.subtle);
+  root.style.setProperty("--color-brand-on-surface", palette.accent);
+  root.style.setProperty("--color-on-brand", palette.onBrand);
 
-  root.style.setProperty("--color-brand-base",  color);
-  root.style.setProperty("--color-brand-hover",  `rgb(${Math.round(r * 0.82)},${Math.round(g * 0.82)},${Math.round(b * 0.82)})`);
-  root.style.setProperty("--color-brand-dark",   `rgb(${Math.round(r * 0.62)},${Math.round(g * 0.62)},${Math.round(b * 0.62)})`);
-  root.style.setProperty("--color-brand-light",  `rgba(${r},${g},${b},0.14)`);
-  root.style.setProperty("--color-brand-subtle", `rgba(${r},${g},${b},0.08)`);
+  // The sidebar keeps its own background; only the marks identifying the
+  // current page take the organisation's colour.
+  root.style.setProperty("--color-sidebar-active-border", palette.accent);
+  root.style.setProperty("--color-sidebar-accent", palette.accent);
 
-  // Sidebar background: a dark tint of the primary colour (38% brightness)
-  // keeps white text readable while reflecting the org brand
-  root.style.setProperty("--color-sidebar-bg",           `rgb(${Math.round(r * 0.38)},${Math.round(g * 0.38)},${Math.round(b * 0.38)})`);
-  root.style.setProperty("--color-sidebar-hover-bg",     `rgba(${r},${g},${b},0.14)`);
-  root.style.setProperty("--color-sidebar-active-border", color);
-  root.style.setProperty("--color-sidebar-active-bg",    `rgba(${r},${g},${b},0.25)`);
+  // The active label sits on the tinted active row rather than the plain
+  // surface, so it is measured against that instead.
+  const activeRow = theme === "dark" ? "#16202E" : "#F1F5F9";
+  const activeText = readableOn(color as string, activeRow);
+  if (activeText) root.style.setProperty("--color-sidebar-text-active", activeText);
 }
 
-watchEffect(() => applyOrgTheme(authStore.currentOrg?.primary_color));
+// Re-runs when the organisation changes and when the theme does — a colour
+// tuned for a white ground is not the one to use on a near-black one.
+watchEffect(() => applyOrgTheme(authStore.currentOrg?.primary_color, resolvedTheme.value));
 </script>
 
 <template>

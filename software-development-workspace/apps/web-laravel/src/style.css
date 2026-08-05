@@ -78,7 +78,7 @@ html {
   width: 34px;
   height: 34px;
   background: var(--color-brand-base);
-  color: #fff;
+  color: var(--color-on-brand);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -449,7 +449,7 @@ input[type="time"].form-input {
 
 .btn-primary {
   background: var(--color-brand-base);
-  color: #fff;
+  color: var(--color-on-brand);
   border-color: var(--color-brand-base);
 }
 .btn-primary:hover:not(:disabled) {

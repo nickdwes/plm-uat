@@ -90,8 +90,11 @@
   color-scheme: light;
 
   /* ── Brand ───────────────────────────────────────────────────────────── */
-  --color-brand-base:   var(--ramp-brand-550);   /* #0c8ef4 sky blue */
-  --color-brand-hover:  #0a7fd9;                 /* 8% darker for hover */
+  /* The Figma accent #0c8ef4 gives white text only 3.39:1 — below the 4.5:1
+     WCAG requires — so the fill is the same hue darkened until it passes.
+     The accent itself is unchanged below, where 3:1 is the bar. */
+  --color-brand-base:   #0077db;                 /* 4.50:1 with white */
+  --color-brand-hover:  #0064bb;                 /* one lightness step down */
   --color-brand-dark:   var(--ramp-brand-700);   /* #004C97 for emphasis */
   --color-brand-light:  var(--ramp-brand-100);   /* #DBF0FE light tint */
   --color-brand-subtle: rgba(12, 142, 244, 0.08);
