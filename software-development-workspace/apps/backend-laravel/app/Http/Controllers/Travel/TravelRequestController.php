@@ -115,7 +115,7 @@ class TravelRequestController extends Controller
                 'items.category', 'items.evidence.submittedBy', 'transportLegs.vehicleType',
                 'approvals.expectedApprover', 'approvals.request',
                 'employee', 'destination', 'account',
-                'itinerary', 'bookings', 'activity.actor',
+                'itinerary', 'bookings', 'attachments', 'activity.actor',
             ])
         );
     }

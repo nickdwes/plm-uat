@@ -19,7 +19,7 @@ const props = defineProps<{ id: string }>();
 const router = useRouter();
 const org = () => currentOrgSlug.value;
 
-type Tab = "description" | "transport" | "itinerary" | "expenses" | "bookings" | "reconciliation" | "activity";
+type Tab = "description" | "transport" | "itinerary" | "expenses" | "bookings" | "documents" | "reconciliation" | "activity";
 
 const STAGE_LABELS: Record<string, string> = {
   department_head: "Head of Department",
@@ -141,6 +141,43 @@ async function settleLeg(leg: any) {
     await load();
   } catch (e) { fail(e); } finally { saving.value = false; }
 }
+
+// ── Documents ───────────────────────────────────────────────────────────────
+const DOC_TYPES: Record<string, string> = {
+  ticket: "Ticket", visa: "Visa", quotation: "Quotation",
+  invoice: "Invoice", receipt: "Receipt", other: "Other",
+};
+
+const newDoc = ref({ document_type: "ticket", file: null as File | null });
+
+function pickDoc(e: Event) {
+  newDoc.value.file = (e.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+/**
+ * Attach a ticket, visa or quote.
+ *
+ * Typed rather than a general pile, because the type is what lets anything
+ * later check for a specific document — a delivery closes against a signed
+ * note, not against whatever happens to be attached.
+ */
+async function uploadDoc() {
+  if (!newDoc.value.file) return;
+  saving.value = true;
+  error.value = null;
+  try {
+    const fd = new FormData();
+    fd.append("document_type", newDoc.value.document_type);
+    fd.append("file", newDoc.value.file);
+
+    await api("POST", `/api/v1/travel-requests/${props.id}/attachments`, { org: org(), formData: fd });
+    newDoc.value = { document_type: "ticket", file: null };
+    notice.value = "Document attached.";
+    await load();
+  } catch (e) { fail(e); } finally { saving.value = false; }
+}
+
+const docUrl = (id: number) => `/api/v1/travel-requests/${props.id}/attachments/${id}/download`;
 
 function evidenceUrl(id: number): string {
   return `/api/v1/travel-requests/${props.id}/evidence/${id}/download`;
@@ -265,7 +302,7 @@ onMounted(load);
       </section>
 
       <nav class="td-tabs" role="tablist">
-        <button v-for="t in (['description','transport','itinerary','expenses','bookings','reconciliation','activity'] as Tab[])"
+        <button v-for="t in (['description','transport','itinerary','expenses','bookings','documents','reconciliation','activity'] as Tab[])"
                 :key="t" :class="['td-tab', { active: tab === t }]" @click="tab = t">
           {{ t.charAt(0).toUpperCase() + t.slice(1) }}
         </button>
@@ -417,6 +454,47 @@ onMounted(load);
                 <td>{{ b.booking_date ? String(b.booking_date).slice(0, 10) : "—" }}</td>
                 <td class="td-num">{{ b.currency }} {{ money(b.total_cost) }}</td>
                 <td><span class="pill pill-neutral td-cap">{{ b.status }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+
+        <!-- Documents -->
+        <template v-else-if="tab === 'documents'">
+          <p class="td-note">
+            Tickets, visa receipts and quotations. Typed rather than a general pile, so a
+            delivery can close against a signed note rather than against whatever happens
+            to be attached.
+          </p>
+
+          <div class="td-row">
+            <label class="td-field">
+              <span>Type</span>
+              <select v-model="newDoc.document_type" class="control">
+                <option v-for="(label, key) in DOC_TYPES" :key="key" :value="key">{{ label }}</option>
+              </select>
+            </label>
+            <label class="td-field" style="flex:1">
+              <span>File (PDF or image)</span>
+              <input class="control" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" @change="pickDoc" />
+            </label>
+            <button class="btn-primary" :disabled="saving || !newDoc.file" @click="uploadDoc">Attach</button>
+          </div>
+
+          <table class="td-table">
+            <thead><tr><th>Type</th><th>File</th><th></th></tr></thead>
+            <tbody>
+              <tr v-if="!request.attachments?.length">
+                <td colspan="3" class="td-none">Nothing attached.</td>
+              </tr>
+              <tr v-for="a in request.attachments" :key="a.id">
+                <td class="td-cap">{{ DOC_TYPES[a.document_type] ?? a.document_type }}</td>
+                <td><a :href="docUrl(a.id)" target="_blank" class="link-btn">{{ a.original_name }}</a></td>
+                <td>
+                  <span v-if="a.id === request.delivery_note_attachment_id" class="pill pill-ok">
+                    delivery note
+                  </span>
+                </td>
               </tr>
             </tbody>
           </table>
