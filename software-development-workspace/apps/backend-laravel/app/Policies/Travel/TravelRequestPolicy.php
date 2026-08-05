@@ -2,6 +2,7 @@
 
 namespace App\Policies\Travel;
 
+use App\Models\Travel\TravelDepartmentApprover;
 use App\Models\Travel\TravelRequest;
 use App\Models\User;
 use App\Policies\BasePolicy;
@@ -98,8 +99,7 @@ class TravelRequestPolicy extends BasePolicy
         return match ($pending->stage) {
             'department_head', 'function_head' =>
                 $this->can($user, Permission::TRAVEL_APPROVE)
-                && $pending->expected_approver_id !== null
-                && $pending->expected_approver_id === $user->employeeId(),
+                && $this->mayActOnStage($user, $request, $pending->stage, $pending->expected_approver_id),
 
             'finance'   => $this->can($user, Permission::TRAVEL_ASSESS_FINANCE),
             'executive' => $this->can($user, Permission::TRAVEL_APPROVE_EXECUTIVE),
@@ -112,6 +112,46 @@ class TravelRequestPolicy extends BasePolicy
     public function manageReferenceData(User $user): bool
     {
         return $this->can($user, Permission::TRAVEL_MANAGE_RATES);
+    }
+
+    /**
+     * Whether this user may act on a structural stage.
+     *
+     * Either they are the person it was routed to — the department or function
+     * head — or they are a named approver for that team with authority to act
+     * on the head's behalf.
+     *
+     * The delegate decides in their own name. `decided_by_employee_id` records
+     * who actually acted, separately from `expected_approver_id`, so "approved
+     * by X on behalf of Y" stays answerable. Delegation that hides who signed
+     * is worse than no delegation.
+     */
+    private function mayActOnStage(User $user, TravelRequest $request, string $stage, ?int $expectedApproverId): bool
+    {
+        $employeeId = $user->employeeId();
+
+        if ($employeeId === null) {
+            return false;
+        }
+
+        if ($expectedApproverId !== null && $expectedApproverId === $employeeId) {
+            return true;
+        }
+
+        // Scoped to the team the request came from, not to travel in general:
+        // the question is not "may this person approve travel" but "may this
+        // person approve travel for THIS team".
+        $query = TravelDepartmentApprover::query()
+            ->where('organization_id', $request->organization_id)
+            ->where('employee_id', $employeeId)
+            ->where('can_act_on_behalf', true)
+            ->inForce();
+
+        return $stage === 'department_head'
+            ? $request->department_id !== null
+                && $query->where('department_id', $request->department_id)->exists()
+            : $request->functional_unit_id !== null
+                && $query->where('functional_unit_id', $request->functional_unit_id)->exists();
     }
 
     private function isExpectedApprover(User $user, TravelRequest $request): bool
