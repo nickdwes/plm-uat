@@ -16,6 +16,7 @@ import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
+import OpportunityPipeline from "./OpportunityPipeline.vue";
 
 const props = defineProps<{ id: string | number }>();
 
@@ -33,8 +34,22 @@ interface Opportunity {
   lead?: { id: number; reference: string | null; name: string } | null;
   qualification: Record<string, unknown>;
   score: number; score_max: number; score_band: string;
+  commercials_visible: boolean;
   commitment: { is_committed: boolean; year: number | null; quarter: number | null; discuss_weekly: boolean };
 }
+
+type Tab = "overview" | "pipeline" | "activities" | "research" | "proposals" | "documents";
+
+const tabs: { key: Tab; label: string }[] = [
+  { key: "overview",   label: "Overview" },
+  { key: "pipeline",   label: "Pipeline" },
+  { key: "activities", label: "Activities" },
+  { key: "research",   label: "Research" },
+  { key: "proposals",  label: "Proposals" },
+  { key: "documents",  label: "Documents" },
+];
+
+const tab = ref<Tab>("overview");
 
 const router = useRouter();
 const deal    = ref<Opportunity | null>(null);
@@ -118,8 +133,14 @@ const CRITERIA: { key: string; label: string; weight: number }[] = [
 const openPhases    = computed(() => phases.value.filter((p) => p.outcome === null));
 const closingPhases = computed(() => phases.value.filter((p) => p.outcome !== null));
 
-const money = (v: string | number | null) =>
-  v === null || v === "" ? "—" : `KES ${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+/**
+ * Masked rather than blank when the caller lacks the commercial elevation.
+ * A withheld figure and an unrecorded one must not look the same.
+ */
+const money = (v: string | number | null) => {
+  if (deal.value && !deal.value.commercials_visible) return "•••";
+  return v === null || v === "" ? "—" : `KES ${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+};
 
 const date = (v: string | null) =>
   v ? new Date(v).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -162,6 +183,16 @@ onMounted(load);
         </div>
       </header>
 
+      <nav class="op-tabs" role="tablist">
+        <button v-for="t in tabs" :key="t.key" role="tab" :aria-selected="tab === t.key"
+                :class="['op-tab', { active: tab === t.key }]" @click="tab = t.key">{{ t.label }}</button>
+      </nav>
+
+      <!-- ── Pipeline ────────────────────────────────────────────────── -->
+      <OpportunityPipeline v-if="tab === 'pipeline'" :opportunity-id="props.id" />
+
+      <!-- ── Everything else ─────────────────────────────────────────── -->
+      <template v-else-if="tab === 'overview'">
       <!-- The phase, which is where open/won/lost is read from. -->
       <div class="op-card">
         <div class="op-card-head">
@@ -255,6 +286,28 @@ onMounted(load);
         <h3 class="op-card-label">Description</h3>
         <p class="op-prose">{{ deal.description }}</p>
       </div>
+      </template>
+
+      <!-- Tabs whose modules are next in the build. Shown rather than hidden:
+           they are part of the record's shape, and a tab that says what it is
+           waiting for beats one that silently is not there. -->
+      <div v-else class="op-card op-pending">
+        <h3 class="op-card-label">{{ tabs.find((t) => t.key === tab)?.label }}</h3>
+        <p class="op-muted">
+          <template v-if="tab === 'research'">
+            Research is the next module. The table and the link from a deal already
+            exist; the screen does not.
+          </template>
+          <template v-else-if="tab === 'activities'">
+            The deal's own timeline is recorded and kept apart from the customer's;
+            the screen for it follows Research.
+          </template>
+          <template v-else>
+            Proposals and documents are filed through the Pipeline tab today, under
+            the stage they belong to. A combined view follows.
+          </template>
+        </p>
+      </div>
     </template>
   </div>
 </template>
@@ -284,6 +337,17 @@ onMounted(load);
 .score-promising  { color: var(--color-brand-on-surface); }
 .score-developing { color: var(--color-warning-text); }
 .score-weak       { color: var(--color-text-light); }
+
+.op-tabs { @apply flex flex-wrap gap-1 overflow-x-auto; border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); }
+.op-tab {
+  @apply cursor-pointer border-none bg-transparent;
+  padding: var(--space-2) var(--space-3);
+  font-family: inherit; font-size: var(--text-sm-size); color: var(--color-text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap;
+}
+.op-tab:hover  { color: var(--color-text); }
+.op-tab.active { color: var(--color-brand-on-surface); border-bottom-color: var(--color-brand-base); font-weight: 500; }
+.op-pending { align-items: flex-start; }
 
 .op-columns { @apply grid; grid-template-columns: 3fr 2fr; gap: var(--space-4); margin-top: var(--space-4); }
 @media (max-width: 56rem) { .op-columns { grid-template-columns: 1fr; } }

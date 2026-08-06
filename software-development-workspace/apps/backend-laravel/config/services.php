@@ -36,6 +36,17 @@ return [
     ],
 
     'azure' => [
+
+        /*
+         * Step-up authentication for commercial data.
+         *
+         * `require_step_up_for_commercials` stays false until the Conditional
+         * Access policy exists in Entra — switching it on without the policy
+         * would refuse everybody with a challenge nothing can satisfy.
+         */
+        'commercial_auth_context'            => env('AZURE_COMMERCIAL_AUTH_CONTEXT', 'c1'),
+        'require_step_up_for_commercials'    => env('AZURE_REQUIRE_STEP_UP_COMMERCIALS', false),
+
         'tenant_id'     => env('MICROSOFT_TENANT_ID', 'common'),
         'client_id'     => env('MICROSOFT_CLIENT_ID'),
         'client_secret' => env('MICROSOFT_CLIENT_SECRET'),
