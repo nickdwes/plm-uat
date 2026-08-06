@@ -16,6 +16,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
+import { notifySaved, notifyFailed } from "../../lib/toast";
 
 interface Person { id: number | null; name: string | null }
 interface TeamMember { id: number; employee: Person }
@@ -35,7 +36,11 @@ const columns = ref<Column[]>([]);
 const rows    = ref<Lead[]>([]);
 const loading = ref(true);
 const saving  = ref(false);
-const error   = ref<string | null>(null);
+
+/** Every failure goes to a toast; nothing on this screen renders its own. */
+function fail(e: unknown, fallback: string) {
+  notifyFailed(fallback, e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
+}
 
 const search       = ref("");
 const priority     = ref("");
@@ -59,7 +64,7 @@ async function loadBoard() {
       params: { search: search.value || undefined, priority: priority.value || undefined },
     })).data;
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not load the board.";
+    fail(e, "Could not load the board.");
   } finally { loading.value = false; }
 }
 
@@ -71,7 +76,7 @@ async function loadList() {
       params: { status: listStatus.value, search: search.value || undefined, per_page: 100 },
     })).data;
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not load leads.";
+    fail(e, "Could not load leads.");
   } finally { loading.value = false; }
 }
 
@@ -85,7 +90,6 @@ function switchTo(v: "kanban" | "list") {
 async function create(status?: string) {
   if (!newLead.value.name.trim()) return;
   saving.value = true;
-  error.value = null;
   try {
     const res = await api<{ data: Lead }>("POST", "/api/v1/leads", {
       org: org(),
@@ -98,9 +102,13 @@ async function create(status?: string) {
     });
     showNew.value = false;
     newLead.value = { name: "", summary: "", source: "", priority: "medium", status: "new" };
+
+    // Raised before navigating. The toast lives on the shell, so it survives
+    // the route change — an inline banner here would be destroyed by it.
+    notifySaved(`${res.data.name} added.`);
     router.push({ name: "lead", params: { id: res.data.id } });
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not raise the lead.";
+    fail(e, "Could not raise the lead.");
   } finally { saving.value = false; }
 }
 
@@ -141,7 +149,7 @@ async function drop(status: string) {
   try {
     await api("POST", `/api/v1/leads/${lead.id}/status`, { org: org(), body: { status } });
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not move that lead.";
+    fail(e, "Could not move that lead.");
     void loadBoard();   // put the board back to what the server believes
   }
 }
@@ -211,8 +219,6 @@ onMounted(() => { void loadBoard(); });
         List view
       </button>
     </nav>
-
-    <div v-if="error" class="alert-error">{{ error }}</div>
 
     <!-- Status chips, list view only: the board already shows every column. -->
     <div v-if="view === 'list'" class="lv-chips">
@@ -341,11 +347,14 @@ onMounted(() => { void loadBoard(); });
       </table>
     </div>
 
-    <!-- New lead -->
-    <div v-if="showNew" class="lv-modal-backdrop" @click.self="showNew = false">
-      <div class="lv-modal">
-        <div class="lv-modal-head">
-          <h3 class="lv-modal-title">New Lead</h3>
+    <!-- New lead.
+         A slide-over rather than a centred modal: it is the same act as New
+         Estimate, New Bid and New Research, and those are panels. A dialog
+         that blackens the board also hides the column you were adding to. -->
+    <div v-if="showNew" class="lv-sheet-backdrop" @click.self="showNew = false">
+      <aside class="lv-sheet" role="dialog" aria-modal="true" aria-label="New lead">
+        <div class="lv-sheet-head">
+          <h3 class="lv-sheet-title">New Lead</h3>
           <button class="lv-close" aria-label="Close" @click="showNew = false">×</button>
         </div>
 
@@ -374,7 +383,7 @@ onMounted(() => { void loadBoard(); });
         <button class="btn-primary btn-block" :disabled="saving || !newLead.name.trim()" @click="create()">
           {{ saving ? "Adding…" : "Add Lead" }}
         </button>
-      </div>
+      </aside>
     </div>
   </div>
 </template>
@@ -516,14 +525,17 @@ onMounted(() => { void loadBoard(); });
 .link-btn { @apply cursor-pointer border-none bg-transparent p-0; font-family: inherit; font-size: var(--text-sm-size); color: var(--color-brand-on-surface); }
 .link-btn:hover { @apply underline; }
 
-.lv-modal-backdrop { @apply fixed inset-0 flex items-center justify-center z-50; background: rgb(0 0 0 / 0.45); padding: var(--space-4); }
-.lv-modal {
-  @apply flex flex-col w-full overflow-y-auto; max-width: 26rem; max-height: 90vh; gap: var(--space-4);
+.lv-sheet-backdrop { @apply fixed inset-0 flex justify-end z-50; background: rgb(0 0 0 / 0.28); }
+.lv-sheet {
+  @apply flex flex-col overflow-y-auto; width: min(26rem, 100%); gap: var(--space-4);
   padding: var(--space-5); background: var(--color-surface-raised);
-  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg);
+  animation: sheet-in 180ms ease;
 }
-.lv-modal-head { @apply flex items-center justify-between; }
-.lv-modal-title { font-size: var(--text-base-size); font-weight: 600; margin: 0; color: var(--color-text); }
+@keyframes sheet-in { from { transform: translateX(12px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .lv-sheet { animation: none; } }
+.lv-sheet-head { @apply flex items-center justify-between; }
+.lv-sheet-title { font-size: var(--text-base-size); font-weight: 600; margin: 0; color: var(--color-text); }
 .lv-close { @apply cursor-pointer border-none bg-transparent p-0; font-size: 1.5rem; line-height: 1; color: var(--color-text-muted); }
 
 .btn-primary, .btn-ghost {
@@ -537,11 +549,4 @@ onMounted(() => { void loadBoard(); });
 .btn-block   { width: 100%; }
 .btn-primary svg, .btn-ghost svg { width: 1rem; height: 1rem; }
 .btn-primary:disabled { @apply cursor-not-allowed opacity-50; }
-
-.alert-error {
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
-  font-size: var(--text-sm-size);
-  background: var(--color-danger-subtle); color: var(--color-danger-text);
-  margin-bottom: var(--space-4);
-}
 </style>

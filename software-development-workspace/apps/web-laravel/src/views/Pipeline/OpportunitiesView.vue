@@ -11,6 +11,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
+import { notifyFailed } from "../../lib/toast";
 
 interface Person { id: number | null; name: string | null }
 interface Opportunity {
@@ -27,7 +28,6 @@ interface Opportunity {
 const router  = useRouter();
 const rows    = ref<Opportunity[]>([]);
 const loading = ref(true);
-const error   = ref<string | null>(null);
 const search  = ref("");
 const state   = ref("open");
 
@@ -41,7 +41,7 @@ async function load() {
       params: { state: state.value || undefined, search: search.value || undefined, per_page: 100 },
     })).data;
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not load opportunities.";
+    notifyFailed("Could not load opportunities.", e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
   } finally { loading.value = false; }
 }
 
@@ -82,8 +82,6 @@ onMounted(load);
         <span class="ov-total-label">across {{ totals.count }} deal{{ totals.count === 1 ? "" : "s" }}</span>
       </div>
     </header>
-
-    <div v-if="error" class="alert-error">{{ error }}</div>
 
     <div class="ov-chips">
       <button v-for="s in STATES" :key="s.key"
@@ -228,10 +226,4 @@ onMounted(load);
 .link-btn { @apply cursor-pointer border-none bg-transparent p-0; font-family: inherit; font-size: var(--text-sm-size); color: var(--color-brand-on-surface); text-align: left; }
 .link-btn:hover { @apply underline; }
 
-.alert-error {
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
-  font-size: var(--text-sm-size);
-  background: var(--color-danger-subtle); color: var(--color-danger-text);
-  margin-bottom: var(--space-4);
-}
 </style>

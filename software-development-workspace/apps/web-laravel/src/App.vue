@@ -3,6 +3,7 @@ import { computed, watchEffect } from "vue";
 import { useRoute } from "vue-router";
 import AppNav from "./components/AppNav.vue";
 import AppHeader from "./components/AppHeader.vue";
+import ToastHost from "./components/ToastHost.vue";
 import { isAuthenticated, authStore } from "./stores/auth";
 import { resolvedTheme } from "./stores/theme";
 import { deriveBrandPalette, readableOn } from "./lib/palette";
@@ -82,5 +83,9 @@ watchEffect(() => applyOrgTheme(authStore.currentOrg?.primary_color, resolvedThe
       </div>
     </div>
     <router-view v-else />
+
+    <!-- Mounted on the shell, not per screen: a notification raised during
+         navigation has to survive the route change that caused it. -->
+    <ToastHost />
   </div>
 </template>

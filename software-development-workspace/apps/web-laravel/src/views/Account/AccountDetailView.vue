@@ -18,6 +18,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
+import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 
 const props = defineProps<{ id: string | number }>();
@@ -88,8 +89,6 @@ const lookups = ref<{ types: Named[]; sectors: Named[]; subsectors: (Named & { a
 const tab     = ref<Tab>("overview");
 const loading = ref(true);
 const saving  = ref(false);
-const error   = ref<string | null>(null);
-const notice  = ref<string | null>(null);
 
 const org  = () => currentOrgSlug.value;
 const base = computed(() => `/api/v1/accounts/${props.id}`);
@@ -132,19 +131,18 @@ async function load() {
     lookups.value = lk;
     fillForm(res.data);
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not load this customer.";
+    notifyFailed("Could not load this customer.", e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
   } finally {
     loading.value = false;
   }
 }
 
-function flash(message: string) {
-  notice.value = message;
-  setTimeout(() => (notice.value = null), 3000);
-}
+const flash = (message: string) => notifySaved(message);
 
 function fail(e: unknown, fallback: string) {
-  error.value = e instanceof ApiError ? (e.firstError ?? e.message) : fallback;
+  // The detail is the API's own message — a validation error is far more use
+  // than "could not save", and a toast has room for both.
+  notifyFailed(fallback, e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
 }
 
 // Loaded on demand rather than with the record: none of these belong to the
@@ -248,7 +246,6 @@ function onSectorChange() {
 
 async function saveProfile() {
   saving.value = true;
-  error.value = null;
   try {
     const res = await api<{ data: Account }>("PUT", base.value, {
       org: org(),
@@ -304,8 +301,7 @@ function editContact(c: Contact) {
 
 async function saveContact() {
   saving.value = true;
-  error.value = null;
-  const { id, ...body } = contactForm.value;
+    const { id, ...body } = contactForm.value;
   try {
     await api(id ? "PUT" : "POST", id ? `${base.value}/contacts/${id}` : `${base.value}/contacts`, {
       org: org(),
@@ -365,8 +361,7 @@ function editContract(c: Contract) {
 
 async function saveContract() {
   saving.value = true;
-  error.value = null;
-  const { id, ...body } = contractForm.value;
+    const { id, ...body } = contractForm.value;
   try {
     await api(id ? "PUT" : "POST", id ? `${base.value}/contracts/${id}` : `${base.value}/contracts`, {
       org: org(),
@@ -433,7 +428,6 @@ async function uploadTo(contractId: number | null, event: Event) {
   if (!file) return;
 
   uploading.value = true;
-  error.value = null;
   try {
     const body = new FormData();
     body.append("file", file);
@@ -470,7 +464,6 @@ const newActivity = ref({ type: "note", body: "" });
 async function logActivity() {
   if (!newActivity.value.body.trim()) return;
   saving.value = true;
-  error.value = null;
   try {
     await api("POST", `${base.value}/activities`, { org: org(), body: { ...newActivity.value } });
     newActivity.value = { type: "note", body: "" };
@@ -490,7 +483,6 @@ const newLead  = ref({ name: "", source: "", priority: "medium" });
 async function createLead() {
   if (!newLead.value.name.trim()) return;
   saving.value = true;
-  error.value = null;
   try {
     const res = await api<{ data: Lead }>("POST", "/api/v1/leads", {
       org: org(),
@@ -514,7 +506,6 @@ const newMember = ref({ employee_id: null as number | null, role: "" });
 async function addMember() {
   if (!newMember.value.employee_id) return;
   saving.value = true;
-  error.value = null;
   try {
     const res = await api<{ data: Account }>("POST", `${base.value}/team`, {
       org: org(), body: { ...newMember.value, role: newMember.value.role || null },
@@ -597,9 +588,6 @@ onMounted(() => { void load(); void loadSummary(); });
 
     <template v-else-if="account">
       <h1 class="ad-title">{{ account.name }}</h1>
-
-      <div v-if="error" class="alert-error">{{ error }}</div>
-      <div v-if="notice" class="alert-ok">{{ notice }}</div>
 
       <nav class="ad-tabs" role="tablist">
         <button v-for="t in tabs" :key="t.key" role="tab" :aria-selected="tab === t.key"
@@ -1443,10 +1431,4 @@ onMounted(() => { void load(); void loadSummary(); });
 .btn-block   { width: 100%; }
 .btn-primary:disabled, .btn-ghost:disabled { @apply cursor-not-allowed opacity-50; }
 
-.alert-error, .alert-ok {
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
-  font-size: var(--text-sm-size); margin-bottom: var(--space-4);
-}
-.alert-error { background: var(--color-danger-subtle);  color: var(--color-danger-text); }
-.alert-ok    { background: var(--color-success-subtle); color: var(--color-success-text); }
 </style>

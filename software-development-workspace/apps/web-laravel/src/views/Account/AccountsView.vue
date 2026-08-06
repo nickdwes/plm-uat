@@ -17,6 +17,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
+import { notifySaved, notifyFailed } from "../../lib/toast";
 
 interface Named { id: number; name: string }
 interface Account {
@@ -38,7 +39,6 @@ const rows    = ref<Account[]>([]);
 const types   = ref<Named[]>([]);
 const loading = ref(true);
 const saving  = ref(false);
-const error   = ref<string | null>(null);
 
 const search       = ref("");
 const statusFilter = ref("");
@@ -64,7 +64,7 @@ async function load() {
     });
     rows.value = res.data;
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not load customers.";
+    notifyFailed("Could not load customers.", e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
   } finally {
     loading.value = false;
   }
@@ -83,7 +83,6 @@ async function loadLookups() {
 async function create() {
   if (!newAccount.value.name.trim()) return;
   saving.value = true;
-  error.value = null;
   try {
     const res = await api<{ data: Account }>("POST", "/api/v1/accounts", {
       org: org(),
@@ -91,10 +90,14 @@ async function create() {
     });
     showNew.value = false;
     newAccount.value = { name: "", account_type_id: null, country: "" };
+
+    // Raised before navigating: the toast lives on the shell and survives the
+    // route change, which an inline banner here would not.
+    notifySaved(`${res.data.name} added.`);
     // Straight into the record: a customer is created in order to fill it in.
     router.push({ name: "account", params: { id: res.data.id } });
   } catch (e) {
-    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not create the customer.";
+    notifyFailed("Could not create the customer.", e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
   } finally { saving.value = false; }
 }
 
@@ -140,8 +143,6 @@ onMounted(() => { void load(); void loadLookups(); });
         <p class="ac-sub">A quick overview of all our clients</p>
       </div>
     </header>
-
-    <div v-if="error" class="alert-error">{{ error }}</div>
 
     <div class="ac-toolbar">
       <div class="ac-search-wrap">
@@ -359,10 +360,4 @@ onMounted(() => { void load(); void loadLookups(); });
 .btn-primary svg, .btn-ghost svg { width: 1rem; height: 1rem; }
 .btn-primary:disabled { @apply cursor-not-allowed opacity-50; }
 
-.alert-error {
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
-  font-size: var(--text-sm-size);
-  background: var(--color-danger-subtle); color: var(--color-danger-text);
-  margin-bottom: var(--space-4);
-}
 </style>

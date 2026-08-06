@@ -14,6 +14,7 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
+import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 
 const props = defineProps<{ id: string | number }>();
@@ -40,20 +41,17 @@ const deal    = ref<Opportunity | null>(null);
 const phases  = ref<Phase[]>([]);
 const loading = ref(true);
 const saving  = ref(false);
-const error   = ref<string | null>(null);
-const notice  = ref<string | null>(null);
 
 const org  = () => currentOrgSlug.value;
 const base = computed(() => `/api/v1/opportunities/${props.id}`);
 
 function fail(e: unknown, fallback: string) {
-  error.value = e instanceof ApiError ? (e.firstError ?? e.message) : fallback;
+  // The detail is the API's own message — a validation error is far more use
+  // than "could not save", and a toast has room for both.
+  notifyFailed(fallback, e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
 }
 
-function flash(message: string) {
-  notice.value = message;
-  setTimeout(() => (notice.value = null), 3000);
-}
+const flash = (message: string) => notifySaved(message);
 
 async function load() {
   loading.value = true;
@@ -70,7 +68,6 @@ async function load() {
 
 async function moveTo(phase: Phase) {
   saving.value = true;
-  error.value = null;
   try {
     deal.value = (await api<{ data: Opportunity }>("POST", `${base.value}/phase`, {
       org: org(), body: { opportunity_phase_id: phase.id },
@@ -164,9 +161,6 @@ onMounted(load);
           <span class="op-score-band">{{ deal.score_band }}</span>
         </div>
       </header>
-
-      <div v-if="error" class="alert-error">{{ error }}</div>
-      <div v-if="notice" class="alert-ok">{{ notice }}</div>
 
       <!-- The phase, which is where open/won/lost is read from. -->
       <div class="op-card">
@@ -368,10 +362,4 @@ onMounted(load);
 .btn-ghost   { background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border-strong); }
 .btn-primary:disabled, .btn-ghost:disabled { @apply cursor-not-allowed opacity-50; }
 
-.alert-error, .alert-ok {
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
-  font-size: var(--text-sm-size); margin-bottom: var(--space-4);
-}
-.alert-error { background: var(--color-danger-subtle);  color: var(--color-danger-text); }
-.alert-ok    { background: var(--color-success-subtle); color: var(--color-success-text); }
 </style>

@@ -16,6 +16,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
+import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 
 const props = defineProps<{ id: string | number }>();
@@ -79,8 +80,6 @@ const company = ref<Account | null>(null);
 const tab     = ref<Tab>("overview");
 const loading = ref(true);
 const saving  = ref(false);
-const error   = ref<string | null>(null);
-const notice  = ref<string | null>(null);
 
 const org  = () => currentOrgSlug.value;
 const base = computed(() => `/api/v1/leads/${props.id}`);
@@ -94,13 +93,12 @@ const tabs: { key: Tab; label: string }[] = [
 ];
 
 function fail(e: unknown, fallback: string) {
-  error.value = e instanceof ApiError ? (e.firstError ?? e.message) : fallback;
+  // The detail is the API's own message — a validation error is far more use
+  // than "could not save", and a toast has room for both.
+  notifyFailed(fallback, e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
 }
 
-function flash(message: string) {
-  notice.value = message;
-  setTimeout(() => (notice.value = null), 3000);
-}
+const flash = (message: string) => notifySaved(message);
 
 async function load() {
   loading.value = true;
@@ -161,7 +159,6 @@ function fillForm(l: Lead) {
 
 async function save() {
   saving.value = true;
-  error.value = null;
   try {
     lead.value = (await api<{ data: Lead }>("PUT", base.value, {
       org: org(),
@@ -212,7 +209,6 @@ function fillQualification(q: Qualification) {
 
 async function saveQualification() {
   saving.value = true;
-  error.value = null;
   try {
     lead.value = (await api<{ data: Lead }>("POST", `${base.value}/qualify`, {
       org: org(),
@@ -291,7 +287,6 @@ function pickFile(event: Event) {
 async function uploadDoc() {
   if (!docFile.value) return;
   uploading.value = true;
-  error.value = null;
   try {
     const body = new FormData();
     body.append("file", docFile.value);
@@ -406,9 +401,6 @@ onMounted(load);
         </div>
         <button class="btn-ghost" @click="editing = !editing">{{ editing ? "Cancel" : "Edit" }}</button>
       </header>
-
-      <div v-if="error" class="alert-error">{{ error }}</div>
-      <div v-if="notice" class="alert-ok">{{ notice }}</div>
 
       <div v-if="lead.opportunity" class="ld-banner">
         This lead became
@@ -1170,10 +1162,4 @@ onMounted(load);
 .btn-block   { width: 100%; }
 .btn-primary:disabled, .btn-ghost:disabled { @apply cursor-not-allowed opacity-50; }
 
-.alert-error, .alert-ok {
-  padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
-  font-size: var(--text-sm-size); margin-bottom: var(--space-4);
-}
-.alert-error { background: var(--color-danger-subtle);  color: var(--color-danger-text); }
-.alert-ok    { background: var(--color-success-subtle); color: var(--color-success-text); }
 </style>
