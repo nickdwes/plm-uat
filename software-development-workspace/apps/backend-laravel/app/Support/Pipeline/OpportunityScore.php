@@ -3,94 +3,134 @@
 namespace App\Support\Pipeline;
 
 use App\Models\Pipeline\Opportunity;
-use Illuminate\Support\Carbon;
 
 /**
- * How good an opportunity looks, out of 80.
+ * Ten strength indicators, ten points each, sixty-five to commit.
  *
- * The weights are the legacy's, unchanged — they encode how Konvergenz reads a
- * deal, and changing them would silently re-rank a pipeline people already
- * have opinions about. What is not carried over is the arithmetic, which was
- * wrong in three ways:
+ * This replaces the legacy's weighted score, and the change is deliberate
+ * rather than a simplification for its own sake. Three reasons:
  *
- *   The current quarter was computed as ceil((month - 1) / 3) while the close
- *   quarter used ceil(month / 3). Two different bases, so the comparison was
- *   off by one for most of the year and a deal closing this quarter often
- *   scored as though it closed next.
+ *   The indicators are unchanged. All ten are the legacy's own booleans —
+ *   know procurement, deal registered, compliance pressure, OEM pressure,
+ *   prior deal closed, weekly meetings, and the four alignments. Nothing has
+ *   been invented and nothing dropped.
  *
- *   The branch for "two quarters out" had no break and fell through, quietly
- *   awarding 10 where the table says 5.
+ *   The legacy's weights could not be explained by anyone still here. It paid
+ *   15 for compliance pressure and 5 for OEM pressure with no recorded reason,
+ *   and folded in the account's category and the closing quarter, so a deal's
+ *   score moved when nobody had touched it. A score that changes on its own is
+ *   one nobody trusts.
  *
- *   The banding used `switch ($score) { case ($score <= 29): ... }`, which
- *   compares the score against a boolean rather than testing it. Every band
- *   was decided by a type juggle.
+ *   Sixty-five is now a gate rather than a report heading. The legacy computed
+ *   bands for a dashboard and did nothing with them; here the score decides
+ *   whether a deal may be committed, which is the first time the number has
+ *   had to be defensible.
  *
- * Computed rather than stored. It depends on today's date through the closing
- * quarter, so a stored copy is stale the moment the quarter turns — which is
- * exactly when somebody is looking at the pipeline.
+ * What is lost is the weighting — compliance pressure now counts the same as
+ * an OEM relationship. That is worth knowing, and worth revisiting once
+ * somebody can say what the weights should be.
  */
 final class OpportunityScore
 {
-    private const WEIGHTS = [
-        'account_weight'      => ['category_1' => 15, 'category_2' => 10, 'category_3' => 5],
-        'quarters_out'        => [0 => 15, 1 => 10, 2 => 5],
-        'knows_procurement'   => 10,
-        'has_budget'          => 5,
-        'deal_registered'     => 5,
-        'compliance_pressure' => 15,
-        'oem_pressure'        => 5,
-        'prior_deal_closed'   => 10,
+    /**
+     * The ten, in the order the Processing screen lists them.
+     *
+     * @var array<string, array{label: string, help: string}>
+     */
+    public const INDICATORS = [
+        'knows_procurement' => [
+            'label' => 'Know Procurement / CTO',
+            'help'  => 'Confirm if we know the Procurement Manager or Chief Technology Officer.',
+        ],
+        'deal_registered' => [
+            'label' => 'Deal Registered',
+            'help'  => 'Verify that the deal has been officially registered within our internal systems.',
+        ],
+        'compliance_pressure' => [
+            'label' => 'Compliance Pressure',
+            'help'  => 'Determine if the client is facing industry regulations or internal policy changes.',
+        ],
+        'oem_pressure' => [
+            'label' => 'OEM Pressure',
+            'help'  => 'Ascertain if the client is being pushed by their Original Equipment Manufacturer.',
+        ],
+        'prior_deal_closed' => [
+            'label' => 'Prior Deal Closed',
+            'help'  => 'Verify if a previous business agreement has been successfully concluded.',
+        ],
+        'discuss_weekly' => [
+            'label' => 'Weekly Meetings',
+            'help'  => 'Check if regular sync meetings are scheduled with the client team.',
+        ],
+        'alignment_with_customer' => [
+            'label' => 'Customer Alignment',
+            'help'  => "Confirm that our solutions align with the client's long-term strategic goals.",
+        ],
+        'alignment_with_oem_financials' => [
+            'label' => 'OEM Financial Alignment',
+            'help'  => "Confirm that the client's budget and financial expectations align with ours.",
+        ],
+        'alignment_with_oem_solution' => [
+            'label' => 'OEM Solution Alignment',
+            'help'  => 'Confirm the proposed solution matches what the OEM can actually deliver.',
+        ],
+        'alignment_with_oem_support' => [
+            'label' => 'OEM Support Alignment',
+            'help'  => 'Confirm the OEM will support the solution over the life of the contract.',
+        ],
     ];
 
-    public const MAX = 80;
+    public const POINTS_EACH   = 10;
+    public const MAX           = 100;
 
-    public static function for(Opportunity $o, ?Carbon $asOf = null): int
+    /** The score a deal must reach before it can be committed. */
+    public const COMMIT_THRESHOLD = 65;
+
+    public static function for(Opportunity $opportunity): int
     {
-        $asOf = $asOf ?? Carbon::now();
-        $score = 0;
+        $met = 0;
 
-        $score += self::WEIGHTS['account_weight'][$o->account_weight] ?? 0;
-
-        if ($o->expected_close_date) {
-            // Both quarters on the same basis, which is the fix.
-            $quartersOut = (self::quarter($o->expected_close_date) - self::quarter($asOf))
-                + (($o->expected_close_date->year - $asOf->year) * 4);
-
-            // A deal already past its close date scores nothing here: it is
-            // late, not imminent.
-            $score += self::WEIGHTS['quarters_out'][$quartersOut] ?? 0;
+        foreach (array_keys(self::INDICATORS) as $key) {
+            if ($opportunity->{$key}) {
+                $met++;
+            }
         }
 
-        // "Do we know how they buy" — worth more than any single alignment.
-        if ($o->knows_procurement)   $score += self::WEIGHTS['knows_procurement'];
-        if ($o->amount > 0)          $score += self::WEIGHTS['has_budget'];
-        if ($o->deal_registered)     $score += self::WEIGHTS['deal_registered'];
-        if ($o->compliance_pressure) $score += self::WEIGHTS['compliance_pressure'];
-        if ($o->oem_pressure)        $score += self::WEIGHTS['oem_pressure'];
-        if ($o->prior_deal_closed)   $score += self::WEIGHTS['prior_deal_closed'];
+        return $met * self::POINTS_EACH;
+    }
 
-        return $score;
+    public static function meetsCommitThreshold(Opportunity $opportunity): bool
+    {
+        return self::for($opportunity) >= self::COMMIT_THRESHOLD;
     }
 
     /**
-     * The band, as the legacy's pipeline report meant to group them.
+     * The band, kept for colour on screen.
      *
-     * Boundaries taken from the report's own labels rather than from its code,
-     * which contradicted them: it was labelled "between 30 and 49" while
-     * testing 30 to 59.
+     * Boundaries chosen around the commit threshold rather than inherited: the
+     * only one that means anything operationally is 65, so the others sit
+     * either side of it at even intervals.
      */
     public static function band(int $score): string
     {
         return match (true) {
-            $score >= 65 => 'strong',
-            $score >= 50 => 'promising',
-            $score >= 30 => 'developing',
-            default      => 'weak',
+            $score >= self::COMMIT_THRESHOLD => 'strong',
+            $score >= 40                     => 'developing',
+            default                          => 'weak',
         };
     }
 
-    private static function quarter(Carbon $date): int
+    /** Which indicators are still unmet, so a screen can say what to go and do. */
+    public static function outstanding(Opportunity $opportunity): array
     {
-        return (int) ceil($date->month / 3);
+        $out = [];
+
+        foreach (self::INDICATORS as $key => $meta) {
+            if (! $opportunity->{$key}) {
+                $out[] = ['key' => $key, 'label' => $meta['label']];
+            }
+        }
+
+        return $out;
     }
 }

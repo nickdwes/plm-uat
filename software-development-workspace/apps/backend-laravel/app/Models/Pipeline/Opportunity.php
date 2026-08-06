@@ -27,8 +27,8 @@ class Opportunity extends Model
     protected $table = 'opportunities';
 
     protected $fillable = [
-        'organization_id', 'account_id', 'lead_id', 'reference', 'name', 'description',
-        'opportunity_type', 'practice', 'amount', 'expected_close_date',
+        'organization_id', 'account_id', 'lead_id', 'reference', 'name', 'summary', 'description',
+        'opportunity_type', 'priority', 'practice', 'amount', 'expected_close_date',
         'opportunity_phase_id', 'owner_id', 'presale_lead_id',
         'account_weight', 'knows_procurement', 'deal_registered', 'compliance_pressure',
         'oem_pressure', 'prior_deal_closed', 'alignment_with_customer',
@@ -36,6 +36,13 @@ class Opportunity extends Model
         'alignment_with_oem_support', 'budget_confirmed_by_customer', 'gap_analysis',
         'is_committed', 'committed_year', 'committed_quarter', 'discuss_weekly',
         'closed_at', 'created_by',
+
+        // Fit, copied from the lead on conversion and editable afterwards.
+        'fit_company', 'fit_budget', 'fit_solution', 'fit_timeline', 'fit_stakeholder',
+        'budget_availability', 'stakeholder_engagement', 'timeline_estimate',
+        'technical_readiness', 'decision_authority_access', 'qualified_at',
+
+        'confirmed_budget', 'budget_confirmed_at', 'budget_confirmed_by',
     ];
 
     protected $casts = [
@@ -54,6 +61,14 @@ class Opportunity extends Model
         'alignment_with_oem_solution'   => 'boolean',
         'alignment_with_oem_support'    => 'boolean',
         'budget_confirmed_by_customer'  => 'boolean',
+        'qualified_at'        => 'datetime',
+        'budget_confirmed_at' => 'datetime',
+        'confirmed_budget'    => 'decimal:2',
+        'fit_company'     => 'integer',
+        'fit_budget'      => 'integer',
+        'fit_solution'    => 'integer',
+        'fit_timeline'    => 'integer',
+        'fit_stakeholder' => 'integer',
     ];
 
     public const TYPES   = ['new_business', 'renewal', 'upgrade'];
@@ -91,6 +106,54 @@ class Opportunity extends Model
         return $this->hasMany(OpportunityAssignee::class);
     }
 
+    // ── Pipeline ──────────────────────────────────────────────────────────
+
+    public function stageProgress(): HasMany
+    {
+        return $this->hasMany(OpportunityStageProgress::class);
+    }
+
+    public function documents(): HasMany
+    {
+        return $this->hasMany(OpportunityDocument::class)->latest('id');
+    }
+
+    public function estimates(): HasMany
+    {
+        return $this->hasMany(OpportunityEstimate::class)->latest('id');
+    }
+
+    public function objectives(): HasMany
+    {
+        return $this->hasMany(OpportunityObjective::class)->orderBy('expected_start_date');
+    }
+
+    public function bids(): HasMany
+    {
+        return $this->hasMany(OpportunityBid::class)->latest('id');
+    }
+
+    public function activities(): HasMany
+    {
+        return $this->hasMany(OpportunityActivity::class)->orderByDesc('occurred_at');
+    }
+
+    public function researches(): HasMany
+    {
+        return $this->hasMany(Research::class);
+    }
+
+    public function projects(): HasMany
+    {
+        return $this->hasMany(\App\Models\Project\Project::class);
+    }
+
+    /** The contract a won deal produced. */
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(\App\Models\Account\AccountContract::class);
+    }
+
     // ── Derived ───────────────────────────────────────────────────────────
 
     /** Won, lost, or still running — always the phase's answer. */
@@ -112,6 +175,24 @@ class Opportunity extends Model
     public function getScoreBandAttribute(): string
     {
         return OpportunityScore::band($this->score);
+    }
+
+    /**
+     * Whether the budget confirmation currently stands.
+     *
+     * Read from the timestamp rather than a flag, so revoking one cannot leave
+     * a boolean saying otherwise. The amount survives a revocation — withdrawn
+     * is not the same as never quoted.
+     */
+    public function getBudgetIsConfirmedAttribute(): bool
+    {
+        return $this->budget_confirmed_at !== null;
+    }
+
+    /** The fit assessment, which is a different question from the strength score. */
+    public function getFitScoreAttribute(): ?int
+    {
+        return \App\Support\Pipeline\LeadQualification::score($this);
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────

@@ -2,23 +2,28 @@
 
 namespace App\Support\Pipeline;
 
-use App\Models\Pipeline\Lead;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 
 /**
  * How well a lead fits, across five dimensions.
  *
- * Deliberately not the same thing as an opportunity's score. That one is a
- * weighted checklist about a deal in flight — is the budget confirmed, is the
- * OEM pushing. This one asks whether the lead is worth pursuing at all, and it
- * is graded rather than ticked, because "does the solution match" is not a
- * yes-or-no question and pretending it is throws away what everyone already
- * knows.
+ * Deliberately not the same thing as the opportunity strength score, which
+ * lives beside it on a deal. That one is ten yes-or-no indicators about a deal
+ * in flight — is it registered, is the OEM pushing — and gates the commit.
+ * This one asks whether the thing is worth pursuing at all, and it is graded
+ * rather than ticked, because "does the solution match" is not a yes-or-no
+ * question and pretending it is throws away what everyone already knows.
  *
  * The overall figure is the mean of the dimensions that have been answered.
  * Unanswered ones are skipped rather than counted as zero: a lead assessed on
  * timeline alone should read as what it is, not as one good score dragged down
  * by four blanks nobody has looked at yet.
+ *
+ * Takes any record carrying the five columns, because an opportunity keeps its
+ * own copy from the moment it is converted — the picture at bidding is not the
+ * one that justified opening the lead, and one shared arithmetic is what stops
+ * the two screens disagreeing about what 80 means.
  */
 final class LeadQualification
 {
@@ -31,9 +36,9 @@ final class LeadQualification
     ];
 
     /** Null when nothing has been assessed — distinct from a score of zero. */
-    public static function score(Lead $lead): ?int
+    public static function score(Model $subject): ?int
     {
-        $answered = self::answered($lead);
+        $answered = self::answered($subject);
 
         return $answered === [] ? null : (int) round(array_sum($answered) / count($answered));
     }
@@ -55,9 +60,9 @@ final class LeadQualification
      * Shown alongside the score because 90 from one dimension and 90 from five
      * are not the same claim, and only one of them is worth acting on.
      */
-    public static function completeness(Lead $lead): int
+    public static function completeness(Model $subject): int
     {
-        return (int) round(count(self::answered($lead)) / count(self::DIMENSIONS) * 100);
+        return (int) round(count(self::answered($subject)) / count(self::DIMENSIONS) * 100);
     }
 
     /**
@@ -70,15 +75,15 @@ final class LeadQualification
      * Returns null when there is nothing to compare against — a percentile
      * drawn from two leads is noise dressed as a statistic.
      */
-    public static function percentile(Lead $lead): ?int
+    public static function percentile(Model $subject, string $table = 'leads'): ?int
     {
-        $score = self::score($lead);
+        $score = self::score($subject);
 
         if ($score === null) {
             return null;
         }
 
-        $scores = self::assessedScores($lead->organization_id);
+        $scores = self::assessedScores($subject->organization_id, $table);
 
         if (count($scores) < 5) {
             return null;
@@ -91,13 +96,13 @@ final class LeadQualification
     }
 
     /** @return array<string, int> the dimensions that have a value */
-    private static function answered(Lead $lead): array
+    private static function answered(Model $subject): array
     {
         $out = [];
 
         foreach (array_keys(self::DIMENSIONS) as $key) {
-            if ($lead->{$key} !== null) {
-                $out[$key] = (int) $lead->{$key};
+            if ($subject->{$key} !== null) {
+                $out[$key] = (int) $subject->{$key};
             }
         }
 
@@ -110,7 +115,7 @@ final class LeadQualification
      * In SQL rather than by loading every lead, because this runs on a screen
      * that shows one lead and would otherwise read the whole book to do it.
      */
-    private static function assessedScores(int $organizationId): array
+    private static function assessedScores(int $organizationId, string $table): array
     {
         $columns = array_keys(self::DIMENSIONS);
 
@@ -118,7 +123,7 @@ final class LeadQualification
         $sum   = implode(' + ', array_map(fn ($c) => "COALESCE({$c}, 0)", $columns));
         $count = implode(' + ', array_map(fn ($c) => "(CASE WHEN {$c} IS NULL THEN 0 ELSE 1 END)", $columns));
 
-        return DB::table('leads')
+        return DB::table($table)
             ->where('organization_id', $organizationId)
             ->whereNull('deleted_at')
             ->whereRaw("({$count}) > 0")

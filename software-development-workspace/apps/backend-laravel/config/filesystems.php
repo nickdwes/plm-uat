@@ -183,6 +183,32 @@ return [
             ],
 
         /*
+         * Pipeline paperwork — tender responses, bid bonds, financial
+         * workings, signed contracts, scopes of work.
+         *
+         * The most sensitive document class in the system. A tender response
+         * and a bidding value are commercially damaging before an award and
+         * embarrassing after one, and a bid bond names what we have lodged.
+         * Private, and served only through an authorised download — the legacy
+         * kept these behind integer pointers to a shared file table and Plmv2
+         * as bare path strings, neither of which is access control.
+         */
+        'opportunity_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'opportunity-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/opportunity-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Database backups. Written by infra/azure/backup-database.sh, read
          * here only so `backup:check` can tell whether last night's dump
          * actually arrived.

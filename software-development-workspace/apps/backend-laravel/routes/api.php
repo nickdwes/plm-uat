@@ -37,6 +37,7 @@ use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
 use App\Http\Controllers\Pipeline\OpportunityController;
+use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -298,6 +299,42 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         Route::post('/{opportunity}/assignees',            [OpportunityController::class, 'storeAssignee']);
         Route::delete('/{opportunity}/assignees/{assignee}',[OpportunityController::class, 'destroyAssignee']);
+
+        /*
+         * The pipeline. Every stage of a deal in one place — the screen shows
+         * one rail, and fetching eleven endpoints as somebody clicks down it
+         * would make a slow connection look broken.
+         */
+        Route::get('/{opportunity}/pipeline', [OpportunityPipelineController::class, 'show']);
+
+        Route::post('/{opportunity}/stages/{phase}/complete', [OpportunityPipelineController::class, 'completeStage']);
+        Route::post('/{opportunity}/stages/{phase}/reopen',   [OpportunityPipelineController::class, 'reopenStage']);
+
+        Route::post('/{opportunity}/indicators',   [OpportunityPipelineController::class, 'updateIndicators']);
+        Route::post('/{opportunity}/qualify',      [OpportunityPipelineController::class, 'qualify']);
+        Route::post('/{opportunity}/mark-qualified', [OpportunityPipelineController::class, 'markQualified']);
+
+        Route::post('/{opportunity}/estimates',              [OpportunityPipelineController::class, 'storeEstimate']);
+        Route::delete('/{opportunity}/estimates/{estimate}', [OpportunityPipelineController::class, 'destroyEstimate']);
+
+        Route::post('/{opportunity}/budget/confirm', [OpportunityPipelineController::class, 'confirmBudget']);
+        Route::post('/{opportunity}/budget/revoke',  [OpportunityPipelineController::class, 'revokeBudget']);
+
+        Route::post('/{opportunity}/objectives',                [OpportunityPipelineController::class, 'storeObjective']);
+        Route::put('/{opportunity}/objectives/{objective}',     [OpportunityPipelineController::class, 'updateObjective']);
+        Route::delete('/{opportunity}/objectives/{objective}',  [OpportunityPipelineController::class, 'destroyObjective']);
+
+        Route::post('/{opportunity}/bids',        [OpportunityPipelineController::class, 'storeBid']);
+        Route::put('/{opportunity}/bids/{bid}',   [OpportunityPipelineController::class, 'updateBid']);
+        Route::delete('/{opportunity}/bids/{bid}',[OpportunityPipelineController::class, 'destroyBid']);
+
+        Route::post('/{opportunity}/contracts', [OpportunityPipelineController::class, 'storeContract']);
+        Route::post('/{opportunity}/projects',  [OpportunityPipelineController::class, 'storeProject']);
+
+        // One upload path for every stage; see the controller.
+        Route::post('/{opportunity}/documents',              [OpportunityPipelineController::class, 'storeDocument']);
+        Route::get('/{opportunity}/documents/{document}/download', [OpportunityPipelineController::class, 'downloadDocument']);
+        Route::delete('/{opportunity}/documents/{document}', [OpportunityPipelineController::class, 'destroyDocument']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────

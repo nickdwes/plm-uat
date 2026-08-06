@@ -12,9 +12,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Support\Account\DefaultReferenceData;
 use App\Support\Authorization\Permission;
-use App\Support\Pipeline\OpportunityScore;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Carbon;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -23,9 +21,11 @@ use Tests\TestCase;
  *
  * The properties worth fixing are the ones the legacy got wrong and nobody
  * could see: a status that secretly meant "converted" so open leads could not
- * be counted; an opportunity status that disagreed with the phase on every
- * row; and a score whose quarter arithmetic used two different bases, so a
- * deal closing this quarter usually scored as though it closed next.
+ * be counted, and an opportunity status that disagreed with the phase on every
+ * row.
+ *
+ * The scoring cases that used to live here went with the legacy's weighted
+ * model; see OpportunityPipelineTest for what replaced it.
  */
 class PipelineTest extends TestCase
 {
@@ -306,76 +306,18 @@ class PipelineTest extends TestCase
         $this->assertTrue($res->json('data.is_open'));
     }
 
-    // ── Score ─────────────────────────────────────────────────────────────
-
-    public function test_a_deal_closing_this_quarter_scores_the_full_timing_weight(): void
-    {
-        // The legacy computed the current quarter as ceil((month - 1) / 3) and
-        // the closing one as ceil(month / 3) — two bases, so a deal closing
-        // this quarter usually scored as though it closed next.
-        $asOf = Carbon::create(2026, 2, 15);
-        $o = $this->opportunity(['expected_close_date' => '2026-03-31']);
-
-        $this->assertSame(15, OpportunityScore::for($o, $asOf));
-    }
-
-    public function test_timing_weight_falls_off_the_further_out_the_close_is(): void
-    {
-        $asOf = Carbon::create(2026, 2, 15);
-
-        $this->assertSame(10, OpportunityScore::for($this->opportunity(['expected_close_date' => '2026-05-01']), $asOf));
-        $this->assertSame(5,  OpportunityScore::for($this->opportunity(['expected_close_date' => '2026-08-01']), $asOf));
-        $this->assertSame(0,  OpportunityScore::for($this->opportunity(['expected_close_date' => '2026-12-01']), $asOf));
-    }
-
-    public function test_two_quarters_out_scores_five_not_ten(): void
-    {
-        // The legacy's branch for this had no break and fell through, quietly
-        // awarding double what its own table said.
-        $asOf = Carbon::create(2026, 2, 15);
-
-        $this->assertSame(5, OpportunityScore::for($this->opportunity(['expected_close_date' => '2026-09-30']), $asOf));
-    }
-
-    public function test_a_deal_already_past_its_close_date_earns_nothing_for_timing(): void
-    {
-        // It is late, not imminent.
-        $asOf = Carbon::create(2026, 6, 1);
-
-        $this->assertSame(0, OpportunityScore::for($this->opportunity(['expected_close_date' => '2026-01-01']), $asOf));
-    }
-
-    public function test_the_qualification_weights_are_the_legacy_ones(): void
-    {
-        $asOf = Carbon::create(2026, 2, 15);
-
-        $o = $this->opportunity([
-            'expected_close_date' => '2026-03-31',   // 15
-            'account_weight'      => 'category_1',   // 15
-            'amount'              => 25000000,       //  5
-            'knows_procurement'   => true,           // 10
-            'deal_registered'     => true,           //  5
-            'compliance_pressure' => true,           // 15
-            'oem_pressure'        => true,           //  5
-            'prior_deal_closed'   => true,           // 10
-        ]);
-
-        $this->assertSame(80, OpportunityScore::for($o, $asOf));
-        $this->assertSame(OpportunityScore::MAX, OpportunityScore::for($o, $asOf));
-    }
-
-    public function test_the_score_band_matches_its_own_boundaries(): void
-    {
-        // The legacy's banding compared the score against a boolean, so every
-        // band was decided by a type juggle, and its label said 30–49 while
-        // its code tested 30–59.
-        $this->assertSame('weak',       OpportunityScore::band(29));
-        $this->assertSame('developing', OpportunityScore::band(30));
-        $this->assertSame('developing', OpportunityScore::band(49));
-        $this->assertSame('promising',  OpportunityScore::band(50));
-        $this->assertSame('promising',  OpportunityScore::band(64));
-        $this->assertSame('strong',     OpportunityScore::band(65));
-    }
+    /*
+     * The score moved.
+     *
+     * These cases used to assert the legacy's weighted arithmetic — account
+     * category, closing quarter, and weights from 5 to 15 per indicator. The
+     * agreed design replaces it with ten indicators at ten points each and a
+     * gate at 65, so the arithmetic they pinned no longer exists to test.
+     *
+     * The indicators themselves are unchanged and still the legacy's own; the
+     * replacement is covered in OpportunityPipelineTest, including that all
+     * ten map to real columns rather than inventions.
+     */
 
     // ── Commitment ────────────────────────────────────────────────────────
 
