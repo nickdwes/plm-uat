@@ -27,7 +27,7 @@ use App\Support\Authorization\Permission;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Support\Facades\Storage;
+use App\Support\Storage\DocumentVault;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -154,14 +154,23 @@ class AccountController extends Controller
      * deal somebody edits. Won and open are read from the phase, which is the
      * only place that decides whether a deal is closed.
      */
-    public function summary(Account $account): JsonResponse
+    public function summary(Request $request, Account $account): JsonResponse
     {
         $this->authorize('view', $account);
 
         $deals = $account->opportunities()->with('phase')->get();
 
+        /*
+         * Counts are visible to anybody who may see the customer; values are
+         * not. "Three deals in play" is account management; what they are
+         * worth is commercial, and aggregating it does not make it less so.
+         */
+        $showsMoney = $deals->isEmpty()
+            || ($request->user()?->can('viewCommercials', $deals->first()) ?? false);
+
         return response()->json([
             'data' => [
+                'commercials_visible' => $showsMoney,
                 'total_deals'  => $deals->count(),
                 'active_deals' => $deals->where('is_open', true)->count(),
                 'closed_won'   => $deals->where('outcome', 'won')->count(),
@@ -169,10 +178,10 @@ class AccountController extends Controller
 
                 // What the won deals were worth, which is the figure people
                 // mean by account value.
-                'won_value'      => (float) $deals->where('outcome', 'won')->sum('amount'),
+                'won_value'      => $showsMoney ? (float) $deals->where('outcome', 'won')->sum('amount') : null,
                 // What is still in play, kept apart from won so a forecast is
                 // never mistaken for revenue.
-                'pipeline_value' => (float) $deals->where('is_open', true)->sum('amount'),
+                'pipeline_value' => $showsMoney ? (float) $deals->where('is_open', true)->sum('amount') : null,
 
                 'open_leads' => $account->leads()->open()->count(),
             ],
@@ -366,7 +375,11 @@ class AccountController extends Controller
         ]);
 
         $file = $request->file('file');
-        $path = $file->store("accounts/{$account->id}", 'account_documents');
+
+        // Encrypted before it reaches storage. A signed contract carries
+        // commercial terms and signatures; blob-level encryption protects a
+        // stolen disk and nothing else.
+        $path = DocumentVault::store($file, 'account_documents', "accounts/{$account->id}");
 
         $attachment = $account->attachments()->create([
             'organization_id'     => $account->organization_id,
@@ -389,8 +402,9 @@ class AccountController extends Controller
         $this->authorize('view', $account);
         abort_unless($attachment->account_id === $account->id, 404);
 
-        return Storage::disk('account_documents')->download(
-            $attachment->storage_path, $attachment->original_name,
+        return DocumentVault::download(
+            'account_documents', $attachment->storage_path,
+            $attachment->original_name, $attachment->mime_type,
         );
     }
 

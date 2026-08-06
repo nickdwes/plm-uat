@@ -22,6 +22,10 @@
         <env name="APP_MAINTENANCE_DRIVER" value="file"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>
+        <!-- Documents are encrypted at rest; without a key nothing can be
+             stored or read. Fixed rather than random so a failure is
+             reproducible. -->
+        <env name="DOCUMENT_ENCRYPTION_KEY" value="base64:dGVzdGluZy10ZXN0aW5nLXRlc3RpbmctdGVzdGtleSE="/>
         <env name="DB_CONNECTION" value="pgsql"/>
         <env name="DB_DATABASE" value="hrms_test"/>
         <env name="DB_HOST" value="db"/>

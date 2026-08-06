@@ -16,7 +16,7 @@ use App\Support\Pipeline\LeadQualification;
 use App\Support\Pipeline\OpportunityScore;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use App\Support\Storage\DocumentVault;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -63,8 +63,20 @@ class OpportunityPipelineController extends Controller
 
         $done = $opportunity->stageProgress->pluck('completed_at', 'opportunity_phase_id');
 
+        /*
+         * Whether this caller sees the money.
+         *
+         * Withheld as null rather than omitted, so the screen renders the same
+         * rows with the figures masked and can say why. Dropping the keys
+         * entirely would make a restricted view look like a deal with no
+         * numbers recorded, which is a different and misleading claim.
+         */
+        $money = fn ($value) => $this->showsCommercials($opportunity) ? $value : null;
+
         return response()->json([
             'data' => [
+                'commercials_visible' => $this->showsCommercials($opportunity),
+
                 'stages' => $phases->map(fn ($p) => [
                     'id'           => $p->id,
                     'name'         => $p->name,
@@ -110,18 +122,18 @@ class OpportunityPipelineController extends Controller
 
                 // ── Budget confirmation ──────────────────────────────────
                 'budget' => [
-                    'amount'       => $opportunity->confirmed_budget,
+                    'amount'       => $money($opportunity->confirmed_budget),
                     'is_confirmed' => $opportunity->budget_is_confirmed,
                     'confirmed_at' => $opportunity->budget_confirmed_at?->toIso8601String(),
                 ],
 
                 'estimates'  => $opportunity->estimates->map(fn ($e) => [
                     'id' => $e->id, 'name' => $e->name,
-                    'budget' => $e->budget, 'revenue' => $e->revenue,
-                    'cost' => $e->cost, 'profit' => $e->profit,
+                    'budget' => $money($e->budget), 'revenue' => $money($e->revenue),
+                    'cost' => $money($e->cost), 'profit' => $money($e->profit),
                     // Surfaced so a figure that does not add up is visible
                     // rather than quietly corrected.
-                    'implied_profit' => $e->implied_profit,
+                    'implied_profit' => $money($e->implied_profit),
                     'documents' => $this->documentPayload($e->documents),
                 ]),
 
@@ -137,10 +149,10 @@ class OpportunityPipelineController extends Controller
                     'tender_name' => $b->tender_name, 'status' => $b->status,
                     'tender_validity_date'   => $b->tender_validity_date?->toDateString(),
                     'bid_bond_validity_date' => $b->bid_bond_validity_date?->toDateString(),
-                    'bid_bond_value' => $b->bid_bond_value,
-                    'bidding_cost'   => $b->bidding_cost,
-                    'bidding_value'  => $b->bidding_value,
-                    'bidding_profit' => $b->bidding_profit,
+                    'bid_bond_value' => $money($b->bid_bond_value),
+                    'bidding_cost'   => $money($b->bidding_cost),
+                    'bidding_value'  => $money($b->bidding_value),
+                    'bidding_profit' => $money($b->bidding_profit),
                     'tender_close_date'   => $b->tender_close_date?->toDateString(),
                     'expected_award_date' => $b->expected_award_date?->toDateString(),
                     // A bond that lapses before the award is a bid that cannot
@@ -152,7 +164,7 @@ class OpportunityPipelineController extends Controller
 
                 'contracts' => $opportunity->contracts->map(fn ($c) => [
                     'id' => $c->id, 'reference' => $c->reference, 'name' => $c->name,
-                    'contract_value' => $c->contract_value, 'billing_cycle' => $c->billing_cycle,
+                    'contract_value' => $money($c->contract_value), 'billing_cycle' => $c->billing_cycle,
                     'owner' => $c->owner, 'status' => $c->status,
                     'start_date' => $c->start_date?->toDateString(),
                     'end_date'   => $c->end_date?->toDateString(),
@@ -505,7 +517,8 @@ class OpportunityPipelineController extends Controller
             'document_type'   => $data['document_type'] ?? 'internal',
             'label'           => ($data['label'] ?? null) ?: $file->getClientOriginalName(),
             'original_name'   => $file->getClientOriginalName(),
-            'storage_path'    => $file->store("opportunities/{$opportunity->id}", 'opportunity_documents'),
+            // Encrypted before it reaches storage; see DocumentVault.
+            'storage_path'    => DocumentVault::store($file, 'opportunity_documents', "opportunities/{$opportunity->id}"),
             'mime_type'       => $file->getClientMimeType(),
             'size_bytes'      => $file->getSize(),
             'bid_id'          => $data['bid_id'] ?? null,
@@ -521,8 +534,10 @@ class OpportunityPipelineController extends Controller
         $this->authorize('view', $opportunity);
         abort_unless($document->opportunity_id === $opportunity->id, 404);
 
-        return Storage::disk('opportunity_documents')
-            ->download($document->storage_path, $document->original_name);
+        return DocumentVault::download(
+            'opportunity_documents', $document->storage_path,
+            $document->original_name, $document->mime_type,
+        );
     }
 
     public function destroyDocument(Opportunity $opportunity, OpportunityDocument $document): JsonResponse
@@ -535,6 +550,18 @@ class OpportunityPipelineController extends Controller
         $document->delete();
 
         return $this->show($opportunity->fresh());
+    }
+
+    /**
+     * Whether the caller may see the money on this deal.
+     *
+     * Resolved once per response rather than per figure: it is a permission
+     * check against the same record, and running it fifty times to render one
+     * screen is fifty round trips through the role cache.
+     */
+    private function showsCommercials(Opportunity $opportunity): bool
+    {
+        return request()->user()?->can('viewCommercials', $opportunity) ?? false;
     }
 
     /** @param iterable<OpportunityDocument> $documents */

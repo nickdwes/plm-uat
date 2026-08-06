@@ -18,7 +18,15 @@ use Illuminate\Support\Facades\DB;
  */
 final class DefaultReferenceData
 {
-    public const TYPES = ['Prospect', 'Client', 'Partner', 'Supplier'];
+    /**
+     * How much coverage a customer gets — the legacy's own classification.
+     *
+     * Not Prospect / Client / Partner / Supplier, which Plmv2 used. Prospect
+     * is a status and duplicates one; Partner and Supplier are not customers
+     * at all but OEM and vendor relationships, which is a separate module.
+     * These three were set on all 70 legacy accounts and are understood.
+     */
+    public const TYPES = ['Key account', 'Named account', 'Developing account'];
 
     public const SECTORS = [
         'BFSI',            // banking, financial services, insurance

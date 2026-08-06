@@ -18,7 +18,7 @@ use App\Support\Authorization\Permission;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
-use Illuminate\Support\Facades\Storage;
+use App\Support\Storage\DocumentVault;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -316,7 +316,7 @@ class LeadController extends Controller
             // identify is worse than a clumsy name.
             'label'           => ($data['label'] ?? null) ?: $file->getClientOriginalName(),
             'original_name'   => $file->getClientOriginalName(),
-            'storage_path'    => $file->store("leads/{$lead->id}", 'lead_documents'),
+            'storage_path'    => DocumentVault::store($file, 'lead_documents', "leads/{$lead->id}"),
             'mime_type'       => $file->getClientMimeType(),
             'size_bytes'      => $file->getSize(),
             'uploaded_by'     => $request->user()->id,
@@ -330,7 +330,10 @@ class LeadController extends Controller
         $this->authorize('view', $lead);
         abort_unless($attachment->lead_id === $lead->id, 404);
 
-        return Storage::disk('lead_documents')->download($attachment->storage_path, $attachment->original_name);
+        return DocumentVault::download(
+            'lead_documents', $attachment->storage_path,
+            $attachment->original_name, $attachment->mime_type,
+        );
     }
 
     public function destroyAttachment(Lead $lead, LeadAttachment $attachment): LeadResource

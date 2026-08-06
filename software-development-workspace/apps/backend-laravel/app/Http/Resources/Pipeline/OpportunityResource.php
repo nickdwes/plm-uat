@@ -10,6 +10,13 @@ class OpportunityResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        /*
+         * The deal value is gated the same way the pipeline screen gates it.
+         * Withholding it there and returning it here would make the elevation
+         * decorative — the list endpoint would simply be read instead.
+         */
+        $showsMoney = $request->user()?->can('viewCommercials', $this->resource) ?? false;
+
         return [
             'id'          => $this->id,
             'reference'   => $this->reference,
@@ -17,7 +24,8 @@ class OpportunityResource extends JsonResource
             'description' => $this->description,
             'type'        => $this->opportunity_type,
             'practice'    => $this->practice,
-            'amount'      => $this->amount,
+            'amount'      => $showsMoney ? $this->amount : null,
+            'commercials_visible' => $showsMoney,
             'expected_close_date' => $this->expected_close_date?->toDateString(),
 
             'phase' => $this->whenLoaded('phase', fn () => $this->phase ? [

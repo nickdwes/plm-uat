@@ -43,6 +43,19 @@ class OpportunityPolicy extends BasePolicy
     }
 
     /**
+     * Whether this person may see the money on a deal.
+     *
+     * Not `canTouch`: reading a figure is not editing a record, and someone
+     * with read-only commercial access is exactly who this is for — finance
+     * reviewing the pipeline without being able to change it.
+     */
+    public function viewCommercials(User $user, Opportunity $opportunity): bool
+    {
+        return $this->inCurrentOrg($opportunity)
+            && $this->can($user, Permission::PIPELINE_VIEW_COMMERCIALS);
+    }
+
+    /**
      * Moving a deal into Win or Lost.
      *
      * Held apart from `update` because the won figure is what gets reported

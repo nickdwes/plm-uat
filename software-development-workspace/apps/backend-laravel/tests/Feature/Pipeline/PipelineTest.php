@@ -373,7 +373,7 @@ class PipelineTest extends TestCase
 
     public function test_the_customer_summary_counts_deals_rather_than_storing_them(): void
     {
-        $this->actor([Permission::ACCOUNTS_VIEW, Permission::PIPELINE_VIEW]);
+        $this->actor([Permission::ACCOUNTS_VIEW, Permission::PIPELINE_VIEW, Permission::PIPELINE_VIEW_COMMERCIALS]);
 
         $this->opportunity(['amount' => 1000000, 'opportunity_phase_id' => $this->phase('Win')->id]);
         $this->opportunity(['amount' => 500000,  'opportunity_phase_id' => $this->phase('Lost')->id]);

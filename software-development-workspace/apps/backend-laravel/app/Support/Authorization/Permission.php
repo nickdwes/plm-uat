@@ -171,6 +171,19 @@ final class Permission
      * name should not thereby be able to book it as won.
      */
     public const PIPELINE_CLOSE    = 'pipeline.close';
+    /**
+     * Seeing the money.
+     *
+     * Deal values, estimates, margins, bid bonds and bidding costs are visible
+     * only with this. Everything else about a deal — who owns it, what stage it
+     * is in, what has been agreed — stays readable, because a presales engineer
+     * needs the deal and does not need the margin.
+     *
+     * Held apart from `pipeline.view` rather than folded into it: the commonest
+     * request is "let the delivery team see their deals", and granting that
+     * should not hand over what the company bids and what it makes.
+     */
+    public const PIPELINE_VIEW_COMMERCIALS = 'pipeline.view_commercials';
 
     // ── Travel ────────────────────────────────────────────────────────────
     public const TRAVEL_VIEW      = 'travel.view';
@@ -218,6 +231,7 @@ final class Permission
             'pipeline'      => [
                 self::PIPELINE_VIEW, self::PIPELINE_VIEW_OWN, self::PIPELINE_CREATE,
                 self::PIPELINE_UPDATE, self::PIPELINE_DELETE, self::PIPELINE_CLOSE,
+                self::PIPELINE_VIEW_COMMERCIALS,
             ],
             'employees'     => [
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,

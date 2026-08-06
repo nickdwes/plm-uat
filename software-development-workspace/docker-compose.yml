@@ -34,6 +34,9 @@ services:
       DB_DATABASE: hrms
       DB_USERNAME: hrms_user
       DB_PASSWORD: ${DB_PASSWORD}
+      # Documents are encrypted before they reach storage. Without this the
+      # application refuses to store or read one — see docs/security-runbook.md.
+      DOCUMENT_ENCRYPTION_KEY: ${DOCUMENT_ENCRYPTION_KEY}
       SESSION_DRIVER: file
       CACHE_STORE: file
       SANCTUM_STATEFUL_DOMAINS: "hrms.bitwyse.co.ke,localhost,localhost:3000"

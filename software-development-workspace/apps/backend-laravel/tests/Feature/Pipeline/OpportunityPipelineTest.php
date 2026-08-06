@@ -276,7 +276,7 @@ class OpportunityPipelineTest extends TestCase
 
     public function test_confirming_a_budget_records_that_it_stands(): void
     {
-        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE, Permission::PIPELINE_VIEW_COMMERCIALS]);
         $deal = $this->deal();
 
         $res = $this->postJson($this->url($deal, '/budget/confirm'), ['amount' => 30000])->assertOk();
@@ -288,7 +288,7 @@ class OpportunityPipelineTest extends TestCase
     public function test_revoking_a_budget_keeps_the_figure_that_was_quoted(): void
     {
         // Withdrawn is not the same as never quoted.
-        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE, Permission::PIPELINE_VIEW_COMMERCIALS]);
         $deal = $this->deal();
 
         $this->postJson($this->url($deal, '/budget/confirm'), ['amount' => 30000])->assertOk();
@@ -304,7 +304,7 @@ class OpportunityPipelineTest extends TestCase
     {
         // Computing it would silently rewrite what somebody agreed with a
         // customer. The arithmetic is reported alongside instead.
-        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE, Permission::PIPELINE_VIEW_COMMERCIALS]);
         $deal = $this->deal();
 
         $res = $this->postJson($this->url($deal, '/estimates'), [
@@ -348,7 +348,7 @@ class OpportunityPipelineTest extends TestCase
     {
         // Unlike an estimate's profit this one is not negotiated — it is what
         // we bid less what it costs us — so it is derived.
-        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE, Permission::PIPELINE_VIEW_COMMERCIALS]);
         $deal = $this->deal();
 
         $res = $this->postJson($this->url($deal, '/bids'), [
