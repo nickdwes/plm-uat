@@ -10,7 +10,7 @@
  * refuses, it says so — the phases are not hidden, because a salesperson who
  * cannot close should still be able to see where the deal has got to.
  */
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
@@ -50,6 +50,23 @@ const tabs: { key: Tab; label: string }[] = [
 ];
 
 const tab = ref<Tab>("overview");
+
+/**
+ * Research raised against this deal.
+ *
+ * Fetched separately rather than folded into the deal: most visits never open
+ * the tab, and research is a module of its own that happens to link here.
+ */
+const researches = ref<{ id: number; reference: string | null; name: string; status: string }[]>([]);
+
+watch(tab, async (t) => {
+  if (t !== "research" || researches.value.length) return;
+  try {
+    researches.value = (await api<{ data: typeof researches.value }>("GET", "/api/v1/research", {
+      org: org(), params: { opportunity_id: props.id, per_page: 50 },
+    })).data;
+  } catch { /* an empty tab is better than an error about a side panel */ }
+});
 
 const router = useRouter();
 const deal    = ref<Opportunity | null>(null);
@@ -288,17 +305,39 @@ onMounted(load);
       </div>
       </template>
 
+      <!-- ── Research ────────────────────────────────────────────────── -->
+      <template v-else-if="tab === 'research'">
+        <div v-if="!researches.length" class="op-card op-pending">
+          <h3 class="op-card-label">Create a Research Card</h3>
+          <p class="op-muted">Start doing research on the work to be done.</p>
+          <button class="btn-primary" @click="router.push({ name: 'research' })">Create a Research</button>
+        </div>
+
+        <div v-else class="op-card">
+          <h3 class="op-card-label">Research on this deal</h3>
+          <ul class="op-people">
+            <li v-for="r in researches" :key="r.id">
+              <span>
+                <span class="op-strong">{{ r.name }}</span>
+                <span class="op-muted"> · {{ r.reference }} · {{ r.status }}</span>
+              </span>
+              <button class="link-btn"
+                      @click="router.push({ name: 'research-detail', params: { id: r.id } })">
+                View Research
+              </button>
+            </li>
+          </ul>
+          <button class="btn-ghost" @click="router.push({ name: 'research' })">Create a Research</button>
+        </div>
+      </template>
+
       <!-- Tabs whose modules are next in the build. Shown rather than hidden:
            they are part of the record's shape, and a tab that says what it is
            waiting for beats one that silently is not there. -->
       <div v-else class="op-card op-pending">
         <h3 class="op-card-label">{{ tabs.find((t) => t.key === tab)?.label }}</h3>
         <p class="op-muted">
-          <template v-if="tab === 'research'">
-            Research is the next module. The table and the link from a deal already
-            exist; the screen does not.
-          </template>
-          <template v-else-if="tab === 'activities'">
+          <template v-if="tab === 'activities'">
             The deal's own timeline is recorded and kept apart from the customer's;
             the screen for it follows Research.
           </template>
@@ -348,6 +387,7 @@ onMounted(load);
 .op-tab:hover  { color: var(--color-text); }
 .op-tab.active { color: var(--color-brand-on-surface); border-bottom-color: var(--color-brand-base); font-weight: 500; }
 .op-pending { align-items: flex-start; }
+.op-strong { font-weight: 500; color: var(--color-text); }
 
 .op-columns { @apply grid; grid-template-columns: 3fr 2fr; gap: var(--space-4); margin-top: var(--space-4); }
 @media (max-width: 56rem) { .op-columns { grid-template-columns: 1fr; } }

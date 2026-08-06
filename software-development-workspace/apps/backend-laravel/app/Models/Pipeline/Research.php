@@ -25,11 +25,25 @@ class Research extends Model
 
     protected $fillable = [
         'organization_id', 'account_id', 'lead_id', 'opportunity_id',
-        'reference', 'name', 'description', 'findings', 'status', 'priority',
+        'reference', 'name', 'description', 'findings', 'script', 'status', 'priority',
         'deadline', 'research_lead_id', 'created_by',
+        'covers_concept', 'covers_architecture', 'covers_integration',
     ];
 
-    protected $casts = ['deadline' => 'date'];
+    protected $casts = [
+        'deadline'            => 'date',
+        'covers_concept'      => 'boolean',
+        'covers_architecture' => 'boolean',
+        'covers_integration'  => 'boolean',
+    ];
+
+    /**
+     * What the work is asking, which decides who does it.
+     *
+     * From the legacy. "Can this be done at all", "how would it be built" and
+     * "will it talk to what they already run" are answered by different people.
+     */
+    public const SCOPES = ['covers_concept', 'covers_architecture', 'covers_integration'];
 
     protected $attributes = ['status' => 'new', 'priority' => 'medium'];
 

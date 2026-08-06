@@ -38,6 +38,7 @@ use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
 use App\Http\Controllers\Pipeline\OpportunityController;
 use App\Http\Controllers\Pipeline\OpportunityPipelineController;
+use App\Http\Controllers\Pipeline\ResearchController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -335,6 +336,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{opportunity}/documents',              [OpportunityPipelineController::class, 'storeDocument']);
         Route::get('/{opportunity}/documents/{document}/download', [OpportunityPipelineController::class, 'downloadDocument']);
         Route::delete('/{opportunity}/documents/{document}', [OpportunityPipelineController::class, 'destroyDocument']);
+    });
+
+    /*
+     * Research — work done to find out whether the thing can be built.
+     *
+     * Filtered by ?opportunity_id= for the deal's Research tab, and by
+     * ?account_id= for a customer's.
+     */
+    Route::prefix('research')->group(function () {
+        Route::get('/',              [ResearchController::class, 'index']);
+        Route::post('/',             [ResearchController::class, 'store']);
+        Route::get('/{research}',    [ResearchController::class, 'show']);
+        Route::put('/{research}',    [ResearchController::class, 'update']);
+        Route::delete('/{research}', [ResearchController::class, 'destroy']);
+
+        Route::post('/{research}/team',           [ResearchController::class, 'storeTeamMember']);
+        Route::delete('/{research}/team/{member}',[ResearchController::class, 'destroyTeamMember']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────

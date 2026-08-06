@@ -78,6 +78,8 @@ import AccountDetailView             from "../views/Account/AccountDetailView.vu
 import LeadsView                     from "../views/Pipeline/LeadsView.vue";
 import LeadDetailView                from "../views/Pipeline/LeadDetailView.vue";
 import OpportunitiesView             from "../views/Pipeline/OpportunitiesView.vue";
+import ResearchView                   from "../views/Pipeline/ResearchView.vue";
+import ResearchDetailView             from "../views/Pipeline/ResearchDetailView.vue";
 import OpportunityDetailView         from "../views/Pipeline/OpportunityDetailView.vue";
 
 // Vendor Module
@@ -162,6 +164,8 @@ const routes: RouteRecordRaw[] = [
   { path: "/leads/:id",         name: "lead",        component: LeadDetailView,        props: true },
   { path: "/opportunities",     name: "opportunities", component: OpportunitiesView },
   { path: "/opportunities/:id", name: "opportunity", component: OpportunityDetailView, props: true },
+  { path: "/research",          name: "research",        component: ResearchView },
+  { path: "/research/:id",      name: "research-detail", component: ResearchDetailView, props: true },
 
   // ── Vendor Module ─────────────────────────────────────────────────────────
   { path: "/vendors",       name: "vendors",        component: VendorsView },
