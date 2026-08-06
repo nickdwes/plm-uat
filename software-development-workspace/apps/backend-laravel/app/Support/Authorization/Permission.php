@@ -156,6 +156,22 @@ final class Permission
     /** Types, sectors and sub-sectors — the axes customers are reported on. */
     public const ACCOUNTS_MANAGE_REF = 'accounts.manage_reference_data';
 
+    // ── Pipeline (leads and opportunities) ────────────────────────────────
+    public const PIPELINE_VIEW     = 'pipeline.view';
+    /** Seeing only the leads and deals you own or are assigned to. */
+    public const PIPELINE_VIEW_OWN = 'pipeline.view_own';
+    public const PIPELINE_CREATE   = 'pipeline.create';
+    public const PIPELINE_UPDATE   = 'pipeline.update';
+    public const PIPELINE_DELETE   = 'pipeline.delete';
+    /**
+     * Moving a deal into Win or Lost.
+     *
+     * Separate from editing it: closing a deal is what the number reported to
+     * the board is built from, and anyone able to correct a typo in a deal
+     * name should not thereby be able to book it as won.
+     */
+    public const PIPELINE_CLOSE    = 'pipeline.close';
+
     // ── Travel ────────────────────────────────────────────────────────────
     public const TRAVEL_VIEW      = 'travel.view';
     public const TRAVEL_VIEW_OWN  = 'travel.view_own';
@@ -198,6 +214,10 @@ final class Permission
                 self::ACCOUNTS_VIEW, self::ACCOUNTS_VIEW_OWN, self::ACCOUNTS_CREATE,
                 self::ACCOUNTS_UPDATE, self::ACCOUNTS_DELETE, self::ACCOUNTS_ASSIGN,
                 self::ACCOUNTS_MANAGE_REF,
+            ],
+            'pipeline'      => [
+                self::PIPELINE_VIEW, self::PIPELINE_VIEW_OWN, self::PIPELINE_CREATE,
+                self::PIPELINE_UPDATE, self::PIPELINE_DELETE, self::PIPELINE_CLOSE,
             ],
             'employees'     => [
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,

@@ -147,6 +147,39 @@ class AccountController extends Controller
 
 
     /**
+     * The deal figures the Overview shows.
+     *
+     * Counted on demand rather than stored on the account: every one of these
+     * is a fact about opportunities, and a stored copy is wrong from the first
+     * deal somebody edits. Won and open are read from the phase, which is the
+     * only place that decides whether a deal is closed.
+     */
+    public function summary(Account $account): JsonResponse
+    {
+        $this->authorize('view', $account);
+
+        $deals = $account->opportunities()->with('phase')->get();
+
+        return response()->json([
+            'data' => [
+                'total_deals'  => $deals->count(),
+                'active_deals' => $deals->where('is_open', true)->count(),
+                'closed_won'   => $deals->where('outcome', 'won')->count(),
+                'closed_lost'  => $deals->where('outcome', 'lost')->count(),
+
+                // What the won deals were worth, which is the figure people
+                // mean by account value.
+                'won_value'      => (float) $deals->where('outcome', 'won')->sum('amount'),
+                // What is still in play, kept apart from won so a forecast is
+                // never mistaken for revenue.
+                'pipeline_value' => (float) $deals->where('is_open', true)->sum('amount'),
+
+                'open_leads' => $account->leads()->open()->count(),
+            ],
+        ]);
+    }
+
+    /**
      * Trips taken for this customer.
      *
      * The link has existed since Travel was built, but only ever read from the

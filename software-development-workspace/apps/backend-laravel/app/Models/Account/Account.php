@@ -121,6 +121,16 @@ class Account extends Model
         return $this->hasMany(AccountAttachment::class);
     }
 
+    public function leads(): HasMany
+    {
+        return $this->hasMany(\App\Models\Pipeline\Lead::class);
+    }
+
+    public function opportunities(): HasMany
+    {
+        return $this->hasMany(\App\Models\Pipeline\Opportunity::class);
+    }
+
     /**
      * Trips taken for this customer.
      *

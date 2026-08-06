@@ -34,6 +34,31 @@ final class DefaultReferenceData
     ];
 
     /**
+     * The sales process a deal moves through, in order.
+     *
+     * Konvergenz's own fourteen, carried over because all 130 legacy
+     * opportunities sat in one of them. Win and Lost carry an outcome, which
+     * is what makes them different from the twelve that precede them: the
+     * phase is the only place that decides whether a deal is closed.
+     */
+    public const OPPORTUNITY_PHASES = [
+        ['Opportunity Processing', null],
+        ['Scope/Site Survey', null],
+        ['Estimate', null],
+        ['Opportunity Qualification', null],
+        ['Specifications', null],
+        ['Awaiting Budget Confirmation', null],
+        ['Opportunity Commit', null],
+        ['Awaiting BID Release', null],
+        ['Bidding', null],
+        ['Negotiations', null],
+        ['Win', 'won'],
+        ['Lost', 'lost'],
+        ['Contracting', null],
+        ['Project Kick-Off', null],
+    ];
+
+    /**
      * Idempotent: insertOrIgnore against the (organization_id, name) uniques,
      * so running it twice never collides with a list somebody has edited.
      */
@@ -51,6 +76,14 @@ final class DefaultReferenceData
         foreach (self::SECTORS as $name) {
             DB::table('account_sectors')->insertOrIgnore([
                 'organization_id' => $organizationId, 'name' => $name,
+                'is_active' => true, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+
+        foreach (self::OPPORTUNITY_PHASES as $i => [$name, $outcome]) {
+            DB::table('opportunity_phases')->insertOrIgnore([
+                'organization_id' => $organizationId, 'name' => $name,
+                'position' => $i + 1, 'outcome' => $outcome,
                 'is_active' => true, 'created_at' => $now, 'updated_at' => $now,
             ]);
         }

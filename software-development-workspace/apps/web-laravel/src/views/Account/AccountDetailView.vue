@@ -49,6 +49,21 @@ interface Trip {
   id: number; reference: string | null; traveller: string | null; role: string | null;
   destination: string | null; departure_date: string | null; return_date: string | null; status: string;
 }
+interface Lead {
+  id: number; reference: string | null; name: string; source: string | null;
+  status: string; priority: string; owner?: { id: number | null; name: string | null } | null;
+}
+interface Opportunity {
+  id: number; reference: string | null; name: string; amount: string | number | null;
+  phase?: { id: number; name: string; outcome: string | null } | null;
+  outcome: string | null; is_open: boolean; score: number; score_max: number; score_band: string;
+  owner?: { id: number | null; name: string | null } | null;
+  assignees?: { id: number; employee: { id: number | null; name: string | null } }[];
+}
+interface Summary {
+  total_deals: number; active_deals: number; closed_won: number; closed_lost: number;
+  won_value: number; pipeline_value: number; open_leads: number;
+}
 interface Account {
   id: number; reference: string | null; name: string; initials: string; status: string;
   country: string | null; physical_location: string | null; tax_pin: string | null;
@@ -94,14 +109,6 @@ const tabs: { key: Tab; label: string }[] = [
 
 /** What each not-yet-built tab is waiting on, said plainly. */
 const pending: Partial<Record<Tab, { title: string; detail: string }>> = {
-  leads: {
-    title: "Leads are not recorded yet",
-    detail: "Lead capture and qualification arrive with the pipeline. Until then a lead lives wherever it was first written down.",
-  },
-  opportunities: {
-    title: "Opportunities are not recorded yet",
-    detail: "Deal value, stage and close date arrive with the pipeline. The account summary on Overview stays blank until they do.",
-  },
   projects: {
     title: "Projects are not built yet",
     detail: "A contract can name the project it is for, and that name is kept — it becomes a link once Projects exists.",
@@ -140,10 +147,13 @@ function fail(e: unknown, fallback: string) {
   error.value = e instanceof ApiError ? (e.firstError ?? e.message) : fallback;
 }
 
-// Loaded on demand rather than with the record: neither belongs to the account
-// row, and most visits never open these tabs.
+// Loaded on demand rather than with the record: none of these belong to the
+// account row, and most visits never open these tabs.
 const activities = ref<Activity[]>([]);
 const trips      = ref<Trip[]>([]);
+const leads      = ref<Lead[]>([]);
+const deals      = ref<Opportunity[]>([]);
+const summary    = ref<Summary | null>(null);
 
 async function loadActivities() {
   try {
@@ -157,9 +167,40 @@ async function loadTrips() {
   } catch (e) { fail(e, "Could not load trips for this customer."); }
 }
 
+async function loadLeads() {
+  try {
+    leads.value = (await api<{ data: Lead[] }>("GET", "/api/v1/leads", {
+      org: org(), params: { account_id: props.id, per_page: 100 },
+    })).data;
+  } catch (e) { fail(e, "Could not load leads for this customer."); }
+}
+
+async function loadDeals() {
+  try {
+    deals.value = (await api<{ data: Opportunity[] }>("GET", "/api/v1/opportunities", {
+      org: org(), params: { account_id: props.id, per_page: 100 },
+    })).data;
+  } catch (e) { fail(e, "Could not load opportunities for this customer."); }
+}
+
+/**
+ * The deal figures, counted by the API rather than stored.
+ *
+ * Failure is swallowed on purpose: somebody who may see the customer but not
+ * the pipeline should get a record with blank deal counts, not an error page
+ * about a card they were never meant to read.
+ */
+async function loadSummary() {
+  try {
+    summary.value = (await api<{ data: Summary }>("GET", `${base.value}/summary`, { org: org() })).data;
+  } catch { summary.value = null; }
+}
+
 watch(tab, (t) => {
   if (t === "activities" && activities.value.length === 0) void loadActivities();
   if (t === "travels" && trips.value.length === 0) void loadTrips();
+  if (t === "leads" && leads.value.length === 0) void loadLeads();
+  if (t === "opportunities" && deals.value.length === 0) void loadDeals();
 });
 
 // ── Profile ─────────────────────────────────────────────────────────────────
@@ -441,6 +482,31 @@ async function logActivity() {
   finally { saving.value = false; }
 }
 
+// ── Leads ───────────────────────────────────────────────────────────────────
+
+const showLead = ref(false);
+const newLead  = ref({ name: "", source: "", priority: "medium" });
+
+async function createLead() {
+  if (!newLead.value.name.trim()) return;
+  saving.value = true;
+  error.value = null;
+  try {
+    const res = await api<{ data: Lead }>("POST", "/api/v1/leads", {
+      org: org(),
+      body: { ...newLead.value, source: newLead.value.source || null, account_id: Number(props.id) },
+    });
+    showLead.value = false;
+    newLead.value = { name: "", source: "", priority: "medium" };
+    // Straight into the record: a lead is raised in order to work it.
+    router.push({ name: "lead", params: { id: res.data.id } });
+  } catch (e) { fail(e, "Could not raise the lead."); }
+  finally { saving.value = false; }
+}
+
+const leadTone = (s: string) =>
+  s === "converted" ? "ok" : s === "lost" ? "danger" : s === "qualified" ? "ok" : s === "cold" ? "neutral" : "warn";
+
 // ── Team ────────────────────────────────────────────────────────────────────
 
 const newMember = ref({ employee_id: null as number | null, role: "" });
@@ -512,9 +578,11 @@ const countFor = (t: Tab) =>
   t === "contacts"  ? account.value?.contacts?.length
   : t === "contracts" ? account.value?.contracts?.length
   : t === "team"      ? account.value?.team?.length
+  : t === "leads"     ? leads.value.length || undefined
+  : t === "opportunities" ? deals.value.length || undefined
   : undefined;
 
-onMounted(load);
+onMounted(() => { void load(); void loadSummary(); });
 </script>
 
 <template>
@@ -676,15 +744,15 @@ onMounted(load);
           <div class="ad-card">
             <h3 class="ad-card-label">Account Summary</h3>
             <dl class="ad-mini">
+              <!-- Won and pipeline are kept apart so a forecast is never read
+                   as revenue. -->
+              <div><dt>Account Value (won)</dt><dd>{{ money(summary?.won_value ?? null) }}</dd></div>
+              <div><dt>In Pipeline</dt><dd>{{ money(summary?.pipeline_value ?? null) }}</dd></div>
               <div><dt>Contracted Value</dt><dd>{{ money(contractedValue) }}</dd></div>
-              <div><dt>Total Deals</dt><dd>—</dd></div>
-              <div><dt>Active Deals</dt><dd>—</dd></div>
-              <div><dt>Closed Won</dt><dd>—</dd></div>
+              <div><dt>Total Deals</dt><dd>{{ summary?.total_deals ?? "—" }}</dd></div>
+              <div><dt>Active Deals</dt><dd>{{ summary?.active_deals ?? "—" }}</dd></div>
+              <div><dt>Closed Won</dt><dd>{{ summary?.closed_won ?? "—" }}</dd></div>
             </dl>
-            <p class="ad-hint">
-              Contracted value is what is running today. Deal counts arrive with
-              Opportunities.
-            </p>
           </div>
 
           <div class="ad-card">
@@ -824,6 +892,83 @@ onMounted(load);
         </ul>
       </section>
 
+      <!-- ── Leads ───────────────────────────────────────────────────── -->
+      <section v-else-if="tab === 'leads'" class="ad-panel">
+        <div class="ad-panel-actions">
+          <button class="btn-primary" @click="newLead.name = ''; showLead = true">+ New Lead</button>
+        </div>
+
+        <p v-if="leads.length === 0" class="ad-none">No leads recorded for this customer.</p>
+
+        <div v-else class="ad-card ad-table-card">
+          <table class="ad-table">
+            <thead>
+              <tr><th>ID</th><th>Lead Name</th><th>Source</th><th>Lead Owner</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="l in leads" :key="l.id">
+                <td class="ad-ref">{{ l.reference ?? "—" }}</td>
+                <td class="ad-strong-cell">{{ l.name }}</td>
+                <td>{{ l.source ?? "—" }}</td>
+                <td>{{ l.owner?.name ?? "—" }}</td>
+                <td><span :class="['pill', `pill-${leadTone(l.status)}`]">{{ titleCase(l.status) }}</span></td>
+                <td>
+                  <button class="link-btn" @click="router.push({ name: 'lead', params: { id: l.id } })">View</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Opportunities ───────────────────────────────────────────── -->
+      <section v-else-if="tab === 'opportunities'" class="ad-panel">
+        <p v-if="deals.length === 0" class="ad-none">
+          No opportunities yet. A deal starts life as a lead and is converted from it.
+        </p>
+
+        <div v-else class="ad-card ad-table-card">
+          <table class="ad-table">
+            <thead>
+              <tr><th>ID</th><th>Opportunity Name</th><th class="ad-num">Amount</th><th>Owner</th><th>Assignees</th><th>Phase</th><th>Score</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="o in deals" :key="o.id">
+                <td class="ad-ref">{{ o.reference ?? "—" }}</td>
+                <td class="ad-strong-cell">{{ o.name }}</td>
+                <td class="ad-num">{{ money(o.amount) }}</td>
+                <td>{{ o.owner?.name ?? "—" }}</td>
+                <td>
+                  <span v-if="!o.assignees?.length" class="ad-muted">—</span>
+                  <span v-else class="ad-stack">
+                    <span v-for="a in o.assignees.slice(0, 4)" :key="a.id" class="ad-chip"
+                          :title="a.employee.name ?? ''">
+                      {{ (a.employee.name ?? "?").slice(0, 1) }}
+                    </span>
+                    <span v-if="o.assignees.length > 4" class="ad-chip ad-chip-more">
+                      +{{ o.assignees.length - 4 }}
+                    </span>
+                  </span>
+                </td>
+                <td>
+                  <span :class="['pill', o.outcome === 'won' ? 'pill-ok' : o.outcome === 'lost' ? 'pill-danger' : 'pill-neutral']">
+                    {{ o.phase?.name ?? "—" }}
+                  </span>
+                </td>
+                <!-- Out of 80, and banded, because a bare number tells you
+                     nothing about whether it is a good one. -->
+                <td class="ad-num" :title="`${o.score} of ${o.score_max} — ${o.score_band}`">
+                  <span :class="['ad-score', `score-${o.score_band}`]">{{ o.score }}</span>
+                </td>
+                <td>
+                  <button class="link-btn" @click="router.push({ name: 'opportunity', params: { id: o.id } })">View</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <!-- ── Travels ─────────────────────────────────────────────────── -->
       <section v-else-if="tab === 'travels'" class="ad-panel">
         <p v-if="trips.length === 0" class="ad-none">No trips have been raised for this customer.</p>
@@ -942,6 +1087,33 @@ onMounted(load);
           <button class="btn-ghost btn-danger" @click="removeContract(openContract!)">Remove</button>
         </div>
       </aside>
+    </div>
+
+    <!-- New lead -->
+    <div v-if="showLead" class="ad-modal-backdrop" @click.self="showLead = false">
+      <div class="ad-modal">
+        <div class="ad-modal-head">
+          <h3 class="ad-modal-title">New Lead</h3>
+          <button class="ac-close" aria-label="Close" @click="showLead = false">×</button>
+        </div>
+
+        <label class="ad-field"><span>Lead name</span>
+          <input v-model="newLead.name" class="control" placeholder="Integrate AI lead scoring module" /></label>
+
+        <label class="ad-field"><span>Source</span>
+          <input v-model="newLead.source" class="control" placeholder="Referral, website, LinkedIn" /></label>
+
+        <label class="ad-field"><span>Priority</span>
+          <select v-model="newLead.priority" class="control">
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select></label>
+
+        <button class="btn-primary btn-block" :disabled="saving || !newLead.name.trim()" @click="createLead">
+          Add Lead
+        </button>
+      </div>
     </div>
 
     <!-- Contact dialog -->
@@ -1172,6 +1344,24 @@ onMounted(load);
 .ad-type { @apply inline-flex items-center; gap: var(--space-2); white-space: nowrap; }
 .ad-dot { @apply inline-block; width: 6px; height: 6px; border-radius: 999px; background: var(--color-brand-base); }
 .ad-none { font-size: var(--text-sm-size); color: var(--color-text-light); padding: var(--space-5) 0; }
+.ad-muted { color: var(--color-text-light); }
+
+/* Assignees, as a stack — the names matter less than how many hands are on it. */
+.ad-stack { @apply inline-flex items-center; }
+.ad-chip {
+  @apply inline-flex items-center justify-center;
+  width: 1.5rem; height: 1.5rem; margin-right: -0.35rem; border-radius: 999px;
+  background: var(--color-surface-sunken); color: var(--color-text-muted);
+  border: 2px solid var(--color-surface-raised);
+  font-size: 0.65rem; font-weight: 600; text-transform: uppercase;
+}
+.ad-chip-more { background: var(--color-brand-subtle); color: var(--color-brand-on-surface); }
+
+.ad-score { font-weight: 600; }
+.score-strong     { color: var(--color-success-text); }
+.score-promising  { color: var(--color-brand-on-surface); }
+.score-developing { color: var(--color-warning-text); }
+.score-weak       { color: var(--color-text-light); }
 .ad-none-inline { font-size: var(--text-sm-size); color: var(--color-text-light); margin: 0; }
 .ad-note { font-size: var(--text-sm-size); color: var(--color-text-muted); margin: 0; }
 

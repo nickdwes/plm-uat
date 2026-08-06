@@ -68,5 +68,7 @@ class AppServiceProvider extends ServiceProvider
         // follow sub-namespaces, so an unregistered policy fails open here.
         Gate::policy(\App\Models\Account\Account::class, \App\Policies\Account\AccountPolicy::class);
         Gate::policy(\App\Models\Travel\TravelRequest::class, \App\Policies\Travel\TravelRequestPolicy::class);
+        Gate::policy(\App\Models\Pipeline\Lead::class, \App\Policies\Pipeline\LeadPolicy::class);
+        Gate::policy(\App\Models\Pipeline\Opportunity::class, \App\Policies\Pipeline\OpportunityPolicy::class);
     }
 }

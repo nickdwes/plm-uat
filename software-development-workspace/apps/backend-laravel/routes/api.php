@@ -35,6 +35,8 @@ use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\WorkLocationController;
 use App\Http\Controllers\Account\AccountController;
+use App\Http\Controllers\Pipeline\LeadController;
+use App\Http\Controllers\Pipeline\OpportunityController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -220,6 +222,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // from this side.
         Route::get('/{account}/travels',         [AccountController::class, 'travels']);
 
+        // Deal counts for the Overview. Counted, never stored.
+        Route::get('/{account}/summary',         [AccountController::class, 'summary']);
+
         // Paperwork. Never publicly addressable; served through download.
         Route::post('/{account}/attachments',    [AccountController::class, 'storeAttachment']);
         Route::get('/{account}/attachments/{attachment}/download', [AccountController::class, 'downloadAttachment']);
@@ -234,6 +239,43 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{account}/contacts',              [AccountController::class, 'storeContact']);
         Route::put('/{account}/contacts/{contact}',     [AccountController::class, 'updateContact']);
         Route::delete('/{account}/contacts/{contact}',  [AccountController::class, 'destroyContact']);
+    });
+
+    // ── Pipeline (leads and opportunities) ────────────────────────────────────
+    //
+    // Reachable both on their own and filtered by ?account_id=, which is how
+    // the customer record's Leads and Opportunities tabs read them.
+    Route::prefix('leads')->group(function () {
+        Route::get('/',            [LeadController::class, 'index']);
+        Route::post('/',           [LeadController::class, 'store']);
+        Route::get('/{lead}',      [LeadController::class, 'show']);
+        Route::put('/{lead}',      [LeadController::class, 'update']);
+        Route::delete('/{lead}',   [LeadController::class, 'destroy']);
+
+        // Becomes a deal. The link lives on the opportunity, not in the
+        // lead's status.
+        Route::post('/{lead}/convert', [LeadController::class, 'convert']);
+
+        Route::post('/{lead}/team',           [LeadController::class, 'storeTeamMember']);
+        Route::delete('/{lead}/team/{member}',[LeadController::class, 'destroyTeamMember']);
+    });
+
+    Route::prefix('opportunities')->group(function () {
+        Route::get('/',       [OpportunityController::class, 'index']);
+        Route::post('/',      [OpportunityController::class, 'store']);
+
+        // Before /{opportunity}: a literal segment declared after a route
+        // parameter is never reached.
+        Route::get('/phases', [OpportunityController::class, 'phases']);
+
+        Route::get('/{opportunity}',    [OpportunityController::class, 'show']);
+        Route::put('/{opportunity}',    [OpportunityController::class, 'update']);
+        Route::delete('/{opportunity}', [OpportunityController::class, 'destroy']);
+
+        Route::post('/{opportunity}/phase', [OpportunityController::class, 'moveToPhase']);
+
+        Route::post('/{opportunity}/assignees',            [OpportunityController::class, 'storeAssignee']);
+        Route::delete('/{opportunity}/assignees/{assignee}',[OpportunityController::class, 'destroyAssignee']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────
