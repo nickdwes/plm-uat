@@ -11,6 +11,7 @@ class AccountContactResource extends JsonResource
     {
         return [
             'id'              => $this->id,
+            'category'        => $this->category,
             'title'           => $this->title,
             'first_name'      => $this->first_name,
             'last_name'       => $this->last_name,

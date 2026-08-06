@@ -212,10 +212,24 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{account}/team',           [AccountController::class, 'storeTeamMember']);
         Route::delete('/{account}/team/{member}',[AccountController::class, 'destroyTeamMember']);
 
+        // The timeline, and the only thing that moves last_contact_at.
+        Route::get('/{account}/activities',      [AccountController::class, 'activities']);
+        Route::post('/{account}/activities',     [AccountController::class, 'storeActivity']);
+
+        // Trips taken for this customer — the link existed, nothing read it
+        // from this side.
+        Route::get('/{account}/travels',         [AccountController::class, 'travels']);
+
+        // Paperwork. Never publicly addressable; served through download.
+        Route::post('/{account}/attachments',    [AccountController::class, 'storeAttachment']);
+        Route::get('/{account}/attachments/{attachment}/download', [AccountController::class, 'downloadAttachment']);
+        Route::delete('/{account}/attachments/{attachment}',       [AccountController::class, 'destroyAttachment']);
+
         // What we have agreed to do for them, and until when.
         Route::post('/{account}/contracts',             [AccountController::class, 'storeContract']);
         Route::put('/{account}/contracts/{contract}',   [AccountController::class, 'updateContract']);
         Route::delete('/{account}/contracts/{contract}',[AccountController::class, 'destroyContract']);
+        Route::post('/{account}/contracts/{contract}/complete', [AccountController::class, 'completeContract']);
 
         Route::post('/{account}/contacts',              [AccountController::class, 'storeContact']);
         Route::put('/{account}/contacts/{contact}',     [AccountController::class, 'updateContact']);

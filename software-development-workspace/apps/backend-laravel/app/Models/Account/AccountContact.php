@@ -12,7 +12,7 @@ class AccountContact extends Model
     use BelongsToOrganization, SoftDeletes;
 
     protected $fillable = [
-        'organization_id', 'account_id', 'title', 'first_name', 'last_name',
+        'organization_id', 'account_id', 'category', 'title', 'first_name', 'last_name',
         'designation', 'department', 'email', 'phone', 'alternate_phone',
         'is_primary', 'is_active', 'created_by',
     ];
@@ -23,9 +23,19 @@ class AccountContact extends Model
     ];
 
     protected $attributes = [
+        'category'   => 'other',
         'is_primary' => false,
         'is_active'  => true,
     ];
+
+    /**
+     * What kind of contact this is.
+     *
+     * `primary` is not just another value: it is the one the service keeps
+     * unique, and `is_primary` is derived from it so the two cannot disagree
+     * about who to call.
+     */
+    public const CATEGORIES = ['primary', 'secondary', 'technical', 'finance', 'procurement', 'hr', 'other'];
 
     public function account(): BelongsTo
     {

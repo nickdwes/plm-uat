@@ -18,8 +18,13 @@ class StoreContractRequest extends FormRequest
         return [
             'name'            => ['required', 'string', 'max:255'],
             'contract_number' => ['nullable', 'string', 'max:120'],
-            'type'            => ['nullable', 'string', 'max:120'],
+            'type'            => ['nullable', Rule::in(AccountContract::TYPES)],
             'contract_value'  => ['nullable', 'numeric', 'min:0', 'max:99999999999.99'],
+            'billing_cycle'   => ['nullable', Rule::in(AccountContract::BILLING_CYCLES)],
+            'owner'           => ['nullable', 'string', 'max:255'],
+
+            // Free text until Projects exists; see the migration.
+            'project_reference' => ['nullable', 'string', 'max:255'],
 
             'start_date' => ['required', 'date'],
             // A contract that ends before it starts is a typo every time, and

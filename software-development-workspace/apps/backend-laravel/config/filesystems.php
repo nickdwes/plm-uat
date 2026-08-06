@@ -138,6 +138,29 @@ return [
             ],
 
         /*
+         * Customer paperwork — signed contracts, award letters, certificates.
+         *
+         * Private for the same reason as every other document class here: a
+         * signed contract carries commercial terms and signatures, and a
+         * predictable URL that needs no authentication is how the candidate
+         * CVs got out.
+         */
+        'account_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'account-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/account-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Database backups. Written by infra/azure/backup-database.sh, read
          * here only so `backup:check` can tell whether last night's dump
          * actually arrived.

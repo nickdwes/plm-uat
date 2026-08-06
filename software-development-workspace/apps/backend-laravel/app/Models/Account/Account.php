@@ -22,24 +22,34 @@ class Account extends Model
     use BelongsToOrganization, SoftDeletes;
 
     protected $fillable = [
-        'organization_id', 'name', 'status',
+        'organization_id', 'name', 'reference', 'status', 'enrolled_on', 'last_contact_at',
         'account_manager_id', 'account_type_id', 'account_sector_id', 'account_subsector_id',
         'country', 'physical_location', 'number_of_branches', 'number_of_employees',
-        'fund_source', 'vat_registered', 'tax_pin', 'details', 'created_by',
+        'fund_source', 'lead_source', 'pipeline_stage',
+        'vat_registered', 'tax_pin', 'details', 'created_by',
     ];
 
     protected $casts = [
         'vat_registered'      => 'boolean',
         'number_of_branches'  => 'integer',
         'number_of_employees' => 'integer',
+        'enrolled_on'         => 'date',
+        'last_contact_at'     => 'datetime',
     ];
 
     protected $attributes = [
-        'status'         => 'prospect',
+        'status'         => 'pending',
         'vat_registered' => false,
     ];
 
-    public const STATUSES = ['prospect', 'active', 'inactive'];
+    /**
+     * Whether the record is live — not what the relationship is.
+     *
+     * `prospect` used to live here as well as in the type list, so a customer
+     * could be a Client of status prospect. Type now carries the relationship
+     * (Prospect, Client, Partner, Supplier) and this carries only standing.
+     */
+    public const STATUSES = ['pending', 'active', 'inactive'];
 
     // ── Relationships ─────────────────────────────────────────────────────
 
@@ -93,6 +103,47 @@ class Account extends Model
     public function primaryContact(): HasMany
     {
         return $this->contacts()->where('is_primary', true);
+    }
+
+    /**
+     * What has happened with this customer, newest first.
+     *
+     * The feed is the source of `last_contact_at`; see AccountActivity for why
+     * only manual entries move it.
+     */
+    public function activities(): HasMany
+    {
+        return $this->hasMany(AccountActivity::class)->orderByDesc('occurred_at');
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(AccountAttachment::class);
+    }
+
+    /**
+     * Trips taken for this customer.
+     *
+     * The link has existed since Travel was built — 94 of 102 legacy requests
+     * named the customer they were for — but nothing read it from this side.
+     */
+    public function travelRequests(): HasMany
+    {
+        return $this->hasMany(\App\Models\Travel\TravelRequest::class);
+    }
+
+    /**
+     * Initials for the avatar the screens show, so every surface derives the
+     * same two or three letters rather than each inventing its own.
+     */
+    public function getInitialsAttribute(): string
+    {
+        $words = preg_split('/[\s\-]+/', trim((string) $this->name), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+
+        return strtoupper(implode('', array_map(
+            static fn (string $w) => mb_substr($w, 0, 1),
+            array_slice($words, 0, 3),
+        )));
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────

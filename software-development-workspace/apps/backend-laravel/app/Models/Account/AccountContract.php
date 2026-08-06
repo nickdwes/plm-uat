@@ -6,6 +6,7 @@ use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * What we have agreed to do for a customer, and until when.
@@ -19,19 +20,26 @@ class AccountContract extends Model
     use BelongsToOrganization;
 
     protected $fillable = [
-        'organization_id', 'account_id', 'name', 'contract_number', 'type',
-        'contract_value', 'start_date', 'end_date', 'status', 'notes', 'created_by',
+        'organization_id', 'account_id', 'reference', 'name', 'contract_number', 'type',
+        'contract_value', 'billing_cycle', 'owner', 'project_reference',
+        'start_date', 'end_date', 'status', 'completed_at', 'notes', 'created_by',
     ];
 
     protected $casts = [
         'start_date'     => 'date',
         'end_date'       => 'date',
+        'completed_at'   => 'datetime',
         'contract_value' => 'decimal:2',
     ];
 
     protected $attributes = ['status' => 'active'];
 
-    public const STATUSES = ['draft', 'active', 'expired', 'terminated'];
+    public const STATUSES = ['draft', 'in_progress', 'active', 'completed', 'expired', 'terminated'];
+
+    /** What kind of agreement it is, as the contract list colours them. */
+    public const TYPES = ['subscription', 'sla', 'service', 'licence', 'framework', 'support'];
+
+    public const BILLING_CYCLES = ['one_off', 'monthly', 'quarterly', 'biannual', 'annual'];
 
     public function account(): BelongsTo
     {
@@ -46,7 +54,13 @@ class AccountContract extends Model
      */
     public function getIsExpiredAttribute(): bool
     {
-        return $this->status !== 'terminated' && $this->end_date?->isPast() === true;
+        return ! in_array($this->status, ['terminated', 'completed'], true)
+            && $this->end_date?->isPast() === true;
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(AccountAttachment::class, 'account_contract_id');
     }
 
     public function scopeExpiringWithin(Builder $q, int $days): Builder
