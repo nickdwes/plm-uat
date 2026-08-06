@@ -37,7 +37,10 @@ class StoreAccountRequest extends FormRequest
             'account_subsector_id' => ['nullable', 'integer', Rule::exists('account_subsectors', 'id')->where('organization_id', $orgId)],
 
             'country'             => ['nullable', 'string', 'size:2'],
+            'city'                => ['nullable', 'string', 'max:120'],
             'physical_location'   => ['nullable', 'string', 'max:255'],
+            'existing_products'   => ['nullable', 'string', 'max:255'],
+            'budget_range'        => ['nullable', 'string', 'max:64'],
             'number_of_branches'  => ['nullable', 'integer', 'min:0', 'max:100000'],
             'number_of_employees' => ['nullable', 'integer', 'min:0', 'max:10000000'],
             'fund_source'         => ['nullable', 'string', 'max:255'],

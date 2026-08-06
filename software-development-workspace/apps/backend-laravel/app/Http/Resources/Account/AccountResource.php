@@ -16,6 +16,7 @@ class AccountResource extends JsonResource
             'initials'          => $this->initials,
             'status'            => $this->status,
             'country'           => $this->country,
+            'city'              => $this->city,
             'physical_location' => $this->physical_location,
             'enrolled_on'       => $this->enrolled_on?->toDateString(),
             'last_contact_at'   => $this->last_contact_at?->toIso8601String(),
@@ -37,6 +38,15 @@ class AccountResource extends JsonResource
             'number_of_branches'  => $this->number_of_branches,
             'number_of_employees' => $this->number_of_employees,
             'fund_source'         => $this->fund_source,
+            'existing_products'   => $this->existing_products,
+            'budget_range'        => $this->budget_range,
+
+            /*
+             * The screens show a band — "250–500 Employees". Derived from the
+             * headcount we already hold rather than stored beside it, so a
+             * customer cannot be 300 employees and "1000+" at once.
+             */
+            'organization_size'   => $this->organization_size,
             'lead_source'         => $this->lead_source,
             'pipeline_stage'      => $this->pipeline_stage,
             'vat_registered'      => $this->vat_registered,

@@ -75,7 +75,9 @@ import AccountsView                  from "../views/Account/AccountsView.vue";
 import AccountDetailView             from "../views/Account/AccountDetailView.vue";
 
 // Pipeline (leads and opportunities)
+import LeadsView                     from "../views/Pipeline/LeadsView.vue";
 import LeadDetailView                from "../views/Pipeline/LeadDetailView.vue";
+import OpportunitiesView             from "../views/Pipeline/OpportunitiesView.vue";
 import OpportunityDetailView         from "../views/Pipeline/OpportunityDetailView.vue";
 
 // Vendor Module
@@ -156,7 +158,9 @@ const routes: RouteRecordRaw[] = [
 
   // ── Pipeline ──────────────────────────────────────────────────────────────
   // Reached from the customer record's Leads and Opportunities tabs.
+  { path: "/leads",             name: "leads",       component: LeadsView },
   { path: "/leads/:id",         name: "lead",        component: LeadDetailView,        props: true },
+  { path: "/opportunities",     name: "opportunities", component: OpportunitiesView },
   { path: "/opportunities/:id", name: "opportunity", component: OpportunityDetailView, props: true },
 
   // ── Vendor Module ─────────────────────────────────────────────────────────

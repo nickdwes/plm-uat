@@ -245,6 +245,23 @@ watch(() => route.name, () => {
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Operations</div>
 
+      <!-- ── Pipeline ───────────────────────────────────────────────────────── -->
+      <!-- Leads then Opportunities, in the order work moves through them. -->
+      <router-link :to="{ name: 'leads' }" :class="['nav-item', { active: isActive('lead') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 3l7 13H3l7-13z" />
+        </svg>
+        Leads
+      </router-link>
+      <router-link :to="{ name: 'opportunities' }" :class="['nav-item', { active: isActive('opportunit') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="10" cy="10" r="7" /><path d="M13.5 6.5L9 11 7 9" />
+        </svg>
+        Opportunities
+      </router-link>
+
       <!-- ── Customers ──────────────────────────────────────────────────────── -->
       <!-- Before Travel, because a travel request names the customer it is
            for — you reach for this to file one, not after. -->

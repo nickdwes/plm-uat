@@ -248,6 +248,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     Route::prefix('leads')->group(function () {
         Route::get('/',            [LeadController::class, 'index']);
         Route::post('/',           [LeadController::class, 'store']);
+
+        // Before /{lead}: a literal segment declared after a route parameter
+        // is never reached.
+        Route::get('/board',       [LeadController::class, 'board']);
+
         Route::get('/{lead}',      [LeadController::class, 'show']);
         Route::put('/{lead}',      [LeadController::class, 'update']);
         Route::delete('/{lead}',   [LeadController::class, 'destroy']);
@@ -255,6 +260,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Becomes a deal. The link lives on the opportunity, not in the
         // lead's status.
         Route::post('/{lead}/convert', [LeadController::class, 'convert']);
+
+        // Dragging a card. Its own action so a move never has to send back
+        // every field on the lead.
+        Route::post('/{lead}/status',   [LeadController::class, 'moveToStatus']);
+
+        // Grading the five dimensions, which is a different act from editing.
+        Route::post('/{lead}/qualify',  [LeadController::class, 'qualify']);
+
+        Route::post('/{lead}/stakeholders',               [LeadController::class, 'storeStakeholder']);
+        Route::delete('/{lead}/stakeholders/{stakeholder}',[LeadController::class, 'destroyStakeholder']);
+
+        Route::get('/{lead}/activities',  [LeadController::class, 'activities']);
+        Route::post('/{lead}/activities', [LeadController::class, 'storeActivity']);
+
+        Route::post('/{lead}/attachments', [LeadController::class, 'storeAttachment']);
+        Route::get('/{lead}/attachments/{attachment}/download', [LeadController::class, 'downloadAttachment']);
+        Route::delete('/{lead}/attachments/{attachment}',       [LeadController::class, 'destroyAttachment']);
 
         Route::post('/{lead}/team',           [LeadController::class, 'storeTeamMember']);
         Route::delete('/{lead}/team/{member}',[LeadController::class, 'destroyTeamMember']);

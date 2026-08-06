@@ -24,8 +24,8 @@ class Account extends Model
     protected $fillable = [
         'organization_id', 'name', 'reference', 'status', 'enrolled_on', 'last_contact_at',
         'account_manager_id', 'account_type_id', 'account_sector_id', 'account_subsector_id',
-        'country', 'physical_location', 'number_of_branches', 'number_of_employees',
-        'fund_source', 'lead_source', 'pipeline_stage',
+        'country', 'city', 'physical_location', 'number_of_branches', 'number_of_employees',
+        'fund_source', 'existing_products', 'budget_range', 'lead_source', 'pipeline_stage',
         'vat_registered', 'tax_pin', 'details', 'created_by',
     ];
 
@@ -140,6 +140,25 @@ class Account extends Model
     public function travelRequests(): HasMany
     {
         return $this->hasMany(\App\Models\Travel\TravelRequest::class);
+    }
+
+    /**
+     * Headcount as the band the screens show.
+     *
+     * Derived rather than stored beside the number: two columns would let a
+     * customer be 300 employees and "1000+" at the same time, and the band is
+     * only ever a way of reading the number.
+     */
+    public function getOrganizationSizeAttribute(): ?string
+    {
+        return match (true) {
+            $this->number_of_employees === null => null,
+            $this->number_of_employees < 50     => '1–50 Employees',
+            $this->number_of_employees < 250    => '50–250 Employees',
+            $this->number_of_employees < 500    => '250–500 Employees',
+            $this->number_of_employees < 1000   => '500–1000 Employees',
+            default                             => '1000+ Employees',
+        };
     }
 
     /**

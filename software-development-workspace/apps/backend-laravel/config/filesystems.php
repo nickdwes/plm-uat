@@ -161,6 +161,28 @@ return [
             ],
 
         /*
+         * Lead paperwork — requirement documents, budget sheets, proposals.
+         *
+         * Private for the same reason as everything else here: a budget
+         * overview names what a customer will spend before they have agreed
+         * to spend it.
+         */
+        'lead_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'lead-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/lead-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Database backups. Written by infra/azure/backup-database.sh, read
          * here only so `backup:check` can tell whether last night's dump
          * actually arrived.
