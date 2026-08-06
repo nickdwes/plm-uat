@@ -20,10 +20,21 @@ class StoreLeadRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:255'],
 
-            // Nullable: a lead can arrive before anybody has opened a customer
-            // record for whoever it came from. Scoped so it cannot be pointed
-            // at another tenant's customer.
-            'account_id' => ['nullable', 'integer',
+            /*
+             * A lead names the customer it is for.
+             *
+             * This was nullable, on the reasoning that a lead can arrive before
+             * anybody has opened a customer record. That reasoning was
+             * overruled: a lead with no customer counts towards nobody's book,
+             * never appears on the customer's record, and the person who knows
+             * which company it came from is the one raising it — not whoever
+             * picks it up three weeks later.
+             *
+             * The column stays nullable so an import of legacy leads without
+             * one still loads; they are then unsaveable until a customer is
+             * chosen, which is the right prompt rather than a silent gap.
+             */
+            'account_id' => ['required', 'integer',
                 Rule::exists('accounts', 'id')->where('organization_id', $orgId)->whereNull('deleted_at')],
 
             'source'   => ['nullable', 'string', 'max:120'],
@@ -43,7 +54,8 @@ class StoreLeadRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'account_id.exists' => 'That customer is not on file for this organisation.',
+            'account_id.required' => 'Choose the customer this lead is for.',
+            'account_id.exists'   => 'That customer is not on file for this organisation.',
             'owner_id.exists'   => 'That person is not an employee of this organisation.',
         ];
     }

@@ -131,18 +131,24 @@ class PipelineTest extends TestCase
     {
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_CREATE]);
 
-        $this->postJson($this->url('/leads'), ['name' => 'Cloud storage refresh'])
-            ->assertCreated()
-            ->assertJsonPath('data.status', 'new');
+        $this->postJson($this->url('/leads'), [
+            'name' => 'Cloud storage refresh', 'account_id' => $this->account->id,
+        ])->assertCreated()->assertJsonPath('data.status', 'new');
     }
 
-    public function test_a_lead_can_exist_before_the_customer_is_on_file(): void
+    public function test_a_lead_must_name_the_customer_it_is_for(): void
     {
-        // Leads arrive from people nobody has opened a record for yet.
+        /*
+         * This used to assert the opposite — that a lead could exist before
+         * anybody had opened a customer record. That was my reading and it was
+         * overruled: a lead with no customer counts towards nobody's book and
+         * never appears on the customer's record, and whoever raises it is the
+         * one who knows which company it came from.
+         */
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_CREATE]);
 
         $this->postJson($this->url('/leads'), ['name' => 'Inbound enquiry'])
-            ->assertCreated()->assertJsonPath('data.account', null);
+            ->assertStatus(422)->assertJsonValidationErrors('account_id');
     }
 
     public function test_open_leads_can_be_counted_without_knowing_which_statuses_mean_converted(): void

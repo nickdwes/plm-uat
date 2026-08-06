@@ -486,6 +486,8 @@ async function createLead() {
   try {
     const res = await api<{ data: Lead }>("POST", "/api/v1/leads", {
       org: org(),
+      // The customer is not asked for here — the lead is being raised from
+      // their record, so it can only be for them.
       body: { ...newLead.value, source: newLead.value.source || null, account_id: Number(props.id) },
     });
     showLead.value = false;

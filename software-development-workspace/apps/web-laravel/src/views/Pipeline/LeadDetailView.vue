@@ -18,6 +18,7 @@ import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
+import AccountPicker from "../../components/AccountPicker.vue";
 
 const props = defineProps<{ id: string | number }>();
 
@@ -145,6 +146,7 @@ const form = ref({
   name: "", summary: "", source: "", status: "new", priority: "medium",
   deadline: "", website: "", problem_statement: "", proposed_solution: "",
   owner_id: null as number | null,
+  account_id: null as number | null,
 });
 
 function fillForm(l: Lead) {
@@ -154,6 +156,7 @@ function fillForm(l: Lead) {
     deadline: l.deadline ?? "", website: l.website ?? "",
     problem_statement: l.problem_statement ?? "", proposed_solution: l.proposed_solution ?? "",
     owner_id: l.owner?.id ?? null,
+    account_id: l.account?.id ?? null,
   };
 }
 
@@ -170,7 +173,6 @@ async function save() {
         website: form.value.website || null,
         problem_statement: form.value.problem_statement || null,
         proposed_solution: form.value.proposed_solution || null,
-        account_id: lead.value?.account?.id ?? null,
       },
     })).data;
     editing.value = false;
@@ -471,6 +473,11 @@ onMounted(load);
 
         <div v-else class="ld-card">
           <div class="ld-grid">
+            <div class="ld-field ld-span">
+              <span>Customer <em class="ld-req">required</em></span>
+              <AccountPicker v-model="form.account_id" placeholder="Which customer is this for?" />
+            </div>
+
             <label class="ld-field ld-span"><span>Lead name</span>
               <input v-model="form.name" class="control" /></label>
 
@@ -512,7 +519,7 @@ onMounted(load);
           </div>
 
           <div class="ld-actions">
-            <button class="btn-primary" :disabled="saving" @click="save">
+            <button class="btn-primary" :disabled="saving || !form.account_id || !form.name.trim()" @click="save">
               {{ saving ? "Saving…" : "Save changes" }}
             </button>
           </div>
@@ -984,6 +991,7 @@ onMounted(load);
 .ld-link   { font-size: var(--text-sm-size); color: var(--color-brand-on-surface); margin: 0; }
 .ld-muted  { font-size: var(--text-sm-size); color: var(--color-text-light); margin: 0; }
 .ld-hint   { font-size: var(--text-xs-size); color: var(--color-text-light); margin: 0; }
+.ld-req    { font-style: normal; color: var(--color-danger-text); }
 .ld-nowrap { white-space: nowrap; }
 
 .ld-card {

@@ -17,6 +17,7 @@ import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
+import AccountPicker from "../../components/AccountPicker.vue";
 
 interface Person { id: number | null; name: string | null }
 interface TeamMember { id: number; employee: Person }
@@ -48,7 +49,21 @@ const showFilters  = ref(false);
 const listStatus   = ref("new");
 
 const showNew = ref(false);
-const newLead = ref({ name: "", summary: "", source: "", priority: "medium", status: "new" });
+const newLead = ref({
+  name: "", summary: "", source: "", priority: "medium", status: "new",
+  account_id: null as number | null,
+});
+
+/**
+ * A lead names the customer it is for.
+ *
+ * Required here rather than left until conversion: a lead with no customer
+ * cannot be counted towards anybody's book, cannot appear on the customer's
+ * record, and the person who knows which company it came from is the one
+ * raising it — not whoever picks it up three weeks later.
+ */
+const canCreate = computed(() =>
+  Boolean(newLead.value.name.trim() && newLead.value.account_id));
 
 const org = () => currentOrgSlug.value;
 
@@ -88,7 +103,7 @@ function switchTo(v: "kanban" | "list") {
 }
 
 async function create(status?: string) {
-  if (!newLead.value.name.trim()) return;
+  if (!canCreate.value) return;
   saving.value = true;
   try {
     const res = await api<{ data: Lead }>("POST", "/api/v1/leads", {
@@ -101,7 +116,9 @@ async function create(status?: string) {
       },
     });
     showNew.value = false;
-    newLead.value = { name: "", summary: "", source: "", priority: "medium", status: "new" };
+    newLead.value = {
+      name: "", summary: "", source: "", priority: "medium", status: "new", account_id: null,
+    };
 
     // Raised before navigating. The toast lives on the shell, so it survives
     // the route change — an inline banner here would be destroyed by it.
@@ -113,7 +130,9 @@ async function create(status?: string) {
 }
 
 function openNewIn(status: string) {
-  newLead.value = { name: "", summary: "", source: "", priority: "medium", status };
+  newLead.value = {
+    name: "", summary: "", source: "", priority: "medium", status, account_id: null,
+  };
   showNew.value = true;
 }
 
@@ -358,6 +377,15 @@ onMounted(() => { void loadBoard(); });
           <button class="lv-close" aria-label="Close" @click="showNew = false">×</button>
         </div>
 
+        <div class="lv-field">
+          <span>Customer <em class="lv-req">required</em></span>
+          <AccountPicker v-model="newLead.account_id" placeholder="Which customer is this for?" />
+          <span class="lv-hint">
+            Not on file yet? Add them under Customers first — a lead has to belong
+            to somebody.
+          </span>
+        </div>
+
         <label class="lv-field"><span>Lead name</span>
           <input v-model="newLead.name" class="control" placeholder="Integrate AI lead scoring module" /></label>
 
@@ -380,7 +408,7 @@ onMounted(() => { void loadBoard(); });
             <option v-for="(label, key) in STATUS_LABELS" :key="key" :value="key">{{ label }}</option>
           </select></label>
 
-        <button class="btn-primary btn-block" :disabled="saving || !newLead.name.trim()" @click="create()">
+        <button class="btn-primary btn-block" :disabled="saving || !canCreate" @click="create()">
           {{ saving ? "Adding…" : "Add Lead" }}
         </button>
       </aside>
@@ -512,6 +540,7 @@ onMounted(() => { void loadBoard(); });
 .lv-field { @apply flex flex-col; gap: var(--space-1); }
 .lv-field > span { font-size: var(--text-xs-size); color: var(--color-text-muted); }
 .lv-hint { font-size: var(--text-xs-size); color: var(--color-text-light); }
+.lv-req { font-style: normal; color: var(--color-danger-text); }
 
 .control {
   font-family: inherit; font-size: var(--text-sm-size);
