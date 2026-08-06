@@ -39,6 +39,7 @@ use App\Http\Controllers\Pipeline\LeadController;
 use App\Http\Controllers\Pipeline\OpportunityController;
 use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Pipeline\ResearchController;
+use App\Http\Controllers\Project\ProjectController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -353,6 +354,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         Route::post('/{research}/team',           [ResearchController::class, 'storeTeamMember']);
         Route::delete('/{research}/team/{member}',[ResearchController::class, 'destroyTeamMember']);
+    });
+
+    /*
+     * Projects — the work a won deal starts.
+     *
+     * Filtered by ?opportunity_id= for the deal that produced it, and
+     * ?state=overdue for the question a status filter cannot answer.
+     */
+    Route::prefix('projects')->group(function () {
+        Route::get('/',             [ProjectController::class, 'index']);
+        Route::post('/',            [ProjectController::class, 'store']);
+        Route::get('/{project}',    [ProjectController::class, 'show']);
+        Route::put('/{project}',    [ProjectController::class, 'update']);
+        Route::delete('/{project}', [ProjectController::class, 'destroy']);
+
+        Route::post('/{project}/team',           [ProjectController::class, 'storeTeamMember']);
+        Route::delete('/{project}/team/{member}',[ProjectController::class, 'destroyTeamMember']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────

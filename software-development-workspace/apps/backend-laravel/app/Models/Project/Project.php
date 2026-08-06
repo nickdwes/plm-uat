@@ -30,10 +30,16 @@ class Project extends Model
 
     protected $fillable = [
         'organization_id', 'account_id', 'opportunity_id', 'reference', 'name',
-        'description', 'status', 'priority', 'deadline', 'project_lead_id', 'created_by',
+        'description', 'status', 'priority', 'deadline', 'started_on', 'delivered_on',
+        'contract_value', 'project_lead_id', 'created_by',
     ];
 
-    protected $casts = ['deadline' => 'date'];
+    protected $casts = [
+        'deadline'       => 'date',
+        'started_on'     => 'date',
+        'delivered_on'   => 'date',
+        'contract_value' => 'decimal:2',
+    ];
 
     protected $attributes = ['status' => 'kickoff', 'priority' => 'medium'];
 
@@ -53,6 +59,36 @@ class Project extends Model
     public function projectLead(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'project_lead_id');
+    }
+
+    public function team(): HasMany
+    {
+        return $this->hasMany(ProjectTeamMember::class);
+    }
+
+    /**
+     * Whether it was delivered after its deadline.
+     *
+     * Derived rather than stored, and null until it is delivered — a project
+     * still running is not late, it is running, and conflating the two is how
+     * a delivery report ends up counting everything in flight as a failure.
+     */
+    public function getWasLateAttribute(): ?bool
+    {
+        if ($this->delivered_on === null || $this->deadline === null) {
+            return null;
+        }
+
+        return $this->delivered_on->gt($this->deadline);
+    }
+
+    /** Running late right now — which is a different question from was_late. */
+    public function getIsOverdueAttribute(): bool
+    {
+        return $this->delivered_on === null
+            && $this->deadline !== null
+            && $this->deadline->isPast()
+            && ! in_array($this->status, ['delivered', 'cancelled'], true);
     }
 
     /**

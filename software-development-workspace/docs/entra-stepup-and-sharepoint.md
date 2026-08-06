@@ -99,6 +99,37 @@ documents as rows rather than seventeen path strings.
 If SharePoint is wanted as **backup** rather than as a workspace, the answer is
 different and simpler: mirror ciphertext, and the conflict disappears.
 
-**The question to settle before building it:** is SharePoint wanted as a place
-people work on these files, or as a second copy in case ours is lost? They lead
-to opposite designs.
+### Settled: it is a workspace
+
+Confirmed — SharePoint is where people work on these files, not a backup. So
+mirrored files are **plaintext** there, and that has to be said plainly: our
+encryption protects the copy in blob storage, and cannot protect a copy living
+in a document library governed by SharePoint's permissions rather than ours.
+
+The mitigation is the class list, and it is now written in code rather than
+prose: `App\Support\Storage\MirrorPolicy`, deny-by-default.
+
+| Mirrored | Never mirrored |
+|---|---|
+| Site survey | Bids, bonds, tender responses |
+| Specification | Financial workings, discount workings |
+| Proposals | Signed contracts, award letters, quotations |
+| Kickoff packs (scope, SLA, BOM) | Negotiation notes, lost-bid analyses |
+| | Anything typed `financial`, in any stage |
+| | Candidate and employee documents — different disks, not mirrorable at all |
+
+Two properties worth keeping when the job is built:
+
+- **Deny by default.** A stage added later does not mirror until somebody
+  decides it should. The usual failure is an allow-list that silently widens.
+- **A refusal explains itself.** "Not in SharePoint" sends somebody hunting for
+  a bug; "tender paperwork stays on the platform" is an answer.
+
+### What is left to build
+
+The job itself: Graph `PUT /drives/{id}/items/{path}:/content`, app-only with
+`Sites.Selected` scoped to one site, a `mirrored_at` column so it is
+incremental, and a decision on what happens when somebody edits the SharePoint
+copy — most likely nothing, with SharePoint treated as read-only downstream and
+the platform remaining the record. Two-way sync is a different and much larger
+project.
