@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug } from "../stores/auth";
 import type { Paginator, LeaveRequest, LeaveBalance, LeaveBalanceResponse } from "../lib/types";
+import LeaveHandoverPanel from "../components/LeaveHandoverPanel.vue";
 
 interface LeaveTypeFull {
   id: number; name: string; code: string | null;
@@ -260,6 +261,15 @@ watch([
 ], () => { void previewDays(); });
 
 // ── Status badge ──────────────────────────────────────────────────────────
+/**
+ * Whose handover is open, if any.
+ *
+ * Reachable from the row rather than only at approval time: the useful moment
+ * to arrange cover is while you are planning the leave, not after somebody has
+ * already signed it off.
+ */
+const handoverFor = ref<{ id: number; label: string } | null>(null);
+
 function statusBadge(status: string): string {
   return { pending: "badge-yellow", approved: "badge-green", rejected: "badge-red", cancelled: "badge-gray" }[status] ?? "badge-gray";
 }
@@ -326,7 +336,14 @@ watch(currentOrgSlug, init);
               </td>
               <td><span :class="['badge', statusBadge(r.status)]">{{ r.status }}</span></td>
               <td class="cell-sub">{{ r.created_at.substring(0,10) }}</td>
-              <td>
+              <td class="row-actions">
+                <!-- Only where somebody is actually going: a rejected or
+                     cancelled request has nothing to hand over. -->
+                <button
+                  v-if="r.status === 'pending' || r.status === 'approved'"
+                  class="btn btn-secondary btn-sm"
+                  @click.stop="handoverFor = { id: r.id, label: `${r.from_date} to ${r.to_date}` }"
+                >Handover</button>
                 <button v-if="r.status === 'pending'" class="btn btn-secondary btn-sm" @click.stop="cancelLeave(r.id)">Cancel</button>
               </td>
             </tr>
@@ -543,6 +560,13 @@ watch(currentOrgSlug, init);
       </div>
     </div>
   </div>
+
+  <LeaveHandoverPanel
+    v-if="handoverFor"
+    :leave-id="handoverFor.id"
+    :label="handoverFor.label"
+    @close="handoverFor = null"
+  />
 </template>
 
 <style scoped>

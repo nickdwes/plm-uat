@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -40,6 +41,9 @@ class Task extends Model
         // Where it came from, and what produced it. The pair is unique per
         // organisation, which is what stops a generator raising duplicates.
         'source', 'generated_from_type', 'generated_from_id',
+
+        // Whether somebody else can cover it. Null follows the category.
+        'handover_policy',
 
         'effort_estimate_days', 'started_on', 'assigned_to',
 
@@ -114,6 +118,102 @@ class Task extends Model
     public function getIsGeneratedAttribute(): bool
     {
         return $this->source !== 'manual';
+    }
+
+    /**
+     * Which kinds of work somebody else can pick up for a fortnight.
+     *
+     * The ones that can are customer-facing and time-critical — the cost of
+     * waiting lands outside the company, so somebody has to hold them.
+     *
+     * The ones that cannot are not an oversight. Training and certificates are
+     * yours and nobody can sit your exam. Research is a thread, and somebody
+     * joining halfway hands back work that has to be redone. A meeting action
+     * belongs to whoever was in the room. Project work belongs to the project
+     * plan, and reallocating it is the project manager's call about resourcing
+     * rather than something to settle in a leave form the day before a flight.
+     *
+     * A default rather than a rule — see `is_transferable`.
+     */
+    public const HANDOVER_BY_CATEGORY = [
+        'support'       => true,
+        'ticket'        => true,
+        'account'       => true,
+        'opportunity'   => true,
+        'collaboration' => true,
+        'internal'      => true,
+
+        'project'     => false,
+        'training'    => false,
+        'certificate' => false,
+        'meeting'     => false,
+        'research'    => false,
+        'leave'       => false,
+    ];
+
+    public const HANDOVER_POLICIES = ['transferable', 'personal'];
+
+    /**
+     * Can somebody else hold this while its owner is away?
+     *
+     * The task's own answer wins over the category's, because a self-raised
+     * task might be personal admin or might be the one thing holding up a
+     * delivery, and only the person going away knows which.
+     */
+    public function getIsTransferableAttribute(): bool
+    {
+        if ($this->handover_policy !== null) {
+            return $this->handover_policy === 'transferable';
+        }
+
+        return self::HANDOVER_BY_CATEGORY[$this->category] ?? true;
+    }
+
+    /**
+     * Why it cannot be covered, in words.
+     *
+     * Given rather than left implied: a rule people cannot see reads as the
+     * system being obstructive, and they work around it by handing the task
+     * over informally, which is exactly what this exists to stop.
+     */
+    public function getHandoverBlockReasonAttribute(): ?string
+    {
+        if ($this->is_transferable) {
+            return null;
+        }
+
+        if ($this->handover_policy === 'personal') {
+            return 'Marked as yours alone.';
+        }
+
+        return match ($this->category) {
+            'training', 'certificate' => 'Training and certification are personal — nobody else can sit it.',
+            'research'    => 'Research is a thread; handing it over halfway means it gets redone.',
+            'meeting'     => 'The action belongs to whoever was in the room.',
+            'project'     => 'Project work is reallocated by the project manager, not in a leave form.',
+            'leave'       => 'Leave admin is personal.',
+            default       => 'This kind of work is not handed over.',
+        };
+    }
+
+    /** Cover that is still standing today. */
+    public function activeHandover(): HasOne
+    {
+        return $this->hasOne(TaskHandover::class)->whereNull('released_at')->latest('id');
+    }
+
+    public function handovers(): HasMany
+    {
+        return $this->hasMany(TaskHandover::class);
+    }
+
+    /**
+     * Who is holding it today — the coverer where one is standing, otherwise
+     * whoever owns it. Ownership never moves, so it always comes back.
+     */
+    public function getHeldByIdAttribute(): ?int
+    {
+        return $this->activeHandover?->to_employee_id ?? $this->assigned_to;
     }
 
     public function project(): BelongsTo

@@ -41,6 +41,7 @@ use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Pipeline\ResearchController;
 use App\Http\Controllers\Project\ProjectController;
 use App\Http\Controllers\Project\ProjectMilestoneController;
+use App\Http\Controllers\Task\LeaveHandoverController;
 use App\Http\Controllers\Task\TaskBoardController;
 use App\Http\Controllers\Task\TaskController;
 use App\Http\Controllers\Task\TaskRecurrenceController;
@@ -648,6 +649,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/',                   [LeaveController::class, 'store']);
         Route::get('/{leaveRequest}',      [LeaveController::class, 'show']);
         Route::post('/{leaveRequest}/approve', [LeaveController::class, 'approve']);
+
+        /*
+         * Who covers what while they are away.
+         *
+         * Under leave rather than under tasks, because it is a question about
+         * one absence rather than about one task — and because the person going
+         * away answers it, not whoever administers tasks.
+         */
+        Route::get('/{leaveRequest}/handover',    [LeaveHandoverController::class, 'show']);
+        Route::post('/{leaveRequest}/handover',   [LeaveHandoverController::class, 'store']);
+        Route::delete('/{leaveRequest}/handover/{handover}', [LeaveHandoverController::class, 'destroy']);
         Route::post('/{leaveRequest}/reject',  [LeaveController::class, 'reject']);
         Route::delete('/{leaveRequest}',   [LeaveController::class, 'destroy']);
     });

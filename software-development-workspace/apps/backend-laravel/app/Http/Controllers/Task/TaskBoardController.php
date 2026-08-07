@@ -41,7 +41,7 @@ class TaskBoardController extends Controller
 
     private const DETAIL = [
         'assignee', 'approver', 'starter', 'completer',
-        'ownerAccount', 'ownerVendorPartner', 'ownerContact',
+        'ownerAccount', 'ownerVendorPartner', 'ownerContact', 'activeHandover.coverer',
         'members.employee', 'subtasks.members.employee', 'subtasks.assignee',
         'dependencies', 'externalDependencies', 'requests.toEmployee', 'requests.requester',
         'requiredDocuments', 'project', 'attachments',
@@ -94,7 +94,7 @@ class TaskBoardController extends Controller
         // without eager loading that is a query per card.
         $q = Task::query()->with([
             'assignee', 'project', 'members.employee',
-            'ownerAccount', 'ownerVendorPartner', 'ownerContact',
+            'ownerAccount', 'ownerVendorPartner', 'ownerContact', 'activeHandover.coverer',
         ])->roots();
 
         $this->visibleTo($request, $q);
@@ -159,6 +159,9 @@ class TaskBoardController extends Controller
             // A task waiting on my sign-off is my work, and it has to appear
             // somewhere I look or it waits forever.
             ->orWhere('approver_id', $me)
+            // What they are covering while somebody is away. It has to appear
+            // in their list or the cover is only a record of good intentions.
+            ->orWhereHas('handovers', fn ($h) => $h->standing()->where('to_employee_id', $me))
             ->orWhereHas('members', fn ($m) => $m->where('employee_id', $me))
             ->orWhereHas('requests', fn ($r) => $r->where('to_employee_id', $me)));
     }
@@ -817,6 +820,16 @@ class TaskBoardController extends Controller
             'effort_estimate_days' => ['nullable', 'numeric', 'min:0', 'max:9999.99'],
             'requires_approval'    => ['sometimes', 'boolean'],
 
+            /*
+             * Whether somebody else can cover this while its owner is away.
+             *
+             * Null is the meaningful default — follow the rule for this kind of
+             * work. Set it only to disagree, which is the case the category
+             * cannot decide: a self-raised task might be personal admin or the
+             * one thing holding up a delivery.
+             */
+            'handover_policy' => ['nullable', Rule::in(Task::HANDOVER_POLICIES)],
+
             // Who signs it off. Without a name, `requires_approval` leaves the
             // task waiting on nobody in particular.
             'approver_id' => ['nullable', 'integer',
@@ -949,6 +962,22 @@ class TaskBoardController extends Controller
                 ? ['id' => $t->completer->id, 'name' => $t->completer->full_name] : null,
 
             'assignee' => $t->assignee ? ['id' => $t->assignee->id, 'name' => $t->assignee->full_name] : null,
+
+            /*
+             * Cover, where somebody is holding it while its owner is away.
+             *
+             * The owner never changes, so it always comes back — a fortnight's
+             * absence should not quietly move a task for good.
+             */
+            'covered_by' => $t->relationLoaded('activeHandover') && $t->activeHandover?->coverer
+                ? [
+                    'id'   => $t->activeHandover->coverer->id,
+                    'name' => $t->activeHandover->coverer->full_name,
+                    'until' => $t->activeHandover->ends_on?->toDateString(),
+                ]
+                : null,
+
+            'is_transferable' => $t->is_transferable,
 
             /*
              * Who owes the work. `is_ours` is the one the rest of the system

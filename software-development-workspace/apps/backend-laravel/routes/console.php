@@ -24,3 +24,11 @@ Schedule::command('compliance:reminders')->dailyAt('07:00');
  */
 Schedule::command('tasks:generate-recurring')->dailyAt('06:00')->withoutOverlapping();
 
+/*
+ * Hand covered tasks back once the leave is over.
+ *
+ * Early, so somebody returning finds their own work in their list on the
+ * morning they walk in rather than the morning after.
+ */
+Schedule::command('tasks:release-handovers')->dailyAt('05:30')->withoutOverlapping();
+

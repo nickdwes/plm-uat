@@ -18,6 +18,7 @@ class LeaveController extends Controller
     public function __construct(
         private readonly LeaveService $service,
         private readonly LeaveCalculatorService $calculator,
+        private readonly \App\Services\Task\LeaveHandoverService $handovers,
     ) {}
 
     /**
@@ -115,6 +116,19 @@ class LeaveController extends Controller
         abort_if(! $employee, 422, 'User has no linked employee record.');
 
         $this->service->cancel($leaveRequest, $employee->id);
+
+        /*
+         * Cancelled leave means nobody is away, so nobody is covering.
+         *
+         * Leaving the cover standing would put somebody else's name against
+         * tasks their owner is sitting at their desk doing — and the owner's
+         * own list would not show them.
+         */
+        $leave = \App\Models\LeaveRequest::find($leaveRequest);
+
+        if ($leave) {
+            $this->handovers->releaseAllFor($leave);
+        }
 
         return response()->json(['message' => 'Leave request cancelled.']);
     }

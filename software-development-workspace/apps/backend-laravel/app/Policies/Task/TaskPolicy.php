@@ -81,6 +81,9 @@ class TaskPolicy extends BasePolicy
 
         return $task->assigned_to === $employeeId
             || $task->approver_id === $employeeId
+            // Holding it while its owner is away. Cover that cannot be opened
+            // is not cover.
+            || $task->handovers()->standing()->where('to_employee_id', $employeeId)->exists()
             || $task->members()->where('employee_id', $employeeId)->exists()
             || $task->requests()->where('to_employee_id', $employeeId)->exists();
     }
