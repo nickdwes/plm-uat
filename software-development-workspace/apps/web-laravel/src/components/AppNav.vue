@@ -587,7 +587,7 @@ watch(() => route.name, () => {
 .chevron.open { @apply rotate-180; }
 
 .nav-group-children {
-  @apply flex max-h-0 flex-col overflow-hidden;
+  @apply flex max-h-0 shrink-0 flex-col overflow-hidden;
   gap: var(--space-1);
   transition: max-height 250ms ease;
 }

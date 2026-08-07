@@ -18,8 +18,10 @@ async function load() {
   loading.value = true;
   error.value   = "";
   try {
-    const res = await api<{ data: RecruitmentStats }>("GET", "/api/v1/recruitment/stats", { org: org() });
-    stats.value = res.data;
+    // The endpoint returns the figures unwrapped, unlike the list endpoints —
+    // reading `.data` here left `stats` undefined and the whole metrics row
+    // silently absent, with no error to explain it.
+    stats.value = await api<RecruitmentStats>("GET", "/api/v1/recruitment/stats", { org: org() });
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load stats.";
   } finally {
