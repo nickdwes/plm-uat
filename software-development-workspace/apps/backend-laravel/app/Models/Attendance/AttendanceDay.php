@@ -37,6 +37,10 @@ class AttendanceDay extends Model
         'is_enablement_day', 'enablement_status', 'enablement_approved_by',
         'enablement_actioned_at', 'enablement_note',
         'notes', 'created_by',
+
+        // Stamped by the nightly sweep when somebody is asked to close their
+        // day, and when the manager is told they did not.
+        'reminded_at', 'escalated_at',
     ];
 
     protected $casts = [
@@ -44,6 +48,8 @@ class AttendanceDay extends Model
         'first_clock_in_at'      => 'datetime',
         'last_clock_out_at'      => 'datetime',
         'enablement_actioned_at' => 'datetime',
+        'reminded_at'            => 'datetime',
+        'escalated_at'           => 'datetime',
         'is_enablement_day'      => 'boolean',
     ];
 

@@ -483,6 +483,9 @@ class AttendanceController extends Controller
          */
         $payload['tally'] = $d->commitment_tally;
         $payload['is_reported'] = $d->is_reported;
+        // Whether the end-of-day nudge has already gone, so the page can stop
+        // repeating an ask somebody has been sent.
+        $payload['reminded_at'] = $d->reminded_at?->toIso8601String();
 
         return $payload;
     }

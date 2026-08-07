@@ -58,6 +58,7 @@ interface Day {
   /** Promised, delivered, missed — and missed with nobody told. */
   tally: { promised: number; done: number; missed: number; unexplained: number; open: number };
   is_reported: boolean;
+  reminded_at: string | null;
   audits?: { field: string; from: string | null; to: string | null; at: string | null; by: string | null }[];
 }
 interface Summary {
@@ -497,6 +498,26 @@ onMounted(load);
         <button class="btn-primary" @click="openReport()">+ Add Attendance</button>
       </div>
     </header>
+
+    <!--
+      Today, still unanswered.
+
+      The nightly nudge is a backstop. Somebody looking at this page at four
+      o'clock should be able to close their day without being chased for it —
+      being asked by a notification you have already acted on is how
+      notifications get muted.
+    -->
+    <div v-if="today && today.tally.open" class="at-nudge">
+      <span>
+        You have {{ today.tally.open }}
+        {{ today.tally.open === 1 ? "thing" : "things" }} still open today.
+        Say how they went before you finish — your manager only hears about
+        the ones nobody explains.
+      </span>
+      <button class="link-btn" @click="view = 'calendar'; setZoom('day'); cursor = new Date()">
+        Close off today
+      </button>
+    </div>
 
     <!-- ── The three cards ──────────────────────────────────────────────── -->
     <div v-if="summary" class="at-cards">
@@ -1017,6 +1038,14 @@ onMounted(load);
 .chip-plan { background: transparent; color: var(--color-text-muted); border: 1px dashed var(--color-border-strong); }
 
 .at-zoom { max-width: 10rem; }
+
+.at-nudge {
+  @apply flex flex-wrap items-center justify-between; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-subtle); color: var(--color-warning-text);
+  font-size: var(--text-sm-size);
+}
 
 .at-days { @apply grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: var(--space-4); padding: 0 var(--space-5) var(--space-5); }
 .at-day { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }

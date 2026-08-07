@@ -32,3 +32,14 @@ Schedule::command('tasks:generate-recurring')->dailyAt('06:00')->withoutOverlapp
  */
 Schedule::command('tasks:release-handovers')->dailyAt('05:30')->withoutOverlapping();
 
+/*
+ * Ask people to close their day, and tell managers about the days nobody closed.
+ *
+ * Hourly rather than at a fixed time, because the end of the working day is a
+ * policy and two organisations do not finish together — the command decides
+ * whether it is home time for each of them. Both stages stamp the day they
+ * acted on, so running it more often changes nothing except how promptly people
+ * are asked.
+ */
+Schedule::command('attendance:remind-open-commitments')->hourly()->withoutOverlapping();
+
