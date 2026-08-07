@@ -33,7 +33,7 @@ use App\Http\Controllers\Training\VendorComplianceController;
 use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
-use App\Http\Controllers\WorkLocationController;
+use App\Http\Controllers\Attendance\AttendanceController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
 use App\Http\Controllers\Pipeline\OpportunityController;
@@ -182,12 +182,28 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     });
 
     // ── Work Location Check-In (self-service + team view) ────────────────────
-    Route::prefix('work-location')->group(function () {
-        Route::get('/today',      [WorkLocationController::class, 'today']);
-        Route::get('/history',    [WorkLocationController::class, 'history']);
-        Route::get('/team',       [WorkLocationController::class, 'team']);
-        Route::post('/check-in',  [WorkLocationController::class, 'checkIn']);
-        Route::post('/check-out', [WorkLocationController::class, 'checkOut']);
+    /*
+     * Attendance — where people work, and whether the day happened.
+     *
+     * The calendar and the list read the same endpoint, because they are two
+     * pictures of the same days and two endpoints would eventually disagree
+     * about one of them.
+     */
+    Route::prefix('attendance')->group(function () {
+        Route::get('/',        [AttendanceController::class, 'index']);
+        // Before /{attendanceDay}, or the router reads these as ids.
+        Route::get('/summary', [AttendanceController::class, 'summary']);
+        Route::get('/policy',  [AttendanceController::class, 'policy']);
+        Route::put('/policy',  [AttendanceController::class, 'updatePolicy']);
+
+        // Saying where you are working, on the day or in advance.
+        Route::post('/record',     [AttendanceController::class, 'record']);
+        Route::post('/clock-in',   [AttendanceController::class, 'clockIn']);
+        Route::post('/clock-out',  [AttendanceController::class, 'clockOut']);
+        // Entered after the fact, and marked as such.
+        Route::post('/add-hours',  [AttendanceController::class, 'addHours']);
+
+        Route::get('/{attendanceDay}', [AttendanceController::class, 'show']);
     });
 
     // ── Authorization administration ──────────────────────────────────────────

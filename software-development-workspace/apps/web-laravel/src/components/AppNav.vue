@@ -150,6 +150,16 @@ watch(() => route.name, () => {
           </svg>
           My Leave
         </router-link>
+
+      <!-- Attendance sits with leave: both answer "was this person at work",
+           and separating them means checking two screens for one question. -->
+      <router-link :to="{ name: 'attendance' }" :class="['nav-item', { active: isActive('attendance') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="10" cy="10" r="7" /><path d="M10 6v4l2.5 1.5" />
+        </svg>
+        Attendance Tracker
+      </router-link>
         <router-link :to="{ name: 'leave-approvals' }" :class="['nav-item', 'nav-child', { active: isActive('leave-approvals') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-5.121-5.121a1 1 0 011.414-1.414L8.414 12.172l6.879-6.879a1 1 0 011.414 0z" clip-rule="evenodd" />

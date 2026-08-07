@@ -47,10 +47,13 @@ const clockLoading = ref(false);
 async function loadClockStatus(): Promise<void> {
   if (!currentOrgSlug.value) return;
   try {
-    const res = await api<{ data: { checked_out_at: string | null } | null }>(
-      "GET", "/api/v1/work-location/today", { org: currentOrgSlug.value }
+    // Today's attendance day. `is_clocked_in` is answered by the server from
+    // the punches, rather than the client inferring it from a missing time.
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await api<{ data: { is_clocked_in: boolean | null }[] }>(
+      "GET", "/api/v1/attendance", { org: currentOrgSlug.value, params: { from: today, to: today } }
     );
-    checkedIn.value = !!(res.data && !res.data.checked_out_at);
+    checkedIn.value = res.data.some((d) => d.is_clocked_in === true);
   } catch {
     checkedIn.value = false;
   }
@@ -61,10 +64,10 @@ async function toggleClock(): Promise<void> {
   clockLoading.value = true;
   try {
     if (checkedIn.value) {
-      await api("POST", "/api/v1/work-location/check-out", { org: currentOrgSlug.value, body: {} });
+      await api("POST", "/api/v1/attendance/clock-out", { org: currentOrgSlug.value, body: {} });
       checkedIn.value = false;
     } else {
-      await api("POST", "/api/v1/work-location/check-in", {
+      await api("POST", "/api/v1/attendance/clock-in", {
         org: currentOrgSlug.value,
         body: { location_type: "office" },
       });

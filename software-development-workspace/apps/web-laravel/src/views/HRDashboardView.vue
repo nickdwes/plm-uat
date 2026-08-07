@@ -58,7 +58,12 @@ async function load(): Promise<void> {
 async function loadTeamLocations(): Promise<void> {
   if (!org()) { teamLocations.value = null; return; }
   try {
-    const res = await api<{ data: TeamLocationEntry[] }>("GET", "/api/v1/work-location/team", { org: org() });
+    // Scoped by permission on the server — a manager gets their reports, HR
+    // gets everybody — so there is no separate "team" endpoint to drift.
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await api<{ data: TeamLocationEntry[] }>("GET", "/api/v1/attendance", {
+      org: org(), params: { from: today, to: today },
+    });
     teamLocations.value = res.data;
   } catch {
     teamLocations.value = null;
@@ -219,9 +224,10 @@ function fmtTime(d: string | null | undefined): string {
 function wlBadgeClass(type: WorkLocationType): string {
   return ({ office: "badge-blue", home: "badge-teal", customer_site: "badge-amber" } as Record<string, string>)[type] ?? "badge-gray";
 }
-function wlLabel(c: { location_type: WorkLocationType; customer_name: string | null }): string {
-  const base = ({ office: "Office", home: "Work From Home", customer_site: "Customer Site" } as Record<string, string>)[c.location_type] ?? c.location_type;
-  return c.location_type === "customer_site" && c.customer_name ? `${base}: ${c.customer_name}` : base;
+/** The customer is now a linked account rather than a typed name. */
+function wlLabel(type: WorkLocationType, customer?: string | null): string {
+  const base = ({ office: "Office", home: "Work From Home", customer_site: "Customer Site" } as Record<string, string>)[type] ?? type;
+  return type === "customer_site" && customer ? `${base}: ${customer}` : base;
 }
 
 function formatMonth(ym: string): string {
@@ -552,7 +558,7 @@ function formatMonth(ym: string): string {
               <template v-if="teamLocations?.length">
                 <div
                   v-for="(entry, idx) in teamLocations"
-                  :key="entry.employee.id"
+                  :key="entry.id"
                   :class="['sched-entry', {
                     'entry-top':    idx === 0,
                     'entry-bottom': idx === teamLocations.length - 1,
@@ -560,15 +566,17 @@ function formatMonth(ym: string): string {
                   }]"
                 >
                   <div class="entry-time">
-                    <p class="entry-time-main">{{ entry.check_in ? fmtTime(entry.check_in.checked_in_at) : '—' }}</p>
-                    <p class="entry-time-end">{{ entry.check_in?.checked_out_at ? fmtTime(entry.check_in.checked_out_at) : '' }}</p>
+                    <p class="entry-time-main">{{ entry.first_clock_in_at ? fmtTime(entry.first_clock_in_at) : '—' }}</p>
+                    <p class="entry-time-end">{{ entry.last_clock_out_at ? fmtTime(entry.last_clock_out_at) : '' }}</p>
                   </div>
                   <div class="entry-divider"></div>
                   <div class="entry-body">
-                    <p class="entry-title">{{ entry.employee.full_name }}</p>
+                    <p class="entry-title">{{ entry.employee?.name ?? "—" }}</p>
                     <p class="entry-sub">
-                      <template v-if="entry.check_in">
-                        <span :class="['badge', wlBadgeClass(entry.check_in.location_type)]">{{ wlLabel(entry.check_in) }}</span>
+                      <template v-if="entry.actual_location">
+                        <span :class="['badge', wlBadgeClass(entry.actual_location!)]">
+                          {{ wlLabel(entry.actual_location!, entry.account?.name) }}
+                        </span>
                       </template>
                       <template v-else>Not checked in</template>
                     </p>

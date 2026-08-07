@@ -211,9 +211,10 @@ class Employee extends Model
         return $this->hasMany(EmployeeVehicle::class);
     }
 
-    public function workLocationCheckIns(): HasMany
+    /** Where they worked, and whether the day happened. */
+    public function attendanceDays(): HasMany
     {
-        return $this->hasMany(WorkLocationCheckIn::class);
+        return $this->hasMany(\App\Models\Attendance\AttendanceDay::class);
     }
 
     public function onboardingInductions(): HasMany

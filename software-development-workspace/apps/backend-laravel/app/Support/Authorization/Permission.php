@@ -33,6 +33,18 @@ final class Permission
     public const EMPLOYEES_EXIT      = 'employees.exit';
 
     // ── Leave ─────────────────────────────────────────────────────────────
+    /*
+     * Attendance. Sensitive personal data, so the scopes are the point: you
+     * see your own, a manager sees their team's, HR sees everybody's.
+     */
+    public const ATTENDANCE_VIEW_OWN  = 'attendance.view_own';
+    public const ATTENDANCE_VIEW_TEAM = 'attendance.view_team';
+    public const ATTENDANCE_VIEW      = 'attendance.view';
+    public const ATTENDANCE_RECORD    = 'attendance.record';
+    // Editing somebody else's day, and setting the policy everyone is measured
+    // against. Deliberately apart from recording your own.
+    public const ATTENDANCE_MANAGE    = 'attendance.manage';
+
     public const LEAVE_VIEW       = 'leave.view';
     public const LEAVE_VIEW_OWN   = 'leave.view_own';
     public const LEAVE_VIEW_TEAM  = 'leave.view_team';
@@ -237,6 +249,10 @@ final class Permission
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,
                 self::EMPLOYEES_CREATE, self::EMPLOYEES_UPDATE, self::EMPLOYEES_DELETE,
                 self::EMPLOYEES_EXIT,
+            ],
+            'attendance'    => [
+                self::ATTENDANCE_VIEW, self::ATTENDANCE_VIEW_OWN, self::ATTENDANCE_VIEW_TEAM,
+                self::ATTENDANCE_RECORD, self::ATTENDANCE_MANAGE,
             ],
             'leave'         => [
                 self::LEAVE_VIEW, self::LEAVE_VIEW_OWN, self::LEAVE_VIEW_TEAM,

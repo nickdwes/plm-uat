@@ -92,8 +92,8 @@ function wlBadgeClass(type: WorkLocationType): string {
   return { office: "badge-blue", home: "badge-teal", customer_site: "badge-amber" }[type] ?? "badge-gray";
 }
 
-function wlDuration(c: { duration_minutes: number | null }): string {
-  const mins = c.duration_minutes ?? 0;
+function wlDuration(c: { worked_minutes: number | null }): string {
+  const mins = c.worked_minutes ?? 0;
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
@@ -102,7 +102,12 @@ function wlDuration(c: { duration_minutes: number | null }): string {
 async function loadWorkLocation(): Promise<void> {
   wlLoading.value = true; wlError.value = "";
   try {
-    wlToday.value = await api<WorkLocationToday>("GET", "/api/v1/work-location/today", { org: org() });
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await api<{ data: WorkLocationToday[] }>("GET", "/api/v1/attendance", {
+      org: org(), params: { from: today, to: today },
+    });
+    // One row per person per day now, so today is the first or nothing.
+    wlToday.value = res.data[0] ?? null;
   } catch (err) {
     wlError.value = err instanceof Error ? err.message : "Failed to load work location.";
   } finally { wlLoading.value = false; }
@@ -111,13 +116,9 @@ async function loadWorkLocation(): Promise<void> {
 async function checkIn(): Promise<void> {
   wlSaving.value = true; wlError.value = "";
   try {
-    await api("POST", "/api/v1/work-location/check-in", {
+    await api("POST", "/api/v1/attendance/clock-in", {
       org: org(),
-      body: {
-        location_type: wlForm.location_type,
-        customer_name: wlForm.location_type === "customer_site" ? wlForm.customer_name : null,
-        notes: wlForm.notes || null,
-      },
+      body: { location_type: wlForm.location_type },
     });
     wlForm.notes = "";
     await loadWorkLocation();
@@ -128,7 +129,7 @@ async function checkIn(): Promise<void> {
 async function checkOut(): Promise<void> {
   wlSaving.value = true; wlError.value = "";
   try {
-    await api("POST", "/api/v1/work-location/check-out", { org: org() });
+    await api("POST", "/api/v1/attendance/clock-out", { org: org() });
     await loadWorkLocation();
   } catch (err) { wlError.value = err instanceof Error ? err.message : "Check-out failed."; }
   finally { wlSaving.value = false; }
@@ -471,16 +472,16 @@ onMounted(async () => {
           <h3 class="ed-section-title">Work Location</h3>
           <p v-if="wlError" class="error">{{ wlError }}</p>
 
-          <div v-if="wlToday?.current" class="wl-current">
+          <div v-if="wlToday?.is_clocked_in" class="wl-current">
             <div class="wl-status-row">
-              <span :class="['badge', wlBadgeClass(wlToday.current.location_type)]">{{ wlLabel(wlToday.current.location_type) }}</span>
-              <span v-if="wlToday.current.customer_name" class="wl-customer">{{ wlToday.current.customer_name }}</span>
+              <span :class="['badge', wlBadgeClass(wlToday.actual_location!)]">{{ wlLabel(wlToday.actual_location!) }}</span>
+              <span v-if="wlToday.account" class="wl-customer">{{ wlToday.account.name }}</span>
             </div>
             <p class="wl-meta">
-              Checked in at {{ fmtTime(wlToday.current.checked_in_at) }}
-              &nbsp;·&nbsp; {{ wlDuration(wlToday.current) }} so far
+              Checked in at {{ fmtTime(wlToday.first_clock_in_at!) }}
+              &nbsp;·&nbsp; {{ wlDuration(wlToday) }} so far
             </p>
-            <p v-if="wlToday.current.notes" class="ed-prose" style="margin:6px 0 0">{{ wlToday.current.notes }}</p>
+            <p v-if="wlToday.notes" class="ed-prose" style="margin:6px 0 0">{{ wlToday.notes }}</p>
             <button class="btn btn-outline btn-sm" style="margin-top:10px" :disabled="wlSaving" @click="checkOut">
               {{ wlSaving ? "…" : "Check Out" }}
             </button>
@@ -510,13 +511,17 @@ onMounted(async () => {
             </button>
           </div>
 
-          <div v-if="wlToday?.today?.length" class="wl-history">
+          <div v-if="wlToday?.punches?.length" class="wl-history">
             <div class="ed-dr-header" style="margin-top:16px">Today's Activity</div>
-            <div v-for="c in wlToday.today" :key="c.id" class="wl-history-item">
-              <span :class="['badge', wlBadgeClass(c.location_type)]">{{ wlLabel(c.location_type) }}</span>
-              <span v-if="c.customer_name" class="wl-customer">{{ c.customer_name }}</span>
+            <div v-for="c in wlToday.punches" :key="c.id" class="wl-history-item">
+              <span v-if="c.location_type" :class="['badge', wlBadgeClass(c.location_type)]">
+                {{ wlLabel(c.location_type) }}
+              </span>
+              <!-- Typed rather than clocked. Shown, because a figure somebody
+                   remembered and one the clock recorded are different evidence. -->
+              <span v-if="c.is_manual" class="wl-customer">entered by hand</span>
               <span class="wl-history-time">
-                {{ fmtTime(c.checked_in_at) }} – {{ c.checked_out_at ? fmtTime(c.checked_out_at) : "now" }}
+                {{ fmtTime(c.in) }} – {{ c.out ? fmtTime(c.out) : "now" }}
               </span>
             </div>
           </div>

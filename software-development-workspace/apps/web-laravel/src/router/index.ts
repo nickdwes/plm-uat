@@ -85,6 +85,7 @@ import ResearchDetailView             from "../views/Pipeline/ResearchDetailView
 import ProjectsView                   from "../views/Project/ProjectsView.vue";
 import ProjectDetailView              from "../views/Project/ProjectDetailView.vue";
 import TasksView                       from "../views/Task/TasksView.vue";
+import AttendanceView                  from "../views/Attendance/AttendanceView.vue";
 import TaskDetailView                  from "../views/Task/TaskDetailView.vue";
 import OpportunityDetailView         from "../views/Pipeline/OpportunityDetailView.vue";
 
@@ -186,6 +187,10 @@ const routes: RouteRecordRaw[] = [
       { path: ":id", name: "task", component: TaskDetailView, props: true },
     ],
   },
+
+  // ── Attendance ────────────────────────────────────────────────────────────
+  // Where people work, and whether the day happened.
+  { path: "/attendance", name: "attendance", component: AttendanceView },
 
   // ── Vendor Module ─────────────────────────────────────────────────────────
   { path: "/vendors",       name: "vendors",        component: VendorsView },

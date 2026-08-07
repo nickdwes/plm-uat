@@ -73,5 +73,6 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(\App\Models\Pipeline\Research::class, \App\Policies\Pipeline\ResearchPolicy::class);
         Gate::policy(\App\Models\Project\Project::class, \App\Policies\Project\ProjectPolicy::class);
         Gate::policy(\App\Models\Task\Task::class, \App\Policies\Task\TaskPolicy::class);
+        Gate::policy(\App\Models\Attendance\AttendanceDay::class, \App\Policies\Attendance\AttendanceDayPolicy::class);
     }
 }

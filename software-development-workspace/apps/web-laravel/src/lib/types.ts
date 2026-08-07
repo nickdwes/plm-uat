@@ -166,25 +166,48 @@ export interface Employee {
 
 export type WorkLocationType = "office" | "home" | "customer_site";
 
-export interface WorkLocationCheckIn {
+/** One clock in and its matching clock out. Several make a day. */
+export interface AttendancePunch {
   id: number;
-  location_type: WorkLocationType;
-  customer_name: string | null;
+  in: string;
+  out: string | null;
+  minutes: number | null;
+  location_type: WorkLocationType | null;
+  /** Typed after the fact rather than clocked — different evidence. */
+  is_manual: boolean;
+  note: string | null;
+}
+
+/**
+ * One employee, one day.
+ *
+ * A future day is a plan and a past day is a record, which is why planned and
+ * actual sit side by side — the gap between them is the useful part.
+ */
+export interface AttendanceDay {
+  id: number;
+  work_date: string;
+  status: string | null;
+  employee: { id: number; name: string; department: string | null } | null;
+  planned_location: WorkLocationType | null;
+  actual_location: WorkLocationType | null;
+  plan_was_kept: boolean | null;
+  account: { id: number; name: string } | null;
+  location_note: string | null;
+  first_clock_in_at: string | null;
+  last_clock_out_at: string | null;
+  worked_minutes: number | null;
+  overtime_minutes: number | null;
+  is_clocked_in: boolean | null;
   notes: string | null;
-  checked_in_at: string;
-  checked_out_at: string | null;
-  duration_minutes: number | null;
+  punches: AttendancePunch[];
 }
 
-export interface WorkLocationToday {
-  current: WorkLocationCheckIn | null;
-  today: WorkLocationCheckIn[];
-}
+/** Today, for the personal card. Kept as an alias so callers read plainly. */
+export type WorkLocationToday = AttendanceDay;
 
-export interface TeamLocationEntry {
-  employee: { id: number; full_name: string; employee_number: string; photo_url: string | null };
-  check_in: WorkLocationCheckIn | null;
-}
+/** Who is where today, on the HR dashboard. */
+export type TeamLocationEntry = AttendanceDay;
 
 // ---------------------------------------------------------------------------
 // Leave
