@@ -271,6 +271,14 @@ watch(() => route.name, () => {
         Research
       </router-link>
 
+      <router-link :to="{ name: 'projects' }" :class="['nav-item', { active: isActive('project') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.5 6a1.5 1.5 0 011.5-1.5h3l1.5 2h6A1.5 1.5 0 0116 8v6.5a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 013 14.5V6z" />
+        </svg>
+        Projects
+      </router-link>
+
       <!-- ── Customers ──────────────────────────────────────────────────────── -->
       <!-- Before Travel, because a travel request names the customer it is
            for — you reach for this to file one, not after. -->

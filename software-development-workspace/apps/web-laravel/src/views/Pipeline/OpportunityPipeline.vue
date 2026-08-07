@@ -15,6 +15,7 @@ import { ref, computed, watch } from "vue";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
+import { useRouter } from "vue-router";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 
 const props = defineProps<{ opportunityId: string | number }>();
@@ -69,6 +70,7 @@ interface Pipeline {
   documents: Record<string, Doc[]>;
 }
 
+const router = useRouter();
 const pipeline = ref<Pipeline | null>(null);
 const loading  = ref(true);
 const saving   = ref(false);
@@ -691,6 +693,9 @@ watch(() => props.opportunityId, load, { immediate: true });
                 <span :class="p.priority === 'high' ? 'pl-high' : ''">{{ titleCase(p.priority) }} priority</span>
               </p>
             </div>
+            <button class="btn-ghost" @click="router.push({ name: 'project', params: { id: p.id } })">
+              View Project
+            </button>
           </div>
 
           <div class="pl-files">

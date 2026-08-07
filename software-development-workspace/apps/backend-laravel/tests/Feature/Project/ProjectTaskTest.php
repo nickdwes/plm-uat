@@ -381,6 +381,44 @@ class ProjectTaskTest extends TestCase
         $this->get($this->url("/attachments/{$id}/download"))->assertForbidden();
     }
 
+    // ── Activity ──────────────────────────────────────────────────────────
+
+    public function test_the_timeline_records_what_happened_without_anybody_typing_it(): void
+    {
+        /*
+         * A feed somebody has to remember to update is not worth having. Only
+         * the events people ask about afterwards are recorded — not every
+         * field change, which would bury them.
+         */
+        $this->editor();
+
+        $id = $this->postJson($this->url('/tasks'), ['title' => 'Prototype the screens'])
+            ->assertCreated()->json('data.id');
+
+        $this->putJson($this->url("/tasks/{$id}"), [
+            'title' => 'Prototype the screens', 'status' => 'completed',
+        ])->assertOk();
+
+        $bodies = collect($this->getJson($this->url('/activities'))->assertOk()->json('data'))
+            ->pluck('body');
+
+        $this->assertTrue($bodies->contains(fn ($b) => str_contains($b, 'Added')));
+        $this->assertTrue($bodies->contains(fn ($b) => str_contains($b, 'Completed')));
+    }
+
+    public function test_a_priority_edit_is_not_a_story(): void
+    {
+        // Recording every change would bury the handful anybody reads.
+        $this->editor();
+        $id = $this->postJson($this->url('/tasks'), ['title' => 'A task'])->json('data.id');
+
+        $before = count($this->getJson($this->url('/activities'))->json('data'));
+
+        $this->putJson($this->url("/tasks/{$id}"), ['title' => 'A task', 'priority' => 'high'])->assertOk();
+
+        $this->assertCount($before, $this->getJson($this->url('/activities'))->json('data'));
+    }
+
     // ── Tenancy ───────────────────────────────────────────────────────────
 
     public function test_a_task_of_another_project_is_not_reachable(): void

@@ -390,6 +390,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{project}/tasks/{task}/dependencies',              [ProjectTaskController::class, 'storeDependency']);
         Route::delete('/{project}/tasks/{task}/dependencies/{dependency}',[ProjectTaskController::class, 'destroyDependency']);
 
+        Route::get('/{project}/activities', [ProjectTaskController::class, 'activities']);
         Route::get('/{project}/comments',  [ProjectTaskController::class, 'comments']);
         Route::post('/{project}/comments', [ProjectTaskController::class, 'storeComment']);
 

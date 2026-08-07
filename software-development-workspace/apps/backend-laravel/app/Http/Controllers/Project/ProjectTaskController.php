@@ -9,6 +9,7 @@ use App\Models\Project\ProjectComment;
 use App\Models\Project\ProjectTask;
 use App\Models\Project\ProjectTaskMember;
 use App\Support\Account\ReferenceSequence;
+use App\Services\Project\ProjectActivityService;
 use App\Support\Storage\DocumentVault;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -25,6 +26,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class ProjectTaskController extends Controller
 {
+    public function __construct(private readonly ProjectActivityService $activities) {}
+
     private const DETAIL = ['members.employee', 'subtasks.members.employee', 'dependencies', 'attachments'];
 
     // ── Tasks ─────────────────────────────────────────────────────────────
@@ -54,6 +57,11 @@ class ProjectTaskController extends Controller
             'position'        => (int) $project->tasks()->max('position') + 1,
             'created_by'      => $request->user()->id,
         ]);
+
+        $this->activities->record(
+            $project, 'task', "Added “{$task->title}”", $task,
+            $request->user()->id, $request->user()->employeeId(),
+        );
 
         return response()->json(['data' => $this->payload($task->load(self::DETAIL))], 201);
     }
@@ -86,7 +94,13 @@ class ProjectTaskController extends Controller
             $data['completed_at'] = null;
         }
 
+        $was = $task->status;
         $task->update($data);
+
+        $this->activities->taskChanged(
+            $project, $task->fresh(), $was,
+            $request->user()->id, $request->user()->employeeId(),
+        );
 
         return response()->json(['data' => $this->payload($task->fresh(self::DETAIL))]);
     }
@@ -245,7 +259,38 @@ class ProjectTaskController extends Controller
             'created_by'      => $request->user()->id,
         ]);
 
+        $this->activities->record(
+            $project, 'comment', 'Commented on the project', null,
+            $request->user()->id, $request->user()->employeeId(),
+        );
+
         return $this->comments($project);
+    }
+
+    /**
+     * The project's timeline.
+     *
+     * Written by the application, not typed — a feed nobody has to remember to
+     * update is the only kind worth having.
+     */
+    public function activities(Project $project): JsonResponse
+    {
+        $this->authorize('view', $project);
+
+        $entries = $project->activities()->with(['employee', 'author'])->limit(200)->get();
+
+        return response()->json([
+            'data' => $entries->map(fn ($a) => [
+                'id'          => $a->id,
+                'type'        => $a->type,
+                'body'        => $a->body,
+                'occurred_at' => $a->occurred_at?->toIso8601String(),
+                'actor'       => [
+                    'id'   => $a->employee?->id,
+                    'name' => $a->employee?->full_name ?? $a->author?->name,
+                ],
+            ]),
+        ]);
     }
 
     public function comments(Project $project): JsonResponse
