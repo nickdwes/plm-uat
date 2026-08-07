@@ -40,6 +40,7 @@ use App\Http\Controllers\Pipeline\OpportunityController;
 use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Pipeline\ResearchController;
 use App\Http\Controllers\Project\ProjectController;
+use App\Http\Controllers\Project\ProjectTaskController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -371,6 +372,28 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         Route::post('/{project}/team',           [ProjectController::class, 'storeTeamMember']);
         Route::delete('/{project}/team/{member}',[ProjectController::class, 'destroyTeamMember']);
+
+        // ── Tasks ─────────────────────────────────────────────────────────
+        Route::get('/{project}/tasks',           [ProjectTaskController::class, 'index']);
+        Route::post('/{project}/tasks',          [ProjectTaskController::class, 'store']);
+        // Before /{task}: a literal segment after a route parameter is never
+        // reached.
+        Route::post('/{project}/tasks/reorder',  [ProjectTaskController::class, 'reorder']);
+        Route::get('/{project}/tasks/{task}',    [ProjectTaskController::class, 'show']);
+        Route::put('/{project}/tasks/{task}',    [ProjectTaskController::class, 'update']);
+        Route::delete('/{project}/tasks/{task}', [ProjectTaskController::class, 'destroy']);
+
+        Route::post('/{project}/tasks/{task}/members',           [ProjectTaskController::class, 'storeMember']);
+        Route::delete('/{project}/tasks/{task}/members/{member}',[ProjectTaskController::class, 'destroyMember']);
+
+        Route::post('/{project}/tasks/{task}/dependencies',              [ProjectTaskController::class, 'storeDependency']);
+        Route::delete('/{project}/tasks/{task}/dependencies/{dependency}',[ProjectTaskController::class, 'destroyDependency']);
+
+        Route::get('/{project}/comments',  [ProjectTaskController::class, 'comments']);
+        Route::post('/{project}/comments', [ProjectTaskController::class, 'storeComment']);
+
+        Route::post('/{project}/attachments', [ProjectTaskController::class, 'storeAttachment']);
+        Route::get('/{project}/attachments/{attachment}/download', [ProjectTaskController::class, 'downloadAttachment']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────

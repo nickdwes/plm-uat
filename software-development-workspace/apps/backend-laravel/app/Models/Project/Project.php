@@ -66,6 +66,58 @@ class Project extends Model
         return $this->hasMany(ProjectTeamMember::class);
     }
 
+    public function tasks(): HasMany
+    {
+        return $this->hasMany(ProjectTask::class)->orderBy('position');
+    }
+
+    /** Top-level tasks. Sub-tasks belong under their parent, not beside it. */
+    public function rootTasks(): HasMany
+    {
+        return $this->tasks()->whereNull('parent_task_id');
+    }
+
+    public function comments(): HasMany
+    {
+        return $this->hasMany(ProjectComment::class)->whereNull('parent_id')->oldest('id');
+    }
+
+    public function activities(): HasMany
+    {
+        return $this->hasMany(ProjectActivity::class)->orderByDesc('occurred_at');
+    }
+
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(ProjectAttachment::class);
+    }
+
+    /**
+     * How far along it is, as the cards show it.
+     *
+     * Counted across every task including sub-tasks, not just the top level.
+     * Counting only roots would report a project as 0% while nine of its ten
+     * sub-tasks are done, which is the opposite of what the number is for.
+     *
+     * Null when there are no tasks — a project nobody has planned is not 0%
+     * complete, it is unplanned, and a progress bar at zero says the wrong
+     * thing about it.
+     */
+    public function getProgressAttribute(): ?int
+    {
+        $tasks = $this->relationLoaded('tasks')
+            ? $this->tasks
+            : $this->tasks()->get(['id', 'status']);
+
+        if ($tasks->isEmpty()) {
+            return null;
+        }
+
+        $done = $tasks->where('status', ProjectTask::DONE)->count();
+
+        return (int) round($done / $tasks->count() * 100);
+    }
+
     /**
      * Whether it was delivered after its deadline.
      *

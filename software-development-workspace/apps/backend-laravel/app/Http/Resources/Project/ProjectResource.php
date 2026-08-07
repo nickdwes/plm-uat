@@ -36,6 +36,14 @@ class ProjectResource extends JsonResource
             'is_overdue' => $this->is_overdue,
             'was_late'   => $this->was_late,
 
+            /*
+             * How far along, as the cards show it. Null rather than 0 when
+             * nothing is planned — an unplanned project is not 0% complete,
+             * and a bar at zero says the wrong thing about it.
+             */
+            'progress'    => $this->progress,
+            'task_count'  => $this->whenCounted('tasks'),
+
             'contract_value'      => $showsMoney ? $this->contract_value : null,
             'commercials_visible' => $showsMoney,
 

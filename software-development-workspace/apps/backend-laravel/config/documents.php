@@ -26,5 +26,6 @@ return [
         'account_documents',
         'candidate_docs',
         'travel_evidence',
+        'project_documents',
     ],
 ];

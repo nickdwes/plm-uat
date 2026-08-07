@@ -209,6 +209,25 @@ return [
             ],
 
         /*
+         * Project resources — scopes, drawings, sign-off packs, whatever a
+         * task needs to be done. Encrypted like every other class.
+         */
+        'project_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'project-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/project-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Database backups. Written by infra/azure/backup-database.sh, read
          * here only so `backup:check` can tell whether last night's dump
          * actually arrived.
