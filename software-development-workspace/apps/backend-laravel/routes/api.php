@@ -33,6 +33,7 @@ use App\Http\Controllers\Training\VendorComplianceController;
 use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\Attendance\AttendanceBlockController;
 use App\Http\Controllers\Attendance\AttendanceController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
@@ -202,6 +203,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/clock-out',  [AttendanceController::class, 'clockOut']);
         // Entered after the fact, and marked as such.
         Route::post('/add-hours',  [AttendanceController::class, 'addHours']);
+
+        /*
+         * Planning the day. A block gives existing work a slot; it does not
+         * create work — the Tasks module seen through a clock.
+         */
+        Route::post('/blocks',           [AttendanceBlockController::class, 'store']);
+        Route::put('/blocks/{block}',    [AttendanceBlockController::class, 'update']);
+        Route::delete('/blocks/{block}', [AttendanceBlockController::class, 'destroy']);
 
         Route::get('/{attendanceDay}', [AttendanceController::class, 'show']);
     });

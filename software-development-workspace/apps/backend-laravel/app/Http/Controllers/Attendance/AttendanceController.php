@@ -41,7 +41,9 @@ class AttendanceController extends Controller
 
         [$from, $to] = $this->window($request);
 
-        $q = AttendanceDay::with(['employee', 'account', 'punches'])
+        // Blocks come with the list because the week and day views draw them;
+        // without eager loading that is a query per day on screen.
+        $q = AttendanceDay::with(['employee', 'account', 'punches', 'blocks.task'])
             ->between($from, $to)
             ->orderBy('work_date');
 
@@ -61,7 +63,7 @@ class AttendanceController extends Controller
         }
 
         return response()->json([
-            'data' => $q->get()->map(fn (AttendanceDay $d) => $this->row($d)),
+            'data' => $q->get()->map(fn (AttendanceDay $d) => $this->dayWithPlan($d)),
             'range' => ['from' => $from, 'to' => $to],
         ]);
     }
@@ -130,8 +132,10 @@ class AttendanceController extends Controller
         $this->authorize('view', $attendanceDay);
 
         return response()->json([
-            'data' => $this->row(
-                $attendanceDay->load(['employee', 'account', 'punches', 'audits.changedBy', 'approver']),
+            'data' => $this->dayWithPlan(
+                $attendanceDay->load([
+                    'employee', 'account', 'punches', 'blocks.task', 'audits.changedBy', 'approver',
+                ]),
                 withAudit: true,
             ),
         ]);
@@ -370,6 +374,75 @@ class AttendanceController extends Controller
             403,
             'That is not your attendance to look at.',
         );
+    }
+
+    /**
+     * A day, with what it was planned to be spent on.
+     *
+     * Public because the block controller returns the same shape after every
+     * write — one answer for the timeline to redraw from, rather than the
+     * client patching its own copy and drifting.
+     */
+    public function dayWithPlan(AttendanceDay $d, bool $withAudit = false): array
+    {
+        $payload = $this->row($d, $withAudit);
+
+        $clashing = $d->clashing_block_ids;
+
+        $payload['plan'] = $d->relationLoaded('blocks')
+            ? $d->blocks->map(fn ($b) => [
+                'id'    => $b->id,
+                'title' => $b->title,
+                'kind'  => $b->kind,
+                'starts_at' => substr((string) $b->starts_at, 0, 5),
+                'ends_at'   => substr((string) $b->ends_at, 0, 5),
+                'minutes'   => $b->minutes,
+                'note'      => $b->note,
+                'task' => $b->relationLoaded('task') && $b->task
+                    ? [
+                        'id' => $b->task->id,
+                        'reference' => $b->task->reference,
+                        'status' => $b->task->status,
+                        'priority' => $b->task->priority,
+                        'is_done' => $b->task->is_done,
+                    ]
+                    : null,
+                // Double-booked. Flagged rather than refused — a planner that
+                // will not let you write down a clash is one people stop using,
+                // but a clash nobody is shown is a plan that cannot happen.
+                'clashes' => in_array($b->id, $clashing, true),
+            ])->values()
+            : [];
+
+        $payload['planned_minutes'] = $d->planned_minutes;
+
+        /*
+         * The productivity pair the requirement asks for.
+         *
+         * Planned is the distinct tasks blocked out; completed is read from the
+         * tasks themselves, counting only what was both planned and finished
+         * that day. Neither is stored, so neither can drift from the records it
+         * describes.
+         */
+        $payload['tasks'] = [
+            'planned'   => $d->planned_task_count,
+            'completed' => $this->completedFromPlan($d),
+        ];
+
+        return $payload;
+    }
+
+    /** Tasks blocked out today that were also finished today. */
+    private function completedFromPlan(AttendanceDay $d): int
+    {
+        if (! $d->relationLoaded('blocks')) {
+            return 0;
+        }
+
+        return $d->blocks
+            ->filter(fn ($b) => $b->relationLoaded('task') && $b->task?->is_done
+                && $b->task->completed_at?->toDateString() === $d->work_date->toDateString())
+            ->pluck('task_id')->unique()->count();
     }
 
     private function row(AttendanceDay $d, bool $withAudit = false): array

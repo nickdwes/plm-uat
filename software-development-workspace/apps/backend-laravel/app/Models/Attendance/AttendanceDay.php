@@ -79,6 +79,12 @@ class AttendanceDay extends Model
         return $this->hasMany(AttendancePunch::class)->orderBy('clocked_in_at');
     }
 
+    /** What the day is planned to be spent on. */
+    public function blocks(): HasMany
+    {
+        return $this->hasMany(AttendanceBlock::class, 'attendance_day_id')->orderBy('starts_at');
+    }
+
     public function audits(): HasMany
     {
         return $this->hasMany(AttendanceAudit::class)->latest('changed_at');
@@ -104,6 +110,67 @@ class AttendanceDay extends Model
     public function getIsClockedInAttribute(): bool
     {
         return $this->punches->contains(fn (AttendancePunch $p) => $p->clocked_out_at === null);
+    }
+
+    /**
+     * How much of the day is spoken for.
+     *
+     * Worth having beside `worked_minutes`: "planned nine hours, worked seven"
+     * is the comparison the productivity requirement reaches for, and it needs
+     * both halves to exist.
+     */
+    public function getPlannedMinutesAttribute(): ?int
+    {
+        if (! $this->relationLoaded('blocks')) {
+            return null;
+        }
+
+        return $this->blocks->sum(fn (AttendanceBlock $b) => $b->minutes) ?: null;
+    }
+
+    /**
+     * Distinct tasks blocked out today.
+     *
+     * Counted from the blocks rather than kept on the row, so it cannot drift.
+     * Distinct, because a task split across a morning and an afternoon is one
+     * task planned, not two.
+     */
+    public function getPlannedTaskCountAttribute(): int
+    {
+        if (! $this->relationLoaded('blocks')) {
+            return 0;
+        }
+
+        return $this->blocks->whereNotNull('task_id')->pluck('task_id')->unique()->count();
+    }
+
+    /**
+     * Blocks covering the same clock twice.
+     *
+     * Flagged rather than refused. Double-booking is usually a mistake and
+     * occasionally exactly what happened, and a planner that will not let you
+     * write down a clash is one people stop using — but a clash nobody is shown
+     * is a plan that quietly cannot happen.
+     */
+    public function getClashingBlockIdsAttribute(): array
+    {
+        if (! $this->relationLoaded('blocks')) {
+            return [];
+        }
+
+        $blocks  = $this->blocks->values();
+        $clashes = [];
+
+        foreach ($blocks as $i => $a) {
+            foreach ($blocks->slice($i + 1) as $b) {
+                if ($a->overlaps($b)) {
+                    $clashes[$a->id] = true;
+                    $clashes[$b->id] = true;
+                }
+            }
+        }
+
+        return array_keys($clashes);
     }
 
     /**

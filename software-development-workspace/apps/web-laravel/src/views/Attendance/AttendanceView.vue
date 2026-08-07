@@ -26,6 +26,13 @@ interface Punch {
   id: number; in: string; out: string | null; minutes: number | null;
   location_type: string | null; is_manual: boolean; note: string | null;
 }
+interface Block {
+  id: number; title: string; kind: string;
+  starts_at: string; ends_at: string; minutes: number; note: string | null;
+  task: { id: number; reference: string | null; status: string; priority: string; is_done: boolean } | null;
+  /** Double-booked. Flagged, not refused — but a clash nobody sees cannot happen. */
+  clashes: boolean;
+}
 interface Day {
   id: number; work_date: string; status: string | null;
   employee: { id: number; name: string; department: string | null } | null;
@@ -38,6 +45,9 @@ interface Day {
   is_clocked_in: boolean | null;
   notes: string | null;
   punches: Punch[];
+  plan: Block[];
+  planned_minutes: number | null;
+  tasks: { planned: number; completed: number };
   audits?: { field: string; from: string | null; to: string | null; at: string | null; by: string | null }[];
 }
 interface Summary {
@@ -53,6 +63,13 @@ const loading = ref(true);
 const saving  = ref(false);
 
 const view   = ref<"calendar" | "list">("calendar");
+/**
+ * Month, week or day — the same records at three zoom levels.
+ *
+ * Month answers "what did this period look like"; week and day answer "what am
+ * I doing", which is a different question and needs the clock down the side.
+ */
+const zoom   = ref<"month" | "week" | "day">("month");
 const cursor = ref(new Date());
 const search = ref("");
 
@@ -62,15 +79,34 @@ function fail(e: unknown, fallback: string) {
   notifyFailed(fallback, e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
 }
 
-/** The month on screen, as the API wants it. */
-const range = computed(() => {
-  const y = cursor.value.getFullYear();
-  const m = cursor.value.getMonth();
+const iso = (d: Date) => {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return {
-    from: `${y}-${pad(m + 1)}-01`,
-    to: `${y}-${pad(m + 1)}-${pad(new Date(y, m + 1, 0).getDate())}`,
-  };
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+/** Monday of whichever week the cursor sits in. */
+function mondayOf(d: Date): Date {
+  const out = new Date(d);
+  out.setDate(out.getDate() - ((out.getDay() + 6) % 7));
+  return out;
+}
+
+/** What is on screen, as the API wants it. */
+const range = computed(() => {
+  const c = cursor.value;
+
+  if (zoom.value === "day") return { from: iso(c), to: iso(c) };
+
+  if (zoom.value === "week") {
+    const start = mondayOf(c);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    return { from: iso(start), to: iso(end) };
+  }
+
+  const y = c.getFullYear();
+  const m = c.getMonth();
+  return { from: iso(new Date(y, m, 1)), to: iso(new Date(y, m + 1, 0)) };
 });
 
 async function load() {
@@ -86,10 +122,18 @@ async function load() {
   finally { loading.value = false; }
 }
 
-function shiftMonth(by: number) {
+/** Step by whatever unit is on screen, so the arrows always mean "next". */
+function step(by: number) {
   const d = new Date(cursor.value);
-  d.setMonth(d.getMonth() + by);
+  if (zoom.value === "month") d.setMonth(d.getMonth() + by);
+  else if (zoom.value === "week") d.setDate(d.getDate() + 7 * by);
+  else d.setDate(d.getDate() + by);
   cursor.value = d;
+  load();
+}
+
+function setZoom(z: "month" | "week" | "day") {
+  zoom.value = z;
   load();
 }
 
@@ -165,6 +209,82 @@ async function saveHours() {
   finally { saving.value = false; }
 }
 
+// ── Planning the day ────────────────────────────────────────────────────────
+
+/**
+ * Adding a block picks work that already exists.
+ *
+ * Project narrows the task list; the task itself is what gets the slot. Nothing
+ * here creates a task — that would put a second copy of everything scheduled
+ * into a list the Tasks module cannot see.
+ */
+const showPlan = ref(false);
+const planning = ref({
+  work_date: "", task_id: null as number | null,
+  title: "", kind: "work", starts_at: "09:00", ends_at: "10:00",
+});
+const projects = ref<{ id: number; name: string }[]>([]);
+const pickable = ref<{ id: number; title: string }[]>([]);
+const projectFilter = ref<number | null>(null);
+
+async function loadProjects() {
+  try {
+    projects.value = (await api<{ data: { id: number; name: string }[] }>(
+      "GET", "/api/v1/projects", { org: org(), params: { per_page: 100 } },
+    )).data;
+  } catch { projects.value = []; }
+}
+
+async function loadPickableTasks() {
+  try {
+    pickable.value = (await api<{ data: { id: number; title: string }[] }>(
+      "GET", "/api/v1/tasks",
+      { org: org(), params: { project_id: projectFilter.value || undefined, state: "open", per_page: 100 } },
+    )).data;
+  } catch { pickable.value = []; }
+}
+
+function openPlan(date: string, at?: string) {
+  planning.value = {
+    work_date: date, task_id: null, title: "", kind: "work",
+    starts_at: at ?? "09:00",
+    ends_at: at ? `${String(Number(at.slice(0, 2)) + 1).padStart(2, "0")}:${at.slice(3)}` : "10:00",
+  };
+  projectFilter.value = null;
+  showPlan.value = true;
+  loadProjects();
+  loadPickableTasks();
+}
+
+async function savePlan() {
+  const p = planning.value;
+  if (!p.task_id && !p.title.trim()) return;
+
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/attendance/blocks", {
+      org: org(),
+      body: {
+        work_date: p.work_date, task_id: p.task_id,
+        title: p.title.trim() || null, kind: p.kind,
+        starts_at: p.starts_at, ends_at: p.ends_at,
+      },
+    });
+    showPlan.value = false;
+    notifySaved("Added to the day.");
+    await load();
+  } catch (e) { fail(e, "Could not add that to the day."); }
+  finally { saving.value = false; }
+}
+
+async function removeBlock(b: Block) {
+  try {
+    await api("DELETE", `/api/v1/attendance/blocks/${b.id}`, { org: org() });
+    notifySaved("Removed.");
+    await load();
+  } catch (e) { fail(e, "Could not remove that."); }
+}
+
 // ── One day ─────────────────────────────────────────────────────────────────
 
 const open = ref<Day | null>(null);
@@ -212,8 +332,24 @@ const time = (v: string | null) =>
 const date = (v: string) =>
   new Date(v + "T00:00:00").toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 
-const monthLabel = computed(() =>
-  cursor.value.toLocaleDateString(undefined, { month: "short", year: "numeric" }));
+/** Whatever period is on screen, named the way people say it. */
+const periodLabel = computed(() => {
+  const c = cursor.value;
+
+  if (zoom.value === "day") {
+    return c.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  if (zoom.value === "week") {
+    const start = mondayOf(c);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    const fmt = (d: Date) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    return `${fmt(start)} – ${fmt(end)}, ${end.getFullYear()}`;
+  }
+
+  return c.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+});
 
 const byDate = computed(() => {
   const map: Record<string, Day> = {};
@@ -245,7 +381,48 @@ const weeks = computed(() => {
   return out;
 });
 
-const isToday = (iso: string) => iso === new Date().toISOString().slice(0, 10);
+const isToday = (d: string) => d === new Date().toISOString().slice(0, 10);
+
+/**
+ * The timeline runs 07:00 to 19:00.
+ *
+ * Fixed rather than fitted to the blocks: a grid whose hours move as work is
+ * added makes two days impossible to compare by eye, which is the only thing a
+ * week view is for.
+ */
+const DAY_START = 7;
+const DAY_END = 19;
+const HOUR_PX = 56;
+
+const timelineHours = computed(() =>
+  Array.from({ length: DAY_END - DAY_START }, (_, i) => DAY_START + i));
+
+const minuteOf = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+
+/** Where a block sits, and how tall it is. Clamped to the visible window. */
+function blockStyle(b: Block) {
+  const top = Math.max(0, minuteOf(b.starts_at) - DAY_START * 60);
+  const height = Math.max(18, minuteOf(b.ends_at) - Math.max(minuteOf(b.starts_at), DAY_START * 60));
+  return { top: `${(top / 60) * HOUR_PX}px`, height: `${(height / 60) * HOUR_PX}px` };
+}
+
+const hourLabel = (h: number) =>
+  h === 12 ? "12 PM" : h > 12 ? `${h - 12} PM` : `${h} AM`;
+
+/** The seven dates of the week on screen, whatever the cursor sits on. */
+const weekDates = computed(() => {
+  const start = mondayOf(cursor.value);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    return iso(d);
+  });
+});
+
+const dayName = (d: string) =>
+  new Date(d + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric" });
+
+const blocksOn = (d: string) => byDate.value[d]?.plan ?? [];
 
 const listRows = computed(() => {
   const term = search.value.trim().toLowerCase();
@@ -334,16 +511,25 @@ onMounted(load);
       <div class="at-toolbar">
         <input v-model="search" class="control at-search" type="search" placeholder="Search" />
         <div class="at-month">
-          <button class="at-nav" aria-label="Previous month" @click="shiftMonth(-1)">‹</button>
-          <span class="at-month-label">{{ monthLabel }}</span>
-          <button class="at-nav" aria-label="Next month" @click="shiftMonth(1)">›</button>
+          <button class="at-nav" aria-label="Previous" @click="step(-1)">‹</button>
+          <span class="at-month-label">{{ periodLabel }}</span>
+          <button class="at-nav" aria-label="Next" @click="step(1)">›</button>
+
+          <!-- Month answers "what did this period look like"; week and day
+               answer "what am I doing", which needs the clock down the side. -->
+          <select v-if="view === 'calendar'" :value="zoom" class="control at-zoom"
+                  @change="setZoom(($event.target as HTMLSelectElement).value as 'month' | 'week' | 'day')">
+            <option value="month">Monthly View</option>
+            <option value="week">Weekly View</option>
+            <option value="day">Daily View</option>
+          </select>
         </div>
       </div>
 
       <p v-if="loading" class="at-quiet">Loading…</p>
 
       <!-- ── Calendar ───────────────────────────────────────────────────── -->
-      <table v-else-if="view === 'calendar'" class="at-cal">
+      <table v-else-if="view === 'calendar' && zoom === 'month'" class="at-cal">
         <thead>
           <tr><th v-for="d in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday']" :key="d">{{ d }}</th></tr>
         </thead>
@@ -354,6 +540,10 @@ onMounted(load);
                 @click="iso && (byDate[iso] ? openDay(byDate[iso]) : openReport(iso))">
               <template v-if="iso">
                 <span class="at-daynum">{{ Number(iso.slice(8)) }}</span>
+                <!-- What the day is planned to hold, not just what it was. -->
+                <span v-if="byDate[iso]?.tasks?.planned" class="at-chip chip-plan">
+                  {{ byDate[iso].tasks.planned }} planned
+                </span>
 
                 <span v-if="byDate[iso]?.worked_minutes"
                       :class="['at-chip', `chip-${statusTone(byDate[iso].status)}`]">
@@ -373,6 +563,42 @@ onMounted(load);
           </tr>
         </tbody>
       </table>
+
+      <!-- ── Week / day timeline ────────────────────────────────────────── -->
+      <div v-else-if="view === 'calendar'" class="at-timeline-wrap">
+        <div class="at-timeline" :style="{ '--cols': zoom === 'week' ? 7 : 1 }">
+          <!-- The clock. Fixed 07:00–19:00, because a grid whose hours move as
+               work is added makes two days impossible to compare by eye. -->
+          <div class="at-gutter">
+            <div class="at-gutter-head"></div>
+            <div v-for="h in timelineHours" :key="h" class="at-hour">{{ hourLabel(h) }}</div>
+          </div>
+
+          <div v-for="d in (zoom === 'week' ? weekDates : [iso(cursor)])" :key="d"
+               :class="['at-col', { today: isToday(d) }]">
+            <header class="at-col-head">
+              <span class="at-col-day">{{ dayName(d) }}</span>
+              <span v-if="byDate[d]?.tasks?.planned" class="at-col-count">
+                {{ byDate[d].tasks.planned }} planned
+              </span>
+              <button class="at-col-add" aria-label="Add to this day" @click="openPlan(d)">+</button>
+            </header>
+
+            <div class="at-col-body" :style="{ height: `${timelineHours.length * 56}px` }">
+              <div v-for="h in timelineHours" :key="h" class="at-gridline"></div>
+
+              <article v-for="b in blocksOn(d)" :key="b.id"
+                       :class="['at-block', `kind-${b.kind}`, { clash: b.clashes, done: b.task?.is_done }]"
+                       :style="blockStyle(b)"
+                       :title="b.clashes ? 'Double-booked with another block' : b.title">
+                <span class="at-block-title">{{ b.title }}</span>
+                <span class="at-block-time">{{ b.starts_at }} – {{ b.ends_at }}</span>
+                <button class="at-block-x" aria-label="Remove" @click.stop="removeBlock(b)">×</button>
+              </article>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- ── List ───────────────────────────────────────────────────────── -->
       <div v-else class="at-table-wrap">
@@ -435,6 +661,21 @@ onMounted(load);
           <div><dt>Worked from</dt><dd>{{ locationLabel(open.actual_location) }}</dd></div>
           <div v-if="open.account"><dt>Customer</dt><dd>{{ open.account.name }}</dd></div>
         </dl>
+
+        <section v-if="open.plan.length">
+          <h4 class="at-sheet-sub">Planned</h4>
+          <ul class="at-list">
+            <li v-for="b in open.plan" :key="b.id" class="at-punch">
+              {{ b.starts_at }} – {{ b.ends_at }}
+              <strong>{{ b.title }}</strong>
+              <span v-if="b.task?.is_done" class="at-chip chip-ok">done</span>
+              <span v-if="b.clashes" class="at-chip chip-warn">clashes</span>
+            </li>
+          </ul>
+          <p class="at-hint">
+            {{ open.tasks.planned }} task(s) planned, {{ open.tasks.completed }} finished today.
+          </p>
+        </section>
 
         <section v-if="open.punches.length">
           <h4 class="at-sheet-sub">Clock records</h4>
@@ -501,6 +742,59 @@ onMounted(load);
 
         <button class="btn-primary btn-block" :disabled="saving" @click="saveReport">
           {{ saving ? "Saving…" : "Save" }}
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Add to the day ───────────────────────────────────────────────── -->
+    <div v-if="showPlan" class="at-modal-backdrop" @click.self="showPlan = false">
+      <div class="at-modal" role="dialog" aria-modal="true" aria-label="Add to the day">
+        <div class="at-sheet-head">
+          <h3 class="at-sheet-title">Add Task</h3>
+          <button class="at-close" aria-label="Close" @click="showPlan = false">×</button>
+        </div>
+
+        <p class="at-hint">
+          Pick work that already exists. Planning a day does not create tasks —
+          otherwise the task list fills with a second copy of everything anybody
+          ever scheduled.
+        </p>
+
+        <label class="at-field"><span>Project Name</span>
+          <select v-model="projectFilter" class="control" @change="loadPickableTasks">
+            <option :value="null">Any project</option>
+            <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+          </select></label>
+
+        <label class="at-field"><span>Task Name</span>
+          <select v-model="planning.task_id" class="control">
+            <option :value="null">— none, just a block —</option>
+            <option v-for="t in pickable" :key="t.id" :value="t.id">{{ t.title }}</option>
+          </select></label>
+
+        <!-- Break and Lunch are real parts of a day, and forcing a task behind
+             each one would fill the task list with rubbish. -->
+        <label v-if="!planning.task_id" class="at-field"><span>What is it</span>
+          <input v-model="planning.title" class="control" placeholder="Lunch, Break, Team sync…" /></label>
+
+        <label class="at-field"><span>Kind</span>
+          <select v-model="planning.kind" class="control">
+            <option value="work">Work</option><option value="meeting">Meeting</option>
+            <option value="break">Break</option><option value="admin">Admin</option>
+            <option value="enablement">Enablement</option>
+          </select></label>
+
+        <div class="at-row">
+          <label class="at-field"><span>From</span>
+            <input v-model="planning.starts_at" class="control" type="time" /></label>
+          <label class="at-field"><span>To</span>
+            <input v-model="planning.ends_at" class="control" type="time" /></label>
+        </div>
+
+        <button class="btn-primary btn-block"
+                :disabled="saving || (!planning.task_id && !planning.title.trim())"
+                @click="savePlan">
+          Add Task
         </button>
       </div>
     </div>
@@ -596,6 +890,42 @@ onMounted(load);
 .chip-neutral { background: var(--color-surface-sunken); color: var(--color-text-muted); }
 /* A plan reads differently from a record, so one is never taken for the other. */
 .chip-plan { background: transparent; color: var(--color-text-muted); border: 1px dashed var(--color-border-strong); }
+
+.at-zoom { max-width: 10rem; }
+
+.at-timeline-wrap { overflow-x: auto; padding: 0 var(--space-5) var(--space-5); }
+.at-timeline { @apply grid; grid-template-columns: 4rem repeat(var(--cols), minmax(9rem, 1fr)); }
+.at-gutter { @apply flex flex-col; }
+.at-gutter-head { height: 2.5rem; }
+.at-hour { height: 56px; font-size: var(--text-xs-size); color: var(--color-text-muted); text-align: right; padding-right: var(--space-2); transform: translateY(-0.5em); }
+
+.at-col { border-left: 1px solid var(--color-border); }
+.at-col.today { background: color-mix(in oklab, var(--color-brand-subtle) 40%, transparent); }
+.at-col-head { @apply flex items-center; gap: var(--space-2); height: 2.5rem; padding: 0 var(--space-2); border-bottom: 1px solid var(--color-border); }
+.at-col-day { font-size: var(--text-xs-size); font-weight: 600; color: var(--color-text); }
+.at-col-count { font-size: 0.6rem; color: var(--color-text-muted); }
+.at-col-add { @apply ml-auto cursor-pointer border-none bg-transparent p-0; font-size: 1rem; line-height: 1; color: var(--color-text-muted); }
+.at-col-body { @apply relative; }
+.at-gridline { height: 56px; border-bottom: 1px solid var(--color-border); }
+
+.at-block {
+  @apply absolute flex flex-col overflow-hidden; left: 2px; right: 2px;
+  padding: 2px var(--space-2); border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-brand-base);
+  background: var(--color-brand-subtle); color: var(--color-brand-on-surface);
+  font-size: var(--text-xs-size);
+}
+.at-block-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.at-block-time { font-size: 0.6rem; opacity: 0.8; }
+.at-block-x { @apply absolute cursor-pointer border-none bg-transparent p-0; top: 0; right: 3px; font-size: 0.8rem; color: inherit; opacity: 0.6; }
+
+/* Breaks read as gaps in the work, not as more of it. */
+.at-block.kind-break { background: var(--color-surface-sunken); color: var(--color-text-muted); border-left-color: var(--color-border-strong); }
+.at-block.kind-meeting { background: color-mix(in oklab, var(--color-brand-subtle) 60%, var(--color-surface)); }
+.at-block.kind-enablement { background: var(--color-success-subtle); color: var(--color-success-text); border-left-color: var(--color-success-text); }
+.at-block.done { opacity: 0.65; text-decoration: line-through; }
+/* Double-booked. A clash nobody is shown is a plan that cannot happen. */
+.at-block.clash { border-left-color: var(--color-danger-text); box-shadow: inset 0 0 0 1px var(--color-danger-text); }
 
 .at-table-wrap { overflow-x: auto; }
 .at-table { @apply w-full; border-collapse: collapse; font-size: var(--text-sm-size); }
