@@ -3,7 +3,11 @@
 namespace App\Http\Controllers\Task;
 
 use App\Http\Controllers\Controller;
+use App\Models\Project\ProjectAttachment;
+use App\Models\Project\ProjectComment;
+use App\Models\Task\CommentReaction;
 use App\Models\Task\Task;
+use App\Models\Task\TaskIssue;
 use App\Models\Task\TaskRequest;
 use App\Models\Task\TaskRequiredDocument;
 use App\Support\Account\ReferenceSequence;
@@ -11,6 +15,7 @@ use App\Support\Authorization\Permission;
 use App\Support\Storage\DocumentVault;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -30,9 +35,40 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class TaskBoardController extends Controller
 {
     private const DETAIL = [
-        'assignee', 'members.employee', 'subtasks.members.employee', 'dependencies',
-        'requests.toEmployee', 'requests.requester', 'requiredDocuments', 'project',
+        'assignee', 'members.employee', 'subtasks.members.employee', 'subtasks.assignee',
+        'dependencies', 'externalDependencies', 'requests.toEmployee', 'requests.requester',
+        'requiredDocuments', 'project', 'attachments',
+        'comments.employee', 'comments.replies.employee', 'comments.reactions',
+        'comments.replies.reactions', 'issues.escalations.employee', 'issues.raiser',
     ];
+
+    /**
+     * The counts above the board.
+     *
+     * Derived every time rather than kept on a row. A stored count is a count
+     * that drifts the first time somebody changes a status by any route that
+     * forgot to decrement it, and the numbers here are small enough that the
+     * question does not arise.
+     */
+    public function summary(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Task::class);
+
+        $scope = fn () => $this->visibleTo($request, Task::query()->roots());
+
+        $today = now()->toDateString();
+
+        return response()->json([
+            'total'       => $scope()->count(),
+            'todo'        => $scope()->where('status', 'todo')->count(),
+            'in_progress' => $scope()->where('status', 'in_progress')->count(),
+            'awaiting'    => $scope()->where('status', 'awaiting_approval')->count(),
+            'completed'   => $scope()->where('status', Task::DONE)->count(),
+            // Past its deadline and still open — which is not any one status,
+            // and is the number people actually come to the page for.
+            'overdue'     => $scope()->open()->whereDate('deadline', '<', $today)->count(),
+        ]);
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -40,16 +76,7 @@ class TaskBoardController extends Controller
 
         $q = Task::query()->with(['assignee', 'project', 'members.employee'])->roots();
 
-        /*
-         * Someone holding only `view_own` sees what they are doing, helping
-         * with, or have been asked about — not the whole company's workload.
-         */
-        if (! $request->user()->hasPermission(Permission::TASKS_VIEW)) {
-            $me = $request->user()->employeeId();
-            $q->where(fn ($w) => $w->where('assigned_to', $me)
-                ->orWhereHas('members', fn ($m) => $m->where('employee_id', $me))
-                ->orWhereHas('requests', fn ($r) => $r->where('to_employee_id', $me)));
-        }
+        $this->visibleTo($request, $q);
 
         foreach (['category', 'status', 'priority'] as $key) {
             if ($value = $request->string($key)->toString()) {
@@ -80,8 +107,33 @@ class TaskBoardController extends Controller
 
         return response()->json([
             'data' => collect($tasks->items())->map(fn (Task $t) => $this->row($t)),
-            'meta' => ['total' => $tasks->total(), 'per_page' => $tasks->perPage()],
+            'meta' => [
+                'total'        => $tasks->total(),
+                'per_page'     => $tasks->perPage(),
+                'current_page' => $tasks->currentPage(),
+                'last_page'    => $tasks->lastPage(),
+            ],
         ]);
+    }
+
+    /**
+     * Someone holding only `view_own` sees what they are doing, helping with,
+     * or have been asked about — not the whole company's workload.
+     *
+     * Shared by the list and the counts above it, so the two can never disagree
+     * about what somebody is allowed to see.
+     */
+    private function visibleTo(Request $request, $q)
+    {
+        if ($request->user()->hasPermission(Permission::TASKS_VIEW)) {
+            return $q;
+        }
+
+        $me = $request->user()->employeeId();
+
+        return $q->where(fn ($w) => $w->where('assigned_to', $me)
+            ->orWhereHas('members', fn ($m) => $m->where('employee_id', $me))
+            ->orWhereHas('requests', fn ($r) => $r->where('to_employee_id', $me)));
     }
 
     /**
@@ -150,6 +202,22 @@ class TaskBoardController extends Controller
         $task->update($data);
 
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * Soft-deleted, so a task removed by mistake is recoverable.
+     *
+     * Its sub-tasks go with it — a sub-task without its parent is an orphan
+     * nothing can navigate to.
+     */
+    public function destroy(Task $task): JsonResponse
+    {
+        $this->authorize('delete', $task);
+
+        $task->subtasks()->each(fn (Task $child) => $child->delete());
+        $task->delete();
+
+        return response()->json(['deleted' => true]);
     }
 
     // ── Requests ──────────────────────────────────────────────────────────
@@ -309,7 +377,296 @@ class TaskBoardController extends Controller
         );
     }
 
+
+    // ── Sub-tasks and dependencies ────────────────────────────────────────
+
+    /**
+     * A sub-task is a task with a parent.
+     *
+     * The legacy kept a separate sub-task table where a sub-phase carried a
+     * name and little else. One table with a parent gives a sub-task an owner,
+     * a deadline, a status and its own sub-tasks.
+     */
+    public function storeSubtask(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'title'       => ['required', 'string', 'max:255'],
+            'deadline'    => ['nullable', 'date'],
+            'priority'    => ['sometimes', Rule::in(Task::PRIORITIES)],
+            'assigned_to' => ['nullable', 'integer',
+                Rule::exists('employees', 'id')->where('primary_organization_id', $task->organization_id)],
+        ]);
+
+        Task::create($data + [
+            'organization_id' => $task->organization_id,
+            'parent_task_id'  => $task->id,
+            'reference'       => ReferenceSequence::next('TK', 'tasks', $task->organization_id),
+            // Inherited, not asked for again: a sub-task of a support task is
+            // support work, and of the same project.
+            'category'   => $task->category,
+            'project_id' => $task->project_id,
+            'created_by' => $request->user()->id,
+        ]);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * Something this task is waiting on.
+     *
+     * Either another task or a plain note — 172 of the legacy's 203 were the
+     * latter, things like "awaiting the client's firewall change" that are not
+     * anybody's task here. Refusing to record those would just mean the
+     * blocker goes unwritten.
+     */
+    public function storeDependencyLink(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'depends_on_task_id' => ['nullable', 'integer', 'different:task',
+                Rule::exists('tasks', 'id')->where('organization_id', $task->organization_id)],
+            'note' => ['required_without:depends_on_task_id', 'nullable', 'string', 'max:255'],
+        ]);
+
+        if (($data['depends_on_task_id'] ?? null) === $task->id) {
+            throw ValidationException::withMessages([
+                'depends_on_task_id' => 'A task cannot wait on itself.',
+            ]);
+        }
+
+        if ($id = $data['depends_on_task_id'] ?? null) {
+            $task->dependencies()->syncWithoutDetaching([
+                $id => [
+                    'organization_id' => $task->organization_id,
+                    'kind' => 'task', 'note' => $data['note'] ?? null,
+                ],
+            ]);
+        } else {
+            // A note-only blocker has no second task to point at. Left null
+            // rather than pointed back at this task, which would have left it
+            // permanently blocked on itself.
+            DB::table('task_dependencies')->insert([
+                'organization_id' => $task->organization_id,
+                'task_id' => $task->id, 'depends_on_task_id' => null,
+                'kind' => 'external', 'note' => $data['note'],
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    // ── Comments ──────────────────────────────────────────────────────────
+
+    /**
+     * A comment, or a reply to one.
+     *
+     * The legacy took 64,578 of these against 9,055 tasks — seven per task.
+     * Whatever else the module was, it was where people talked, so this is not
+     * a nice-to-have tab.
+     */
+    public function storeComment(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('view', $task);
+
+        $data = $request->validate([
+            'body'      => ['required', 'string', 'max:20000'],
+            'parent_id' => ['nullable', 'integer',
+                Rule::exists('project_comments', 'id')->where('task_id', $task->id)],
+        ]);
+
+        ProjectComment::create($data + [
+            'organization_id' => $task->organization_id,
+            'project_id'      => $task->project_id,
+            'task_id'         => $task->id,
+            'employee_id'     => $request->user()->employeeId(),
+            'created_by'      => $request->user()->id,
+        ]);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /** Pin a comment to the top, or unpin it. */
+    public function pinComment(Request $request, Task $task, ProjectComment $comment): JsonResponse
+    {
+        $this->authorize('update', $task);
+        abort_unless($comment->task_id === $task->id, 404);
+
+        $comment->update(['is_pinned' => $request->boolean('is_pinned', ! $comment->is_pinned)]);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * React, or take the reaction back.
+     *
+     * The same call both ways, because a reaction is a toggle to the person
+     * clicking it and a second endpoint to remove one would only ever be
+     * called by the same button.
+     */
+    public function reactToComment(Request $request, Task $task, ProjectComment $comment): JsonResponse
+    {
+        $this->authorize('view', $task);
+        abort_unless($comment->task_id === $task->id, 404);
+
+        $data = $request->validate(['emoji' => ['required', 'string', 'max:16']]);
+
+        $existing = CommentReaction::where('project_comment_id', $comment->id)
+            ->where('employee_id', $request->user()->employeeId())
+            ->where('emoji', $data['emoji'])->first();
+
+        if ($existing) {
+            $existing->delete();
+        } else {
+            CommentReaction::create([
+                'organization_id'    => $task->organization_id,
+                'project_comment_id' => $comment->id,
+                'employee_id'        => $request->user()->employeeId(),
+                'emoji'              => $data['emoji'],
+            ]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    // ── Attachments ───────────────────────────────────────────────────────
+
+    /** A file on the task. Encrypted before it reaches storage, as always. */
+    public function storeAttachment(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'file'  => ['required', 'file', 'max:20480',
+                'mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,png,jpg,jpeg,zip'],
+            'label' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $file = $request->file('file');
+
+        $task->attachments()->create([
+            'organization_id' => $task->organization_id,
+            'project_id'      => $task->project_id,
+            'document_type'   => 'internal',
+            'label'           => ($data['label'] ?? null) ?: $file->getClientOriginalName(),
+            'original_name'   => $file->getClientOriginalName(),
+            'storage_path'    => DocumentVault::store($file, 'project_documents', "tasks/{$task->id}"),
+            'mime_type'       => $file->getClientMimeType(),
+            'size_bytes'      => $file->getSize(),
+            'uploaded_by'     => $request->user()->id,
+        ]);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    public function downloadAttachment(Task $task, ProjectAttachment $attachment): StreamedResponse
+    {
+        $this->authorize('view', $task);
+        abort_unless($attachment->task_id === $task->id, 404);
+
+        return DocumentVault::download(
+            'project_documents', $attachment->storage_path,
+            $attachment->original_name, $attachment->mime_type,
+        );
+    }
+
+    // ── Issues ────────────────────────────────────────────────────────────
+
+    /**
+     * Raise an issue, and put it in front of somebody in the same breath.
+     *
+     * The escalation is part of the form rather than a second action because
+     * the legacy escalated 212 of its 242 issues — 88%. Making it a separate
+     * step would add a click to the common case and leave the other 12%
+     * looking like the norm.
+     */
+    public function storeIssue(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'name'     => ['required', 'string', 'max:255'],
+            'details'  => ['nullable', 'string', 'max:20000'],
+            'priority' => ['sometimes', Rule::in(TaskIssue::PRIORITIES)],
+            'escalate_to' => ['nullable', 'integer',
+                Rule::exists('employees', 'id')->where('primary_organization_id', $task->organization_id)],
+        ]);
+
+        $issue = $task->issues()->create([
+            'organization_id' => $task->organization_id,
+            'name'      => $data['name'],
+            'details'   => $data['details'] ?? null,
+            'priority'  => $data['priority'] ?? 'high',
+            'raised_by' => $request->user()->employeeId(),
+        ]);
+
+        if ($to = $data['escalate_to'] ?? null) {
+            $issue->escalations()->create([
+                'organization_id' => $task->organization_id,
+                'employee_id'     => $to,
+                'raised_by'       => $request->user()->employeeId(),
+            ]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * Resolve an issue, or reopen it.
+     *
+     * Reopening clears who resolved it and when, so a resolution never outlives
+     * the state it described — the same rule completion follows on the task.
+     */
+    public function updateIssue(Request $request, Task $task, TaskIssue $issue): JsonResponse
+    {
+        $this->authorize('update', $task);
+        abort_unless($issue->task_id === $task->id, 404);
+
+        $data = $request->validate([
+            'status'   => ['sometimes', Rule::in(TaskIssue::STATUSES)],
+            'name'     => ['sometimes', 'string', 'max:255'],
+            'details'  => ['nullable', 'string', 'max:20000'],
+            'priority' => ['sometimes', Rule::in(TaskIssue::PRIORITIES)],
+        ]);
+
+        if (($data['status'] ?? null) === 'resolved') {
+            $data['resolved_at'] = $issue->resolved_at ?? now();
+            $data['resolved_by'] = $issue->resolved_by ?? $request->user()->employeeId();
+        } elseif (($data['status'] ?? null) === 'open') {
+            $data['resolved_at'] = null;
+            $data['resolved_by'] = null;
+        }
+
+        $issue->update($data);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /** Escalate an issue further, to somebody else. */
+    public function escalateIssue(Request $request, Task $task, TaskIssue $issue): JsonResponse
+    {
+        $this->authorize('update', $task);
+        abort_unless($issue->task_id === $task->id, 404);
+
+        $data = $request->validate([
+            'employee_id' => ['required', 'integer',
+                Rule::exists('employees', 'id')->where('primary_organization_id', $task->organization_id)],
+            'note' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $issue->escalations()->create($data + [
+            'organization_id' => $task->organization_id,
+            'raised_by'       => $request->user()->employeeId(),
+        ]);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
     // ── Shapes ────────────────────────────────────────────────────────────
+
 
     private function rules(Request $request, int $orgId): array
     {
@@ -374,6 +731,17 @@ class TaskBoardController extends Controller
 
             'assignee' => $t->assignee ? ['id' => $t->assignee->id, 'name' => $t->assignee->full_name] : null,
 
+            /*
+             * The avatar stack in the designs. The owner leads it, then anyone
+             * else on the task — one accountable person, several hands.
+             */
+            'assignees' => $t->relationLoaded('members')
+                ? collect([$t->assignee ? ['id' => $t->assignee->id, 'name' => $t->assignee->full_name] : null])
+                    ->concat($t->members->where('capacity', 'assignee')
+                        ->map(fn ($m) => ['id' => $m->employee?->id, 'name' => $m->employee?->full_name]))
+                    ->filter()->unique('id')->values()
+                : [],
+
             'project' => $t->relationLoaded('project') && $t->project
                 ? ['id' => $t->project->id, 'name' => $t->project->name] : null,
 
@@ -399,6 +767,99 @@ class TaskBoardController extends Controller
 
             'subtasks' => $t->relationLoaded('subtasks')
                 ? $t->subtasks->map(fn ($s) => $this->row($s))->values()
+                : [],
+
+            'dependencies' => $t->relationLoaded('dependencies')
+                ? $t->dependencies->map(fn ($d) => [
+                    'id' => $d->id, 'reference' => $d->reference, 'title' => $d->title,
+                    'status' => $d->status, 'deadline' => $d->deadline?->toDateString(),
+                    // A note-only blocker points back at the task itself; what
+                    // matters is the note, not the phantom link.
+                    'kind' => $d->pivot->kind ?? 'task',
+                    'note' => $d->pivot->note ?? null,
+                    'assignee' => $d->assigned_to ? ['id' => $d->assigned_to] : null,
+                ])->values()
+                : [],
+
+            // Blockers with nothing here to point at. Shown beside the task
+            // links because to the person reading they are the same list.
+            'external_dependencies' => $t->relationLoaded('externalDependencies')
+                ? $t->externalDependencies->map(fn ($d) => ['id' => $d->id, 'note' => $d->note])->values()
+                : [],
+
+            'attachments' => $t->relationLoaded('attachments')
+                ? $t->attachments->map(fn ($a) => [
+                    'id' => $a->id, 'label' => $a->label,
+                    'original_name' => $a->original_name,
+                    'size_bytes' => $a->size_bytes, 'mime_type' => $a->mime_type,
+                ])->values()
+                : [],
+
+            'comments' => $t->relationLoaded('comments')
+                // Pinned first, then oldest to newest, so a conversation still
+                // reads in order underneath whatever was pinned above it.
+                ? $t->comments->sortByDesc('is_pinned')->map(fn ($c) => $this->commentPayload($c))->values()
+                : [],
+
+            'issues' => $t->relationLoaded('issues')
+                ? $t->issues->map(fn ($i) => $this->issuePayload($i))->values()
+                : [],
+
+            /*
+             * Unresolved issues, counted separately from the task's status.
+             * A task can be in progress and still be stuck, and the legacy left
+             * 135 of its 242 issues open — that number is the whole point.
+             */
+            'open_issue_count' => $t->relationLoaded('issues')
+                ? $t->issues->where('status', 'open')->count()
+                : 0,
+        ];
+    }
+
+    private function commentPayload(ProjectComment $c): array
+    {
+        return [
+            'id'        => $c->id,
+            'body'      => $c->body,
+            'is_pinned' => (bool) $c->is_pinned,
+            'created_at' => $c->created_at?->toIso8601String(),
+            'author' => $c->relationLoaded('employee') && $c->employee
+                ? ['id' => $c->employee->id, 'name' => $c->employee->full_name] : null,
+
+            // Tallied here rather than stored, so a count cannot drift from the
+            // rows it is meant to describe.
+            'reactions' => $c->relationLoaded('reactions')
+                ? $c->reactions->groupBy('emoji')->map->count()
+                : (object) [],
+
+            'replies' => $c->relationLoaded('replies')
+                ? $c->replies->map(fn ($r) => $this->commentPayload($r))->values()
+                : [],
+        ];
+    }
+
+    private function issuePayload(TaskIssue $i): array
+    {
+        return [
+            'id'       => $i->id,
+            'name'     => $i->name,
+            'details'  => $i->details,
+            'priority' => $i->priority,
+            'status'   => $i->status,
+            'is_open'  => $i->is_open,
+            'resolved_at' => $i->resolved_at?->toIso8601String(),
+            'raised_by' => $i->relationLoaded('raiser') && $i->raiser
+                ? ['id' => $i->raiser->id, 'name' => $i->raiser->full_name] : null,
+
+            // Who it has been put in front of, in order. Kept as a list because
+            // an issue that climbs past one person has two of these.
+            'escalations' => $i->relationLoaded('escalations')
+                ? $i->escalations->map(fn ($e) => [
+                    'id' => $e->id, 'note' => $e->note,
+                    'at' => $e->created_at?->toIso8601String(),
+                    'to' => $e->relationLoaded('employee') && $e->employee
+                        ? ['id' => $e->employee->id, 'name' => $e->employee->full_name] : null,
+                ])->values()
                 : [],
         ];
     }

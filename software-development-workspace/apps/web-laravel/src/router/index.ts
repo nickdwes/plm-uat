@@ -178,8 +178,14 @@ const routes: RouteRecordRaw[] = [
   // ── Tasks ─────────────────────────────────────────────────────────────────
   // Not under /projects: three quarters of the legacy's 9,055 tasks had no
   // project at all, so this is its own module rather than a project sub-screen.
-  { path: "/tasks",             name: "tasks",           component: TasksView },
-  { path: "/tasks/:id",         name: "task",            component: TaskDetailView, props: true },
+  // The detail is a child, so it renders as a panel over the list rather than
+  // a page away from it — you answer one task and carry on down the column.
+  {
+    path: "/tasks", name: "tasks", component: TasksView,
+    children: [
+      { path: ":id", name: "task", component: TaskDetailView, props: true },
+    ],
+  },
 
   // ── Vendor Module ─────────────────────────────────────────────────────────
   { path: "/vendors",       name: "vendors",        component: VendorsView },

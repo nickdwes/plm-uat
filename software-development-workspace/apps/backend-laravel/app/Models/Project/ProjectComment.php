@@ -4,6 +4,7 @@ namespace App\Models\Project;
 
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Employee;
+use App\Models\Task\CommentReaction;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -24,8 +25,10 @@ class ProjectComment extends Model
 
     protected $fillable = [
         'organization_id', 'project_id', 'task_id', 'parent_id',
-        'body', 'employee_id', 'created_by',
+        'body', 'is_pinned', 'employee_id', 'created_by',
     ];
+
+    protected $casts = ['is_pinned' => 'boolean'];
 
     public function replies(): HasMany
     {
@@ -35,5 +38,11 @@ class ProjectComment extends Model
     public function employee(): BelongsTo
     {
         return $this->belongsTo(Employee::class);
+    }
+
+    /** One row per person per emoji, so a reaction can be taken back. */
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(CommentReaction::class, 'project_comment_id');
     }
 }

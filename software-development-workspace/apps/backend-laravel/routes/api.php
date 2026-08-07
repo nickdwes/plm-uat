@@ -375,8 +375,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // were never answered because nothing showed them.
         Route::get('/inbox',  [TaskBoardController::class, 'inbox']);
 
+        // The counts above the board. Derived, never stored.
+        Route::get('/summary', [TaskBoardController::class, 'summary']);
+
         Route::get('/{task}', [TaskBoardController::class, 'show']);
-        Route::put('/{task}', [TaskBoardController::class, 'update']);
+        Route::put('/{task}',    [TaskBoardController::class, 'update']);
+        Route::delete('/{task}', [TaskBoardController::class, 'destroy']);
 
         // Asking somebody, rather than assigning them.
         Route::post('/{task}/requests',                    [TaskBoardController::class, 'storeRequest']);
@@ -386,6 +390,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{task}/required-documents',             [TaskBoardController::class, 'storeRequiredDocument']);
         Route::post('/{task}/required-documents/{document}/fulfil', [TaskBoardController::class, 'fulfilRequiredDocument']);
         Route::get('/{task}/required-documents/{document}/download', [TaskBoardController::class, 'downloadRequiredDocument']);
+
+        // Sub-tasks and what the task is waiting on.
+        Route::post('/{task}/subtasks',     [TaskBoardController::class, 'storeSubtask']);
+        Route::post('/{task}/dependencies', [TaskBoardController::class, 'storeDependencyLink']);
+
+        // Where people talk. The legacy took 64,578 of these.
+        Route::post('/{task}/comments',                [TaskBoardController::class, 'storeComment']);
+        Route::post('/{task}/comments/{comment}/pin',  [TaskBoardController::class, 'pinComment']);
+        Route::post('/{task}/comments/{comment}/react',[TaskBoardController::class, 'reactToComment']);
+
+        Route::post('/{task}/attachments',                       [TaskBoardController::class, 'storeAttachment']);
+        Route::get('/{task}/attachments/{attachment}/download',  [TaskBoardController::class, 'downloadAttachment']);
+
+        // What is in the way, and who it has been put in front of.
+        Route::post('/{task}/issues',                   [TaskBoardController::class, 'storeIssue']);
+        Route::put('/{task}/issues/{issue}',            [TaskBoardController::class, 'updateIssue']);
+        Route::post('/{task}/issues/{issue}/escalate',  [TaskBoardController::class, 'escalateIssue']);
     });
 
     /*

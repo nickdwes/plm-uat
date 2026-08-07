@@ -89,10 +89,22 @@ class Task extends Model
         return $this->hasMany(TaskRequest::class);
     }
 
-    /** Documents this task cannot close without. */
+    /**
+     * Documents this task cannot close without — the design's Resources tab.
+     *
+     * Not the same thing as its attachments, and the legacy kept them apart
+     * too: 825 files on tasks, 386 named requirements. A requirement exists
+     * before its file does, which is the whole reason it is a separate list.
+     */
     public function requiredDocuments(): HasMany
     {
         return $this->hasMany(TaskRequiredDocument::class);
+    }
+
+    /** What is in the way. Not the same question as the task's own status. */
+    public function issues(): HasMany
+    {
+        return $this->hasMany(TaskIssue::class)->latest('id');
     }
 
     public function parent(): BelongsTo
@@ -115,6 +127,20 @@ class Task extends Model
         return $this->belongsToMany(
             self::class, 'task_dependencies', 'task_id', 'depends_on_task_id',
         )->withTimestamps();
+    }
+
+    /**
+     * Blockers that are not tasks here — "awaiting the client's firewall
+     * change window" and the like. 172 of the legacy's 203 were this.
+     *
+     * Listed but not counted in `is_blocked`: nothing in the system can mark
+     * one done, so treating it as a gate would leave tasks blocked forever on
+     * a line of text.
+     */
+    public function externalDependencies(): HasMany
+    {
+        return $this->hasMany(TaskDependencyNote::class, 'task_id')
+            ->whereNull('depends_on_task_id');
     }
 
     /** What is waiting on this one — the other direction of the same edge. */
