@@ -2,6 +2,7 @@
 
 namespace App\Services\Training;
 
+use App\Services\Task\TaskGenerator;
 use App\Models\Employee;
 use App\Models\Training\TrainingAssignment;
 use App\Models\Training\TrainingItem;
@@ -15,8 +16,11 @@ class TrainingAssignmentService
     protected TrainingRecordService $recordService;
     protected NotificationService $notificationService;
 
-    public function __construct(TrainingRecordService $recordService, NotificationService $notificationService)
-    {
+    public function __construct(
+        TrainingRecordService $recordService,
+        NotificationService $notificationService,
+        private TaskGenerator $tasks,
+    ) {
         $this->recordService = $recordService;
         $this->notificationService = $notificationService;
     }
@@ -142,6 +146,28 @@ class TrainingAssignmentService
             $assignment->training_item_id,
             $assignment->assignment_type,
             $assignment->due_date ? Carbon::parse($assignment->due_date) : null
+        );
+
+        /*
+         * Approved training becomes a task on the learner's list.
+         *
+         * An enrolment nobody has to do anything about is how a due date passes
+         * unnoticed — the legacy raised 50 Training and 41 certificate tasks
+         * for exactly this reason. Keyed to the assignment, so approving twice
+         * or replaying the call raises one task, not two.
+         */
+        $this->tasks->once(
+            (int) $assignment->organization_id,
+            'training_assignment',
+            (string) $assignment->id,
+            'training',
+            [
+                'title'       => 'Complete training: ' . ($assignment->trainingItem->title ?? 'assigned course'),
+                'category'    => 'training',
+                'assigned_to' => $assignment->employee_id,
+                'deadline'    => $assignment->due_date?->toDateString(),
+                'description' => $notes,
+            ],
         );
 
         return [

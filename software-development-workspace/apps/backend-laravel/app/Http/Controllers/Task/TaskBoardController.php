@@ -99,7 +99,7 @@ class TaskBoardController extends Controller
 
         $this->visibleTo($request, $q);
 
-        foreach (['category', 'status', 'priority', 'owner_party'] as $key) {
+        foreach (['category', 'status', 'priority', 'owner_party', 'source'] as $key) {
             if ($value = $request->string($key)->toString()) {
                 $q->where($key, $value);
             }
@@ -902,6 +902,10 @@ class TaskBoardController extends Controller
             'title'     => $t->title,
             'description' => $t->description,
             'category'  => $t->category,
+            // So a generated task reads as one. Deleting it by hand only means
+            // the schedule raises it again.
+            'source'       => $t->source,
+            'is_generated' => $t->is_generated,
             'status'    => $t->status,
             'priority'  => $t->priority,
             'deadline'  => $t->deadline?->toDateString(),

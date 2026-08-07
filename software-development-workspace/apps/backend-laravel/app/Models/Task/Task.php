@@ -37,6 +37,10 @@ class Task extends Model
         // belong to nothing but the person doing them.
         'category', 'project_id', 'opportunity_id', 'lead_id', 'research_id', 'account_id',
 
+        // Where it came from, and what produced it. The pair is unique per
+        // organisation, which is what stops a generator raising duplicates.
+        'source', 'generated_from_type', 'generated_from_id',
+
         'effort_estimate_days', 'started_on', 'assigned_to',
 
         // Who owes the work — us, the customer, or a vendor.
@@ -63,7 +67,10 @@ class Task extends Model
      * as one loaded back from the database rather than showing null until the
      * next fetch.
      */
-    protected $attributes = ['status' => 'todo', 'priority' => 'medium', 'owner_party' => 'internal'];
+    protected $attributes = [
+        'status' => 'todo', 'priority' => 'medium',
+        'owner_party' => 'internal', 'source' => 'manual',
+    ];
 
     /** As the design's task list labels them. */
     public const STATUSES = ['todo', 'in_progress', 'awaiting_approval', 'completed', 'blocked'];
@@ -93,6 +100,21 @@ class Task extends Model
      * a real state, not a note.
      */
     public const PARTIES = ['internal', 'customer', 'vendor'];
+
+    /**
+     * Where a task came from.
+     *
+     * The legacy kept this and never read it, so nobody could tell a task they
+     * had been given from one they had written — and the first person to tidy
+     * up deleted work the system silently raised again.
+     */
+    public const SOURCES = ['manual', 'recurrence', 'training', 'project', 'support', 'meeting'];
+
+    /** Raised by the system rather than typed by somebody. */
+    public function getIsGeneratedAttribute(): bool
+    {
+        return $this->source !== 'manual';
+    }
 
     public function project(): BelongsTo
     {

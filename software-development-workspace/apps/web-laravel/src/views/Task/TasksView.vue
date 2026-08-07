@@ -36,7 +36,15 @@ interface TaskRow {
   assignees: Person[];
   project: { id: number; name: string } | null;
   owner: { party: string; is_ours: boolean; name: string | null; contact_name: string | null };
+  source: string; is_generated: boolean;
   open_issue_count: number;
+}
+interface Recurrence {
+  id: number; title: string; frequency: string; interval: number;
+  lead_days: number; starts_on: string | null; ends_on: string | null;
+  is_active: boolean; next_due: string | null;
+  last_generated_for: string | null;
+  assignee: Person | null;
 }
 interface Ask {
   id: number; kind: string; status: string; is_stale: boolean;
@@ -134,6 +142,66 @@ function refresh() { load(); loadSummary(); loadInbox(); }
 
 // Coming back from the detail panel: whatever changed there has to show here.
 watch(() => route.name, (name) => { if (name === "tasks") refresh(); });
+
+// ── Schedules ───────────────────────────────────────────────────────────────
+
+/**
+ * Work that comes back round.
+ *
+ * The legacy had no recurrence at all, which is why the same monthly reviews
+ * and renewals appear in its 9,055 tasks typed out over and over.
+ */
+const showSchedules = ref(false);
+const schedules = ref<Recurrence[]>([]);
+
+async function loadSchedules() {
+  try {
+    schedules.value = (await api<{ data: Recurrence[] }>("GET", "/api/v1/tasks/recurrences", {
+      org: org(),
+    })).data;
+  } catch (e) { fail(e, "Could not load the schedules."); }
+}
+
+const blankSchedule = () => ({
+  title: "", description: "", category: "internal", priority: "medium",
+  frequency: "monthly", interval: 1, lead_days: 0,
+  starts_on: new Date().toISOString().slice(0, 10), ends_on: "",
+  assigned_to: null as number | null,
+});
+const schedule = ref(blankSchedule());
+const addingSchedule = ref(false);
+
+async function createSchedule() {
+  if (!schedule.value.title.trim()) return;
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/tasks/recurrences", {
+      org: org(), body: { ...schedule.value, ends_on: schedule.value.ends_on || null },
+    });
+    schedule.value = blankSchedule();
+    addingSchedule.value = false;
+    notifySaved("Schedule created.");
+    await loadSchedules();
+  } catch (e) { fail(e, "Could not create the schedule."); }
+  finally { saving.value = false; }
+}
+
+/** Safe to press twice — every task is keyed to its schedule and occurrence. */
+async function runSchedule(r: Recurrence) {
+  try {
+    const res = await api<{ created: number }>("POST", `/api/v1/tasks/recurrences/${r.id}/run`, { org: org() });
+    notifySaved(res.created ? `Raised ${res.created} task(s).` : "Nothing was due.");
+    await Promise.all([loadSchedules(), load(), loadSummary()]);
+  } catch (e) { fail(e, "Could not run the schedule."); }
+}
+
+async function stopSchedule(r: Recurrence) {
+  try {
+    await api("DELETE", `/api/v1/tasks/recurrences/${r.id}`, { org: org() });
+    notifySaved("Schedule stopped.");
+    await loadSchedules();
+  } catch (e) { fail(e, "Could not stop the schedule."); }
+}
 
 // ── The inbox ───────────────────────────────────────────────────────────────
 
@@ -291,6 +359,13 @@ onMounted(refresh);
           Requests
           <span v-if="pending" class="tk-badge">{{ pending }}</span>
         </button>
+        <button class="btn-ghost" @click="showSchedules = true; loadSchedules()">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 6a6 6 0 0110-4.5M16 14a6 6 0 01-10 4.5" /><path d="M4 2v4h4M16 18v-4h-4" />
+          </svg>
+          Schedules
+        </button>
         <button class="btn-primary" @click="openNew()">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
             <path d="M10 4v12M4 10h12" />
@@ -411,7 +486,12 @@ onMounted(refresh);
             {{ titleCase(t.priority) }} priority
           </p>
 
-          <h3 class="tk-card-title">{{ t.title }}</h3>
+          <h3 class="tk-card-title">
+            {{ t.title }}
+            <!-- Raised by the system. Deleting it by hand only means the
+                 schedule raises it again. -->
+            <span v-if="t.is_generated" class="tk-auto" :title="`Raised automatically (${t.source})`">auto</span>
+          </h3>
           <p v-if="t.description" class="tk-card-body">{{ t.description }}</p>
 
           <!-- An open issue is not the same thing as the column the card is
@@ -461,7 +541,10 @@ onMounted(refresh);
           </thead>
           <tbody>
             <tr v-for="t in rows" :key="t.id" :class="{ overdue: t.is_overdue }">
-              <td class="tk-name">{{ t.title }}</td>
+              <td class="tk-name">
+                {{ t.title }}
+                <span v-if="t.is_generated" class="tk-auto" :title="`Raised automatically (${t.source})`">auto</span>
+              </td>
               <td>
                 <span v-if="t.owner.is_ours" class="tk-muted">Us</span>
                 <span v-else class="tk-external">{{ t.owner.name ?? "Outside" }}</span>
@@ -542,6 +625,91 @@ onMounted(refresh);
             <p class="tk-ask-meta">asked of {{ a.to?.name ?? "someone" }}</p>
           </div>
         </section>
+      </aside>
+    </div>
+
+    <!-- ── Schedules ────────────────────────────────────────────────────── -->
+    <div v-if="showSchedules" class="tk-sheet-backdrop" @click.self="showSchedules = false">
+      <aside class="tk-sheet" role="dialog" aria-modal="true" aria-label="Recurring schedules">
+        <div class="tk-sheet-head">
+          <h3 class="tk-sheet-title">Recurring work</h3>
+          <button class="tk-close" aria-label="Close" @click="showSchedules = false">×</button>
+        </div>
+
+        <p class="tk-hint">
+          A schedule raises its task when it comes due, and nothing else.
+          Running it twice makes nothing — every task it raises is tied to its
+          own occurrence.
+        </p>
+
+        <p v-if="!schedules.length" class="tk-muted tk-quiet">No schedules yet.</p>
+
+        <div v-for="r in schedules" :key="r.id" :class="['tk-sched', { off: !r.is_active }]">
+          <div class="tk-sched-head">
+            <strong>{{ r.title }}</strong>
+            <span v-if="!r.is_active" class="tk-tag">stopped</span>
+          </div>
+          <p class="tk-sched-meta">
+            Every {{ r.interval > 1 ? r.interval + " " : "" }}{{ r.frequency.replace(/ly$/, "") }}{{ r.interval > 1 ? "s" : "" }}
+            <template v-if="r.assignee?.name"> · {{ r.assignee.name }}</template>
+          </p>
+          <p class="tk-sched-meta">
+            <template v-if="r.next_due">Next due {{ date(r.next_due) }}</template>
+            <template v-else>Nothing further due</template>
+            <template v-if="r.last_generated_for"> · last raised {{ date(r.last_generated_for) }}</template>
+          </p>
+          <div class="tk-sched-actions">
+            <button class="btn-primary btn-sm" :disabled="!r.is_active" @click="runSchedule(r)">Run now</button>
+            <button v-if="r.is_active" class="btn-ghost btn-sm" @click="stopSchedule(r)">Stop</button>
+          </div>
+        </div>
+
+        <button v-if="!addingSchedule" class="btn-ghost" @click="addingSchedule = true">+ New schedule</button>
+
+        <div v-else class="tk-sched-form">
+          <label class="tk-field"><span>What repeats</span>
+            <input v-model="schedule.title" class="control" placeholder="Monthly firewall rule review" /></label>
+
+          <div class="tk-row">
+            <label class="tk-field"><span>How often</span>
+              <select v-model="schedule.frequency" class="control">
+                <option value="daily">Daily</option><option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option><option value="quarterly">Quarterly</option>
+                <option value="yearly">Yearly</option>
+              </select></label>
+            <label class="tk-field"><span>Every</span>
+              <input v-model.number="schedule.interval" class="control" type="number" min="1" max="52" /></label>
+          </div>
+
+          <label class="tk-field"><span>Days to complete it</span>
+            <input v-model.number="schedule.lead_days" class="control" type="number" min="0" max="365" />
+            <span class="tk-hint">
+              Counted from each occurrence, so the deadline moves with it.
+            </span>
+          </label>
+
+          <div class="tk-row">
+            <label class="tk-field"><span>Starts</span>
+              <input v-model="schedule.starts_on" class="control" type="date" /></label>
+            <label class="tk-field"><span>Ends (optional)</span>
+              <input v-model="schedule.ends_on" class="control" type="date" /></label>
+          </div>
+
+          <label class="tk-field"><span>Kind of work</span>
+            <select v-model="schedule.category" class="control">
+              <option v-for="c in CATEGORIES" :key="c" :value="c">{{ titleCase(c) }}</option>
+            </select></label>
+
+          <div class="tk-field"><span>Assignee</span>
+            <EmployeePicker v-model="schedule.assigned_to" placeholder="Who does it each time?" /></div>
+
+          <div class="tk-sched-actions">
+            <button class="btn-ghost btn-sm" @click="addingSchedule = false">Cancel</button>
+            <button class="btn-primary btn-sm" :disabled="saving || !schedule.title.trim()" @click="createSchedule">
+              Create schedule
+            </button>
+          </div>
+        </div>
       </aside>
     </div>
 
@@ -728,6 +896,22 @@ onMounted(refresh);
 }
 .tk-card-issues { font-size: var(--text-xs-size); color: var(--color-danger-text); margin: 0; }
 .tk-card-owner { font-size: var(--text-xs-size); color: var(--color-warning-text); margin: 0; }
+.tk-auto {
+  margin-left: var(--space-1); padding: 0 var(--space-2); border-radius: var(--radius-sm);
+  background: var(--color-brand-subtle); color: var(--color-brand-on-surface);
+  font-size: 0.6rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+}
+
+.tk-sched {
+  @apply flex flex-col; gap: var(--space-1);
+  padding: var(--space-3); border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); background: var(--color-surface);
+}
+.tk-sched.off { opacity: 0.6; }
+.tk-sched-head { @apply flex flex-wrap items-center; gap: var(--space-2); font-size: var(--text-sm-size); }
+.tk-sched-meta { font-size: var(--text-xs-size); color: var(--color-text-muted); margin: 0; }
+.tk-sched-actions { @apply flex justify-end; gap: var(--space-2); margin-top: var(--space-2); }
+.tk-sched-form { @apply flex flex-col; gap: var(--space-3); padding: var(--space-3); border: 1px dashed var(--color-border-strong); border-radius: var(--radius-md); }
 .tk-external {
   padding: 1px var(--space-2); border-radius: var(--radius-sm);
   background: var(--color-warning-subtle); color: var(--color-warning-text);

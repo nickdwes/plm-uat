@@ -43,6 +43,7 @@ use App\Http\Controllers\Project\ProjectController;
 use App\Http\Controllers\Project\ProjectMilestoneController;
 use App\Http\Controllers\Task\TaskBoardController;
 use App\Http\Controllers\Task\TaskController;
+use App\Http\Controllers\Task\TaskRecurrenceController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -377,6 +378,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // The counts above the board. Derived, never stored.
         Route::get('/summary', [TaskBoardController::class, 'summary']);
+
+        /*
+         * Schedules for work that comes back round. Before /{task}, or the
+         * router reads "recurrences" as a task id.
+         */
+        Route::get('/recurrences',     [TaskRecurrenceController::class, 'index']);
+        Route::post('/recurrences',    [TaskRecurrenceController::class, 'store']);
+        Route::put('/recurrences/{recurrence}',    [TaskRecurrenceController::class, 'update']);
+        Route::delete('/recurrences/{recurrence}', [TaskRecurrenceController::class, 'destroy']);
+        // Raise what it owes now rather than waiting for the nightly run.
+        Route::post('/recurrences/{recurrence}/run', [TaskRecurrenceController::class, 'run']);
 
         Route::get('/{task}', [TaskBoardController::class, 'show']);
         Route::put('/{task}',    [TaskBoardController::class, 'update']);

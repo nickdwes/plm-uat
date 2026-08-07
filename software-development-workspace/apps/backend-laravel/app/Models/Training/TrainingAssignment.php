@@ -7,7 +7,7 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
-use Illuminate\Database\Eloquent\Traits\HasUuids;
+use Illuminate\Database\Eloquent\Concerns\HasUuids;
 
 class TrainingAssignment extends Model
 {
