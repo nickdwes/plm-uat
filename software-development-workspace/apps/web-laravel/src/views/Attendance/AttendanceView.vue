@@ -26,12 +26,21 @@ interface Punch {
   id: number; in: string; out: string | null; minutes: number | null;
   location_type: string | null; is_manual: boolean; note: string | null;
 }
-interface Block {
-  id: number; title: string; kind: string;
-  starts_at: string; ends_at: string; minutes: number; note: string | null;
+/**
+ * Something somebody said they would finish today, and how it went.
+ *
+ * Not a slot on a clock. `outcome` null means nobody has said yet — which on a
+ * finished day is itself the finding, and is not the same as it going well.
+ */
+interface Commitment {
+  id: number; title: string; kind: string; position: number; note: string | null;
+  outcome: "done" | "not_done" | null;
+  reason: string | null;
+  is_explained: boolean;
+  reported_at: string | null;
+  carried_to: { id: number; work_date: string | null } | null;
+  starts_at: string | null; ends_at: string | null;
   task: { id: number; reference: string | null; status: string; priority: string; is_done: boolean } | null;
-  /** Double-booked. Flagged, not refused — but a clash nobody sees cannot happen. */
-  clashes: boolean;
 }
 interface Day {
   id: number; work_date: string; status: string | null;
@@ -45,9 +54,10 @@ interface Day {
   is_clocked_in: boolean | null;
   notes: string | null;
   punches: Punch[];
-  plan: Block[];
-  planned_minutes: number | null;
-  tasks: { planned: number; completed: number };
+  commitments: Commitment[];
+  /** Promised, delivered, missed — and missed with nobody told. */
+  tally: { promised: number; done: number; missed: number; unexplained: number; open: number };
+  is_reported: boolean;
   audits?: { field: string; from: string | null; to: string | null; at: string | null; by: string | null }[];
 }
 interface Summary {
@@ -55,6 +65,7 @@ interface Summary {
   not_present: { absent: number; no_clock_in: number; no_clock_out: number };
   away: { on_leave: number; holiday: number };
   locations: { office: number; home: number; customer_site: number };
+  work: { promised: number; done: number; missed: number; unexplained: number };
 }
 
 const days    = ref<Day[]>([]);
@@ -244,11 +255,10 @@ async function loadPickableTasks() {
   } catch { pickable.value = []; }
 }
 
-function openPlan(date: string, at?: string) {
+function openPlan(date: string) {
   planning.value = {
     work_date: date, task_id: null, title: "", kind: "work",
-    starts_at: at ?? "09:00",
-    ends_at: at ? `${String(Number(at.slice(0, 2)) + 1).padStart(2, "0")}:${at.slice(3)}` : "10:00",
+    starts_at: "", ends_at: "",
   };
   projectFilter.value = null;
   showPlan.value = true;
@@ -262,12 +272,13 @@ async function savePlan() {
 
   saving.value = true;
   try {
-    await api("POST", "/api/v1/attendance/blocks", {
+    await api("POST", "/api/v1/attendance/commitments", {
       org: org(),
       body: {
         work_date: p.work_date, task_id: p.task_id,
         title: p.title.trim() || null, kind: p.kind,
-        starts_at: p.starts_at, ends_at: p.ends_at,
+        // Optional, and only for the people who want them.
+        starts_at: p.starts_at || null, ends_at: p.ends_at || null,
       },
     });
     showPlan.value = false;
@@ -277,12 +288,57 @@ async function savePlan() {
   finally { saving.value = false; }
 }
 
-async function removeBlock(b: Block) {
+async function removeCommitment(c: Commitment) {
   try {
-    await api("DELETE", `/api/v1/attendance/blocks/${b.id}`, { org: org() });
+    await api("DELETE", `/api/v1/attendance/commitments/${c.id}`, { org: org() });
     notifySaved("Removed.");
     await load();
   } catch (e) { fail(e, "Could not remove that."); }
+}
+
+// ── Saying how it went ──────────────────────────────────────────────────────
+
+/**
+ * Done needs nothing. Not done needs a reason, so the form asks for one before
+ * it will save — asked on the day by the person who knows, rather than a
+ * fortnight later when the answer is "can't remember".
+ */
+const explaining = ref<Commitment | null>(null);
+const explanation = ref({ reason: "", carry_to: "" });
+
+async function markDone(c: Commitment) {
+  saving.value = true;
+  try {
+    await api("POST", `/api/v1/attendance/commitments/${c.id}/report`, {
+      org: org(), body: { outcome: "done" },
+    });
+    await load();
+  } catch (e) { fail(e, "Could not record that."); }
+  finally { saving.value = false; }
+}
+
+function openExplain(c: Commitment) {
+  explaining.value = c;
+  explanation.value = { reason: c.reason ?? "", carry_to: "" };
+}
+
+async function saveExplanation() {
+  if (!explaining.value || !explanation.value.reason.trim()) return;
+  saving.value = true;
+  try {
+    await api("POST", `/api/v1/attendance/commitments/${explaining.value.id}/report`, {
+      org: org(),
+      body: {
+        outcome: "not_done",
+        reason: explanation.value.reason.trim(),
+        carry_to: explanation.value.carry_to || null,
+      },
+    });
+    explaining.value = null;
+    notifySaved("Recorded, and your manager has been told.");
+    await load();
+  } catch (e) { fail(e, "Could not record that."); }
+  finally { saving.value = false; }
 }
 
 // ── One day ─────────────────────────────────────────────────────────────────
@@ -383,32 +439,6 @@ const weeks = computed(() => {
 
 const isToday = (d: string) => d === new Date().toISOString().slice(0, 10);
 
-/**
- * The timeline runs 07:00 to 19:00.
- *
- * Fixed rather than fitted to the blocks: a grid whose hours move as work is
- * added makes two days impossible to compare by eye, which is the only thing a
- * week view is for.
- */
-const DAY_START = 7;
-const DAY_END = 19;
-const HOUR_PX = 56;
-
-const timelineHours = computed(() =>
-  Array.from({ length: DAY_END - DAY_START }, (_, i) => DAY_START + i));
-
-const minuteOf = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
-
-/** Where a block sits, and how tall it is. Clamped to the visible window. */
-function blockStyle(b: Block) {
-  const top = Math.max(0, minuteOf(b.starts_at) - DAY_START * 60);
-  const height = Math.max(18, minuteOf(b.ends_at) - Math.max(minuteOf(b.starts_at), DAY_START * 60));
-  return { top: `${(top / 60) * HOUR_PX}px`, height: `${(height / 60) * HOUR_PX}px` };
-}
-
-const hourLabel = (h: number) =>
-  h === 12 ? "12 PM" : h > 12 ? `${h - 12} PM` : `${h} AM`;
-
 /** The seven dates of the week on screen, whatever the cursor sits on. */
 const weekDates = computed(() => {
   const start = mondayOf(cursor.value);
@@ -422,7 +452,21 @@ const weekDates = computed(() => {
 const dayName = (d: string) =>
   new Date(d + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric" });
 
-const blocksOn = (d: string) => byDate.value[d]?.plan ?? [];
+const commitmentsOn = (d: string) => byDate.value[d]?.commitments ?? [];
+const tallyOn = (d: string) => byDate.value[d]?.tally ?? null;
+
+/**
+ * How a commitment reads at a glance.
+ *
+ * Unanswered on a day that is over is its own state, and the one worth
+ * chasing — showing it the same as "went fine" is how the record stops being
+ * believed.
+ */
+function commitmentTone(c: Commitment, date: string): string {
+  if (c.outcome === "done") return "ok";
+  if (c.outcome === "not_done") return c.is_explained ? "warn" : "bad";
+  return date < new Date().toISOString().slice(0, 10) ? "bad" : "neutral";
+}
 
 const listRows = computed(() => {
   const term = search.value.trim().toLowerCase();
@@ -485,6 +529,25 @@ onMounted(load);
       </section>
 
       <!--
+        How the work went.
+
+        `unexplained` leads because it is the only figure anybody has to act on.
+        Work slips; a manager reacting to slippage is reacting to noise. Work
+        that slipped with nobody told is the thing that was uncountable before.
+      -->
+      <section class="at-card">
+        <h2 class="at-card-title">Work Summary</h2>
+        <div class="at-figures">
+          <div><span class="at-fig-label">Committed</span><span class="at-fig">{{ summary.work.promised }}</span></div>
+          <div><span class="at-fig-label">Completed</span><span class="at-fig">{{ summary.work.done }}</span></div>
+          <div>
+            <span class="at-fig-label">Unexplained</span>
+            <span :class="['at-fig', { late: summary.work.unexplained }]">{{ summary.work.unexplained }}</span>
+          </div>
+        </div>
+      </section>
+
+      <!--
         Where the work happened.
 
         Not one of the designs' three cards, but it is the whole point of
@@ -540,9 +603,14 @@ onMounted(load);
                 @click="iso && (byDate[iso] ? openDay(byDate[iso]) : openReport(iso))">
               <template v-if="iso">
                 <span class="at-daynum">{{ Number(iso.slice(8)) }}</span>
-                <!-- What the day is planned to hold, not just what it was. -->
-                <span v-if="byDate[iso]?.tasks?.planned" class="at-chip chip-plan">
-                  {{ byDate[iso].tasks.planned }} planned
+                <!-- What was promised and how much of it landed. The
+                     unexplained count leads, because that is the only part
+                     anybody has to act on. -->
+                <span v-if="byDate[iso]?.tally?.unexplained" class="at-chip chip-bad">
+                  {{ byDate[iso].tally.unexplained }} unexplained
+                </span>
+                <span v-else-if="byDate[iso]?.tally?.promised" class="at-chip chip-plan">
+                  {{ byDate[iso].tally.done }}/{{ byDate[iso].tally.promised }} done
                 </span>
 
                 <span v-if="byDate[iso]?.worked_minutes"
@@ -564,40 +632,54 @@ onMounted(load);
         </tbody>
       </table>
 
-      <!-- ── Week / day timeline ────────────────────────────────────────── -->
-      <div v-else-if="view === 'calendar'" class="at-timeline-wrap">
-        <div class="at-timeline" :style="{ '--cols': zoom === 'week' ? 7 : 1 }">
-          <!-- The clock. Fixed 07:00–19:00, because a grid whose hours move as
-               work is added makes two days impossible to compare by eye. -->
-          <div class="at-gutter">
-            <div class="at-gutter-head"></div>
-            <div v-for="h in timelineHours" :key="h" class="at-hour">{{ hourLabel(h) }}</div>
-          </div>
+      <!-- ── Week / day: what was promised, and how it went ─────────────── -->
+      <div v-else-if="view === 'calendar'" class="at-days">
+        <section v-for="d in (zoom === 'week' ? weekDates : [iso(cursor)])" :key="d"
+                 :class="['at-day', { today: isToday(d) }]">
+          <header class="at-day-head">
+            <span class="at-day-name">{{ dayName(d) }}</span>
 
-          <div v-for="d in (zoom === 'week' ? weekDates : [iso(cursor)])" :key="d"
-               :class="['at-col', { today: isToday(d) }]">
-            <header class="at-col-head">
-              <span class="at-col-day">{{ dayName(d) }}</span>
-              <span v-if="byDate[d]?.tasks?.planned" class="at-col-count">
-                {{ byDate[d].tasks.planned }} planned
+            <!-- Not "how much slipped" — work slips. What is worth showing is
+                 whether anybody was told. -->
+            <span v-if="tallyOn(d)?.promised" class="at-day-tally">
+              {{ tallyOn(d)!.done }}/{{ tallyOn(d)!.promised }} done
+              <span v-if="tallyOn(d)!.unexplained" class="at-chip chip-bad">
+                {{ tallyOn(d)!.unexplained }} unexplained
               </span>
-              <button class="at-col-add" aria-label="Add to this day" @click="openPlan(d)">+</button>
-            </header>
+            </span>
 
-            <div class="at-col-body" :style="{ height: `${timelineHours.length * 56}px` }">
-              <div v-for="h in timelineHours" :key="h" class="at-gridline"></div>
+            <button class="at-day-add" aria-label="Add to this day" @click="openPlan(d)">+</button>
+          </header>
 
-              <article v-for="b in blocksOn(d)" :key="b.id"
-                       :class="['at-block', `kind-${b.kind}`, { clash: b.clashes, done: b.task?.is_done }]"
-                       :style="blockStyle(b)"
-                       :title="b.clashes ? 'Double-booked with another block' : b.title">
-                <span class="at-block-title">{{ b.title }}</span>
-                <span class="at-block-time">{{ b.starts_at }} – {{ b.ends_at }}</span>
-                <button class="at-block-x" aria-label="Remove" @click.stop="removeBlock(b)">×</button>
-              </article>
-            </div>
-          </div>
-        </div>
+          <p v-if="!commitmentsOn(d).length" class="at-day-empty">Nothing committed.</p>
+
+          <ul v-else class="at-commitments">
+            <li v-for="c in commitmentsOn(d)" :key="c.id"
+                :class="['at-commit', `tone-${commitmentTone(c, d)}`]">
+              <span class="at-commit-mark">
+                {{ c.outcome === "done" ? "✓" : c.outcome === "not_done" ? "✗" : "○" }}
+              </span>
+
+              <span class="at-commit-body">
+                <span class="at-commit-title">{{ c.title }}</span>
+                <span v-if="c.starts_at" class="at-commit-time">{{ c.starts_at }}–{{ c.ends_at }}</span>
+                <!-- The explanation, shown beside the miss rather than buried
+                     in a record nobody opens. -->
+                <span v-if="c.reason" class="at-commit-reason">“{{ c.reason }}”</span>
+                <span v-if="c.carried_to" class="at-commit-reason">
+                  moved to {{ c.carried_to.work_date }}
+                </span>
+              </span>
+
+              <span v-if="!c.outcome" class="at-commit-actions">
+                <button class="link-btn" :disabled="saving" @click="markDone(c)">Done</button>
+                <button class="link-btn" :disabled="saving" @click="openExplain(c)">Not done</button>
+                <button class="link-btn at-commit-x" aria-label="Remove"
+                        @click="removeCommitment(c)">×</button>
+              </span>
+            </li>
+          </ul>
+        </section>
       </div>
 
       <!-- ── List ───────────────────────────────────────────────────────── -->
@@ -662,18 +744,22 @@ onMounted(load);
           <div v-if="open.account"><dt>Customer</dt><dd>{{ open.account.name }}</dd></div>
         </dl>
 
-        <section v-if="open.plan.length">
-          <h4 class="at-sheet-sub">Planned</h4>
+        <section v-if="open.commitments.length">
+          <h4 class="at-sheet-sub">Committed</h4>
           <ul class="at-list">
-            <li v-for="b in open.plan" :key="b.id" class="at-punch">
-              {{ b.starts_at }} – {{ b.ends_at }}
-              <strong>{{ b.title }}</strong>
-              <span v-if="b.task?.is_done" class="at-chip chip-ok">done</span>
-              <span v-if="b.clashes" class="at-chip chip-warn">clashes</span>
+            <li v-for="c in open.commitments" :key="c.id" class="at-punch">
+              <span :class="['at-chip', `chip-${commitmentTone(c, open.work_date)}`]">
+                {{ c.outcome === "done" ? "done" : c.outcome === "not_done" ? "not done" : "open" }}
+              </span>
+              <strong>{{ c.title }}</strong>
+              <span v-if="c.reason" class="at-muted">“{{ c.reason }}”</span>
             </li>
           </ul>
           <p class="at-hint">
-            {{ open.tasks.planned }} task(s) planned, {{ open.tasks.completed }} finished today.
+            {{ open.tally.done }} of {{ open.tally.promised }} finished.
+            <template v-if="open.tally.unexplained">
+              {{ open.tally.unexplained }} went unexplained.
+            </template>
           </p>
         </section>
 
@@ -750,14 +836,14 @@ onMounted(load);
     <div v-if="showPlan" class="at-modal-backdrop" @click.self="showPlan = false">
       <div class="at-modal" role="dialog" aria-modal="true" aria-label="Add to the day">
         <div class="at-sheet-head">
-          <h3 class="at-sheet-title">Add Task</h3>
+          <h3 class="at-sheet-title">Commit to something</h3>
           <button class="at-close" aria-label="Close" @click="showPlan = false">×</button>
         </div>
 
         <p class="at-hint">
-          Pick work that already exists. Planning a day does not create tasks —
-          otherwise the task list fills with a second copy of everything anybody
-          ever scheduled.
+          What will you finish today? Pick work that already exists — committing
+          to a day does not create tasks, or the task list fills with a second
+          copy of everything anybody ever planned.
         </p>
 
         <label class="at-field"><span>Project Name</span>
@@ -784,17 +870,56 @@ onMounted(load);
             <option value="enablement">Enablement</option>
           </select></label>
 
-        <div class="at-row">
-          <label class="at-field"><span>From</span>
-            <input v-model="planning.starts_at" class="control" type="time" /></label>
-          <label class="at-field"><span>To</span>
-            <input v-model="planning.ends_at" class="control" type="time" /></label>
-        </div>
+        <!-- Optional, and nothing is built on them. A grid you must fill in
+             is a timesheet, and timesheets get completed on Friday from
+             memory. -->
+        <details class="at-times">
+          <summary>Add a time (optional)</summary>
+          <div class="at-row">
+            <label class="at-field"><span>From</span>
+              <input v-model="planning.starts_at" class="control" type="time" /></label>
+            <label class="at-field"><span>To</span>
+              <input v-model="planning.ends_at" class="control" type="time" /></label>
+          </div>
+        </details>
 
         <button class="btn-primary btn-block"
                 :disabled="saving || (!planning.task_id && !planning.title.trim())"
                 @click="savePlan">
-          Add Task
+          Add to the day
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Why it did not land ──────────────────────────────────────────── -->
+    <div v-if="explaining" class="at-modal-backdrop" @click.self="explaining = null">
+      <div class="at-modal" role="dialog" aria-modal="true" aria-label="What happened">
+        <div class="at-sheet-head">
+          <h3 class="at-sheet-title">What happened?</h3>
+          <button class="at-close" aria-label="Close" @click="explaining = null">×</button>
+        </div>
+
+        <p class="at-hint">
+          <strong>{{ explaining.title }}</strong> — work slips, and that is fine.
+          What is not fine is nobody knowing. Your manager sees this, and so does
+          whoever owns the task.
+        </p>
+
+        <label class="at-field"><span>Why it did not land</span>
+          <textarea v-model="explanation.reason" class="control" rows="3"
+                    placeholder="Waiting on pricing from the OEM."></textarea></label>
+
+        <label class="at-field"><span>Move it to</span>
+          <input v-model="explanation.carry_to" class="control" type="date" />
+          <span class="at-hint">
+            Optional. Moving it carries the reason across, so tomorrow's list
+            says why it is back rather than reading as a fresh promise.
+          </span>
+        </label>
+
+        <button class="btn-primary btn-block"
+                :disabled="saving || !explanation.reason.trim()" @click="saveExplanation">
+          Record and tell them
         </button>
       </div>
     </div>
@@ -893,39 +1018,39 @@ onMounted(load);
 
 .at-zoom { max-width: 10rem; }
 
-.at-timeline-wrap { overflow-x: auto; padding: 0 var(--space-5) var(--space-5); }
-.at-timeline { @apply grid; grid-template-columns: 4rem repeat(var(--cols), minmax(9rem, 1fr)); }
-.at-gutter { @apply flex flex-col; }
-.at-gutter-head { height: 2.5rem; }
-.at-hour { height: 56px; font-size: var(--text-xs-size); color: var(--color-text-muted); text-align: right; padding-right: var(--space-2); transform: translateY(-0.5em); }
+.at-days { @apply grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: var(--space-4); padding: 0 var(--space-5) var(--space-5); }
+.at-day { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.at-day.today { border-color: var(--color-brand-base); }
+.at-day-head { @apply flex flex-wrap items-center; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--color-border); }
+.at-day-name { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); }
+.at-day-tally { @apply flex flex-wrap items-center; gap: var(--space-1); font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.at-day-add { @apply ml-auto cursor-pointer border-none bg-transparent p-0; font-size: 1.1rem; line-height: 1; color: var(--color-text-muted); }
+.at-day-empty { font-size: var(--text-xs-size); color: var(--color-text-light); margin: 0; padding: var(--space-3); }
 
-.at-col { border-left: 1px solid var(--color-border); }
-.at-col.today { background: color-mix(in oklab, var(--color-brand-subtle) 40%, transparent); }
-.at-col-head { @apply flex items-center; gap: var(--space-2); height: 2.5rem; padding: 0 var(--space-2); border-bottom: 1px solid var(--color-border); }
-.at-col-day { font-size: var(--text-xs-size); font-weight: 600; color: var(--color-text); }
-.at-col-count { font-size: 0.6rem; color: var(--color-text-muted); }
-.at-col-add { @apply ml-auto cursor-pointer border-none bg-transparent p-0; font-size: 1rem; line-height: 1; color: var(--color-text-muted); }
-.at-col-body { @apply relative; }
-.at-gridline { height: 56px; border-bottom: 1px solid var(--color-border); }
+.at-commitments { @apply flex flex-col; list-style: none; margin: 0; padding: 0; }
+.at-commit { @apply flex items-start; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--color-border); }
+.at-commit:last-child { border-bottom: none; }
+.at-commit-mark { font-weight: 600; line-height: 1.4; }
+.at-commit-body { @apply flex flex-1 flex-col; gap: 2px; min-width: 0; }
+.at-commit-title { font-size: var(--text-sm-size); color: var(--color-text); }
+.at-commit-time { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+/* The explanation sits beside the miss, not buried in a record nobody opens. */
+.at-commit-reason { font-size: var(--text-xs-size); color: var(--color-text-muted); font-style: italic; }
+.at-commit-actions { @apply flex shrink-0 items-center; gap: var(--space-2); }
+.at-commit-x { color: var(--color-text-light); }
 
-.at-block {
-  @apply absolute flex flex-col overflow-hidden; left: 2px; right: 2px;
-  padding: 2px var(--space-2); border-radius: var(--radius-sm);
-  border-left: 3px solid var(--color-brand-base);
-  background: var(--color-brand-subtle); color: var(--color-brand-on-surface);
-  font-size: var(--text-xs-size);
-}
-.at-block-title { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.at-block-time { font-size: 0.6rem; opacity: 0.8; }
-.at-block-x { @apply absolute cursor-pointer border-none bg-transparent p-0; top: 0; right: 3px; font-size: 0.8rem; color: inherit; opacity: 0.6; }
+.at-commit.tone-ok .at-commit-mark   { color: var(--color-success-text); }
+.at-commit.tone-ok .at-commit-title  { text-decoration: line-through; opacity: 0.7; }
+.at-commit.tone-warn .at-commit-mark { color: var(--color-warning-text); }
+/* Missed with nobody told, or a finished day left unanswered. The only state
+   anybody has to act on, so it is the only one that shouts. */
+.at-commit.tone-bad { background: color-mix(in oklab, var(--color-danger-subtle) 40%, transparent); }
+.at-commit.tone-bad .at-commit-mark { color: var(--color-danger-text); }
+.at-commit.tone-neutral .at-commit-mark { color: var(--color-text-light); }
 
-/* Breaks read as gaps in the work, not as more of it. */
-.at-block.kind-break { background: var(--color-surface-sunken); color: var(--color-text-muted); border-left-color: var(--color-border-strong); }
-.at-block.kind-meeting { background: color-mix(in oklab, var(--color-brand-subtle) 60%, var(--color-surface)); }
-.at-block.kind-enablement { background: var(--color-success-subtle); color: var(--color-success-text); border-left-color: var(--color-success-text); }
-.at-block.done { opacity: 0.65; text-decoration: line-through; }
-/* Double-booked. A clash nobody is shown is a plan that cannot happen. */
-.at-block.clash { border-left-color: var(--color-danger-text); box-shadow: inset 0 0 0 1px var(--color-danger-text); }
+.at-times { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.at-times summary { @apply cursor-pointer; }
+.at-times .at-row { margin-top: var(--space-2); }
 
 .at-table-wrap { overflow-x: auto; }
 .at-table { @apply w-full; border-collapse: collapse; font-size: var(--text-sm-size); }

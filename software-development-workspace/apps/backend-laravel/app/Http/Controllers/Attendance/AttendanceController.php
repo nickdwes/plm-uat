@@ -43,7 +43,7 @@ class AttendanceController extends Controller
 
         // Blocks come with the list because the week and day views draw them;
         // without eager loading that is a query per day on screen.
-        $q = AttendanceDay::with(['employee', 'account', 'punches', 'blocks.task'])
+        $q = AttendanceDay::with(['employee', 'account', 'punches', 'commitments.task'])
             ->between($from, $to)
             ->orderBy('work_date');
 
@@ -123,7 +123,53 @@ class AttendanceController extends Controller
                 'home'          => (clone $q)->where('actual_location', 'home')->count(),
                 'customer_site' => (clone $q)->where('actual_location', 'customer_site')->count(),
             ],
+
+            /*
+             * How the work went, which is what the module is actually for.
+             *
+             * `unexplained` is the number worth watching: not how much slipped,
+             * because work slips and reacting to that is reacting to noise, but
+             * how much slipped with nobody told. Days still running are left
+             * out — an unanswered commitment at three in the afternoon is not a
+             * failure to communicate.
+             */
+            'work' => $this->workTally($from, $to, clone $q),
         ]);
+    }
+
+    /**
+     * Promised, delivered, and missed in silence, across the window.
+     *
+     * Counted in the database rather than by loading every commitment, because
+     * a month across a team is thousands of rows and this sits on a card people
+     * open constantly.
+     */
+    private function workTally(string $from, string $to, $days): array
+    {
+        $dayIds = $days->select('attendance_days.id')->pluck('id');
+
+        if ($dayIds->isEmpty()) {
+            return ['promised' => 0, 'done' => 0, 'missed' => 0, 'unexplained' => 0];
+        }
+
+        $base = \App\Models\Attendance\AttendanceCommitment::whereIn('attendance_day_id', $dayIds);
+
+        // Days still running are excluded from the silence count: an unanswered
+        // commitment at three in the afternoon is not a failure to communicate.
+        $settled = (clone $base)->whereHas(
+            'day',
+            fn ($d) => $d->whereDate('work_date', '<', now()->toDateString()),
+        );
+
+        return [
+            'promised' => (clone $base)->count(),
+            'done'     => (clone $base)->where('outcome', 'done')->count(),
+            'missed'   => (clone $base)->where('outcome', 'not_done')->count(),
+            'unexplained' => (clone $settled)->where(
+                fn ($w) => $w->whereNull('outcome')
+                    ->orWhere(fn ($x) => $x->where('outcome', 'not_done')->whereNull('reason')),
+            )->count(),
+        ];
     }
 
     /** One day, with its punches and its history of changes. */
@@ -134,7 +180,8 @@ class AttendanceController extends Controller
         return response()->json([
             'data' => $this->dayWithPlan(
                 $attendanceDay->load([
-                    'employee', 'account', 'punches', 'blocks.task', 'audits.changedBy', 'approver',
+                    'employee', 'account', 'punches', 'commitments.task', 'commitments.carriedTo',
+                    'audits.changedBy', 'approver',
                 ]),
                 withAudit: true,
             ),
@@ -377,72 +424,67 @@ class AttendanceController extends Controller
     }
 
     /**
-     * A day, with what it was planned to be spent on.
+     * A day, with what was committed to and how it went.
      *
-     * Public because the block controller returns the same shape after every
-     * write — one answer for the timeline to redraw from, rather than the
+     * Public because the commitment controller returns the same shape after
+     * every write — one answer for the screen to redraw from, rather than the
      * client patching its own copy and drifting.
      */
     public function dayWithPlan(AttendanceDay $d, bool $withAudit = false): array
     {
         $payload = $this->row($d, $withAudit);
 
-        $clashing = $d->clashing_block_ids;
+        $payload['commitments'] = $d->relationLoaded('commitments')
+            ? $d->commitments->map(fn ($c) => [
+                'id'       => $c->id,
+                'title'    => $c->title,
+                'kind'     => $c->kind,
+                'position' => $c->position,
+                'note'     => $c->note,
 
-        $payload['plan'] = $d->relationLoaded('blocks')
-            ? $d->blocks->map(fn ($b) => [
-                'id'    => $b->id,
-                'title' => $b->title,
-                'kind'  => $b->kind,
-                'starts_at' => substr((string) $b->starts_at, 0, 5),
-                'ends_at'   => substr((string) $b->ends_at, 0, 5),
-                'minutes'   => $b->minutes,
-                'note'      => $b->note,
-                'task' => $b->relationLoaded('task') && $b->task
+                // How it went. Null means nobody has said yet, which on a
+                // finished day is itself the finding.
+                'outcome'  => $c->outcome,
+                'reason'   => $c->reason,
+                'is_explained' => $c->is_explained,
+                'reported_at'  => $c->reported_at?->toIso8601String(),
+
+                // Moved rather than abandoned — a link, so "this has slipped
+                // four times" is answerable.
+                'carried_to' => $c->relationLoaded('carriedTo') && $c->carriedTo
                     ? [
-                        'id' => $b->task->id,
-                        'reference' => $b->task->reference,
-                        'status' => $b->task->status,
-                        'priority' => $b->task->priority,
-                        'is_done' => $b->task->is_done,
+                        'id' => $c->carriedTo->id,
+                        'work_date' => $c->carriedTo->day?->work_date?->toDateString(),
                     ]
                     : null,
-                // Double-booked. Flagged rather than refused — a planner that
-                // will not let you write down a clash is one people stop using,
-                // but a clash nobody is shown is a plan that cannot happen.
-                'clashes' => in_array($b->id, $clashing, true),
+
+                // Optional, and nothing is built on them.
+                'starts_at' => $c->starts_at ? substr((string) $c->starts_at, 0, 5) : null,
+                'ends_at'   => $c->ends_at ? substr((string) $c->ends_at, 0, 5) : null,
+
+                'task' => $c->relationLoaded('task') && $c->task
+                    ? [
+                        'id' => $c->task->id,
+                        'reference' => $c->task->reference,
+                        'status' => $c->task->status,
+                        'priority' => $c->task->priority,
+                        'is_done' => $c->task->is_done,
+                    ]
+                    : null,
             ])->values()
             : [];
 
-        $payload['planned_minutes'] = $d->planned_minutes;
-
         /*
-         * The productivity pair the requirement asks for.
+         * Promised, delivered, missed, and missed in silence.
          *
-         * Planned is the distinct tasks blocked out; completed is read from the
-         * tasks themselves, counting only what was both planned and finished
-         * that day. Neither is stored, so neither can drift from the records it
-         * describes.
+         * The last is the one that matters. Work slips, and a manager reacting
+         * to slippage is reacting to noise — work that slipped with nobody told
+         * is what was previously uncountable.
          */
-        $payload['tasks'] = [
-            'planned'   => $d->planned_task_count,
-            'completed' => $this->completedFromPlan($d),
-        ];
+        $payload['tally'] = $d->commitment_tally;
+        $payload['is_reported'] = $d->is_reported;
 
         return $payload;
-    }
-
-    /** Tasks blocked out today that were also finished today. */
-    private function completedFromPlan(AttendanceDay $d): int
-    {
-        if (! $d->relationLoaded('blocks')) {
-            return 0;
-        }
-
-        return $d->blocks
-            ->filter(fn ($b) => $b->relationLoaded('task') && $b->task?->is_done
-                && $b->task->completed_at?->toDateString() === $d->work_date->toDateString())
-            ->pluck('task_id')->unique()->count();
     }
 
     private function row(AttendanceDay $d, bool $withAudit = false): array

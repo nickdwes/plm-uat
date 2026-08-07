@@ -79,10 +79,11 @@ class AttendanceDay extends Model
         return $this->hasMany(AttendancePunch::class)->orderBy('clocked_in_at');
     }
 
-    /** What the day is planned to be spent on. */
-    public function blocks(): HasMany
+    /** What was promised for the day, in the order it was meant to be taken. */
+    public function commitments(): HasMany
     {
-        return $this->hasMany(AttendanceBlock::class, 'attendance_day_id')->orderBy('starts_at');
+        return $this->hasMany(AttendanceCommitment::class, 'attendance_day_id')
+            ->orderBy('position')->orderBy('id');
     }
 
     public function audits(): HasMany
@@ -113,64 +114,53 @@ class AttendanceDay extends Model
     }
 
     /**
-     * How much of the day is spoken for.
+     * How the day went: promised, delivered, and owed an explanation.
      *
-     * Worth having beside `worked_minutes`: "planned nine hours, worked seven"
-     * is the comparison the productivity requirement reaches for, and it needs
-     * both halves to exist.
+     * One accessor rather than four, because the four numbers are only ever
+     * read together and a caller that fetched three of them would draw a
+     * picture that does not add up.
      */
-    public function getPlannedMinutesAttribute(): ?int
+    public function getCommitmentTallyAttribute(): array
     {
-        if (! $this->relationLoaded('blocks')) {
-            return null;
+        if (! $this->relationLoaded('commitments')) {
+            return ['promised' => 0, 'done' => 0, 'missed' => 0, 'unexplained' => 0, 'open' => 0];
         }
 
-        return $this->blocks->sum(fn (AttendanceBlock $b) => $b->minutes) ?: null;
+        $all = $this->commitments;
+
+        return [
+            'promised' => $all->count(),
+            'done'     => $all->where('outcome', 'done')->count(),
+            'missed'   => $all->where('outcome', 'not_done')->count(),
+
+            /*
+             * Missed with nobody told, plus anything still unanswered on a day
+             * that is over. This is the number that matters: work slips, and a
+             * manager reacting to slippage is reacting to noise. Work that
+             * slipped in silence was previously uncountable.
+             */
+            'unexplained' => $all->filter(
+                fn (AttendanceCommitment $c) => ! $c->is_explained && ! $this->work_date->isFuture()
+                    && ! $this->work_date->isToday(),
+            )->count(),
+
+            'open' => $all->whereNull('outcome')->count(),
+        ];
     }
 
     /**
-     * Distinct tasks blocked out today.
+     * Whether the day has been answered for.
      *
-     * Counted from the blocks rather than kept on the row, so it cannot drift.
-     * Distinct, because a task split across a morning and an afternoon is one
-     * task planned, not two.
+     * A day nobody closed out is not a day where everything went to plan, and
+     * showing the two alike is how the whole record stops being read.
      */
-    public function getPlannedTaskCountAttribute(): int
+    public function getIsReportedAttribute(): bool
     {
-        if (! $this->relationLoaded('blocks')) {
-            return 0;
+        if (! $this->relationLoaded('commitments') || $this->commitments->isEmpty()) {
+            return false;
         }
 
-        return $this->blocks->whereNotNull('task_id')->pluck('task_id')->unique()->count();
-    }
-
-    /**
-     * Blocks covering the same clock twice.
-     *
-     * Flagged rather than refused. Double-booking is usually a mistake and
-     * occasionally exactly what happened, and a planner that will not let you
-     * write down a clash is one people stop using — but a clash nobody is shown
-     * is a plan that quietly cannot happen.
-     */
-    public function getClashingBlockIdsAttribute(): array
-    {
-        if (! $this->relationLoaded('blocks')) {
-            return [];
-        }
-
-        $blocks  = $this->blocks->values();
-        $clashes = [];
-
-        foreach ($blocks as $i => $a) {
-            foreach ($blocks->slice($i + 1) as $b) {
-                if ($a->overlaps($b)) {
-                    $clashes[$a->id] = true;
-                    $clashes[$b->id] = true;
-                }
-            }
-        }
-
-        return array_keys($clashes);
+        return $this->commitments->whereNull('outcome')->isEmpty();
     }
 
     /**

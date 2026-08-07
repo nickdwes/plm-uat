@@ -33,7 +33,7 @@ use App\Http\Controllers\Training\VendorComplianceController;
 use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
-use App\Http\Controllers\Attendance\AttendanceBlockController;
+use App\Http\Controllers\Attendance\AttendanceCommitmentController;
 use App\Http\Controllers\Attendance\AttendanceController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
@@ -205,12 +205,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/add-hours',  [AttendanceController::class, 'addHours']);
 
         /*
-         * Planning the day. A block gives existing work a slot; it does not
-         * create work — the Tasks module seen through a clock.
+         * What somebody committed to for a day, and how it went.
+         *
+         * Not a timesheet. Three questions: what did you say you would finish,
+         * did you finish it, and if not, why not — and the third is enforced,
+         * because it is the only one people skip and the only one anybody else
+         * needs.
          */
-        Route::post('/blocks',           [AttendanceBlockController::class, 'store']);
-        Route::put('/blocks/{block}',    [AttendanceBlockController::class, 'update']);
-        Route::delete('/blocks/{block}', [AttendanceBlockController::class, 'destroy']);
+        Route::post('/commitments',        [AttendanceCommitmentController::class, 'store']);
+        Route::put('/commitments/{commitment}',    [AttendanceCommitmentController::class, 'update']);
+        Route::delete('/commitments/{commitment}', [AttendanceCommitmentController::class, 'destroy']);
+        Route::post('/commitments/{commitment}/report', [AttendanceCommitmentController::class, 'report']);
 
         Route::get('/{attendanceDay}', [AttendanceController::class, 'show']);
     });
