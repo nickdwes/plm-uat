@@ -40,6 +40,7 @@ use App\Http\Controllers\Pipeline\OpportunityController;
 use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Pipeline\ResearchController;
 use App\Http\Controllers\Project\ProjectController;
+use App\Http\Controllers\Project\ProjectMilestoneController;
 use App\Http\Controllers\Project\ProjectTaskController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
@@ -391,6 +392,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         Route::get('/{project}/comments',  [ProjectTaskController::class, 'comments']);
         Route::post('/{project}/comments', [ProjectTaskController::class, 'storeComment']);
+
+        // ── Contract milestones ───────────────────────────────────────────
+        // What the customer agreed to pay, and against which task.
+        Route::get('/{project}/milestones',              [ProjectMilestoneController::class, 'index']);
+        Route::post('/{project}/milestones',             [ProjectMilestoneController::class, 'store']);
+        Route::put('/{project}/milestones/{milestone}',  [ProjectMilestoneController::class, 'update']);
+        Route::delete('/{project}/milestones/{milestone}',[ProjectMilestoneController::class, 'destroy']);
+        Route::post('/{project}/milestones/{milestone}/transition', [ProjectMilestoneController::class, 'transition']);
 
         Route::post('/{project}/attachments', [ProjectTaskController::class, 'storeAttachment']);
         Route::get('/{project}/attachments/{attachment}/download', [ProjectTaskController::class, 'downloadAttachment']);

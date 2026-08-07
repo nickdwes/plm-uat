@@ -92,6 +92,12 @@ class Project extends Model
         return $this->hasMany(ProjectAttachment::class);
     }
 
+    /** What the customer agreed to pay, and against which piece of work. */
+    public function contractMilestones(): HasMany
+    {
+        return $this->hasMany(ProjectContractMilestone::class)->orderBy('due_on');
+    }
+
     /**
      * How far along it is, as the cards show it.
      *
