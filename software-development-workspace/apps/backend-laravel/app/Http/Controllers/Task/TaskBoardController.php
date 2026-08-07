@@ -41,6 +41,7 @@ class TaskBoardController extends Controller
 
     private const DETAIL = [
         'assignee', 'approver', 'starter', 'completer',
+        'ownerAccount', 'ownerVendorPartner', 'ownerContact',
         'members.employee', 'subtasks.members.employee', 'subtasks.assignee',
         'dependencies', 'externalDependencies', 'requests.toEmployee', 'requests.requester',
         'requiredDocuments', 'project', 'attachments',
@@ -73,6 +74,15 @@ class TaskBoardController extends Controller
             // Past its deadline and still open — which is not any one status,
             // and is the number people actually come to the page for.
             'overdue'     => $scope()->open()->whereDate('deadline', '<', $today)->count(),
+
+            /*
+             * Owed by somebody outside the company and still open.
+             *
+             * Counted apart from the rest because it is not our workload. A
+             * person chasing eleven things a client owes is not overloaded,
+             * and a total that mixes the two says they are.
+             */
+            'awaiting_others' => $scope()->awaitingOthers()->count(),
         ]);
     }
 
@@ -80,11 +90,16 @@ class TaskBoardController extends Controller
     {
         $this->authorize('viewAny', Task::class);
 
-        $q = Task::query()->with(['assignee', 'project', 'members.employee'])->roots();
+        // The owner links come with the list because the board badges them —
+        // without eager loading that is a query per card.
+        $q = Task::query()->with([
+            'assignee', 'project', 'members.employee',
+            'ownerAccount', 'ownerVendorPartner', 'ownerContact',
+        ])->roots();
 
         $this->visibleTo($request, $q);
 
-        foreach (['category', 'status', 'priority'] as $key) {
+        foreach (['category', 'status', 'priority', 'owner_party'] as $key) {
             if ($value = $request->string($key)->toString()) {
                 $q->where($key, $value);
             }
@@ -102,6 +117,9 @@ class TaskBoardController extends Controller
             'overdue' => $q->open()->whereDate('deadline', '<', now()->toDateString()),
             'open'    => $q->open(),
             'mine'    => $q->where('assigned_to', $request->user()->employeeId()),
+            // Owed by a client or a supplier and not yet done — the list
+            // somebody has to work through before chasing anyone.
+            'awaiting_others' => $q->awaitingOthers(),
             default   => null,
         };
 
@@ -178,7 +196,7 @@ class TaskBoardController extends Controller
 
         $orgId = app('current.organization_id');
 
-        $task = Task::create($this->rules($request, $orgId) + [
+        $task = Task::create($this->reconcileOwnership($this->rules($request, $orgId), new Task) + [
             'reference'       => ReferenceSequence::next('TK', 'tasks', $orgId),
             'organization_id' => $orgId,
             'created_by'      => $request->user()->id,
@@ -198,7 +216,7 @@ class TaskBoardController extends Controller
     {
         $this->authorize('update', $task);
 
-        $data = $this->rules($request, $task->organization_id);
+        $data = $this->reconcileOwnership($this->rules($request, $task->organization_id), $task);
         $me   = $request->user()->employeeId();
 
         $next = $data['status'] ?? $task->status;
@@ -804,6 +822,23 @@ class TaskBoardController extends Controller
             'approver_id' => ['nullable', 'integer',
                 Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
 
+            /*
+             * Who owes the work.
+             *
+             * The party and its link have to agree — the legacy's free-text
+             * owner produced "Versa-Fatih", an organisation and a person in one
+             * field, and 974 rows left blank. Naming a customer is what makes
+             * "everything still waiting on Safaricom" answerable at all.
+             */
+            'owner_party' => ['sometimes', Rule::in(Task::PARTIES)],
+            'owner_account_id' => ['nullable', 'integer', $scoped('accounts')],
+            'owner_vendor_partner_id' => ['nullable', 'integer', $scoped('vendor_partners')],
+            'owner_contact_id' => ['nullable', 'integer',
+                Rule::exists('account_contacts', 'id')->where('organization_id', $orgId)],
+            // Free text, because a client's engineer is rarely on file before
+            // the task naming them exists. 95 of the legacy's 104 were this.
+            'owner_contact_name' => ['nullable', 'string', 'max:255'],
+
             'assigned_to' => ['nullable', 'integer',
                 Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
 
@@ -816,6 +851,47 @@ class TaskBoardController extends Controller
             'account_id'     => ['nullable', 'integer', $scoped('accounts')],
             'parent_task_id' => ['nullable', 'integer', $scoped('tasks')],
         ]);
+    }
+
+    /**
+     * The owning party and its link must agree, and the leftovers are cleared.
+     *
+     * Switching a task back to ours has to drop the customer it used to be
+     * owed by, or a later filter finds it under an organisation that no longer
+     * owes anything — which is the sort of quiet wrongness the legacy's blank
+     * owner column produced 974 times.
+     */
+    private function reconcileOwnership(array $data, Task $task): array
+    {
+        if (! array_key_exists('owner_party', $data)) {
+            return $data;
+        }
+
+        $party = $data['owner_party'];
+
+        if ($party === 'customer' && ! ($data['owner_account_id'] ?? $task->owner_account_id)) {
+            throw ValidationException::withMessages([
+                'owner_account_id' => 'Say which customer owes this.',
+            ]);
+        }
+
+        if ($party === 'vendor' && ! ($data['owner_vendor_partner_id'] ?? $task->owner_vendor_partner_id)) {
+            throw ValidationException::withMessages([
+                'owner_vendor_partner_id' => 'Say which vendor owes this.',
+            ]);
+        }
+
+        if ($party === 'internal') {
+            return $data + [
+                'owner_account_id' => null, 'owner_vendor_partner_id' => null,
+                'owner_contact_id' => null, 'owner_contact_name' => null,
+            ];
+        }
+
+        // A customer-owned task has no vendor, and the reverse.
+        return $data + ($party === 'customer'
+            ? ['owner_vendor_partner_id' => null]
+            : ['owner_account_id' => null, 'owner_contact_id' => null]);
     }
 
     private function row(Task $t): array
@@ -869,6 +945,21 @@ class TaskBoardController extends Controller
                 ? ['id' => $t->completer->id, 'name' => $t->completer->full_name] : null,
 
             'assignee' => $t->assignee ? ['id' => $t->assignee->id, 'name' => $t->assignee->full_name] : null,
+
+            /*
+             * Who owes the work. `is_ours` is the one the rest of the system
+             * should read — an externally owned task sits in somebody's list
+             * here because they chase it, not because they do it.
+             */
+            'owner' => [
+                'party'   => $t->owner_party,
+                'is_ours' => $t->is_ours,
+                'name'    => $t->owner_name,
+                'account_id' => $t->owner_account_id,
+                'vendor_partner_id' => $t->owner_vendor_partner_id,
+                'contact_id'   => $t->owner_contact_id,
+                'contact_name' => $t->owner_contact_name_resolved,
+            ],
 
             /*
              * The avatar stack in the designs. The owner leads it, then anyone

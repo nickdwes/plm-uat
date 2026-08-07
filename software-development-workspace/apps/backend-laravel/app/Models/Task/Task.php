@@ -39,6 +39,10 @@ class Task extends Model
 
         'effort_estimate_days', 'started_on', 'assigned_to',
 
+        // Who owes the work — us, the customer, or a vendor.
+        'owner_party', 'owner_account_id', 'owner_vendor_partner_id',
+        'owner_contact_id', 'owner_contact_name',
+
         // What actually happened, and who signs it off.
         'started_by', 'completed_by',
         'requires_approval', 'approver_id', 'approved_at', 'approved_by', 'approval_note',
@@ -54,7 +58,12 @@ class Task extends Model
         'effort_estimate_days' => 'decimal:2',
     ];
 
-    protected $attributes = ['status' => 'todo', 'priority' => 'medium'];
+    /**
+     * Mirrors the column defaults, so a freshly created model reads the same
+     * as one loaded back from the database rather than showing null until the
+     * next fetch.
+     */
+    protected $attributes = ['status' => 'todo', 'priority' => 'medium', 'owner_party' => 'internal'];
 
     /** As the design's task list labels them. */
     public const STATUSES = ['todo', 'in_progress', 'awaiting_approval', 'completed', 'blocked'];
@@ -76,6 +85,15 @@ class Task extends Model
     /** The one status that means the work is done, named once. */
     public const DONE = 'completed';
 
+    /**
+     * Who owes the work.
+     *
+     * 104 of the legacy's 9,055 tasks were owed by somebody else — a client or
+     * a supplier — and 97 of those were tracked all the way to Completed. It is
+     * a real state, not a note.
+     */
+    public const PARTIES = ['internal', 'customer', 'vendor'];
+
     public function project(): BelongsTo
     {
         return $this->belongsTo(\App\Models\Project\Project::class);
@@ -84,6 +102,21 @@ class Task extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(\App\Models\Employee::class, 'assigned_to');
+    }
+
+    public function ownerAccount(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Account\Account::class, 'owner_account_id');
+    }
+
+    public function ownerVendorPartner(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Training\VendorPartner::class, 'owner_vendor_partner_id');
+    }
+
+    public function ownerContact(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Account\AccountContact::class, 'owner_contact_id');
     }
 
     /** Who has to sign it off. Named, so they can actually be told. */
@@ -200,6 +233,52 @@ class Task extends Model
         return $this->relationLoaded('dependencies')
             ? $this->dependencies->contains(fn (self $t) => ! $t->is_done)
             : $this->dependencies()->where('status', '!=', self::DONE)->exists();
+    }
+
+    /**
+     * Ours to do, rather than ours to chase.
+     *
+     * The distinction the legacy's `task_owner` was reaching for and could not
+     * hold, because it was a string that 974 rows left blank. An externally
+     * owned task still sits in somebody's list here — somebody has to chase it
+     * — but the hours are not ours and counting them as our capacity makes our
+     * own delivery look worse than it is.
+     */
+    public function getIsOursAttribute(): bool
+    {
+        return $this->owner_party === 'internal';
+    }
+
+    /** Who owes it, in words — for a badge that has to read at a glance. */
+    public function getOwnerNameAttribute(): ?string
+    {
+        return match ($this->owner_party) {
+            'customer' => $this->ownerAccount?->name,
+            'vendor'   => $this->ownerVendorPartner?->name,
+            default    => null,
+        };
+    }
+
+    /**
+     * Who at that organisation.
+     *
+     * The contact record where they are on file, the typed name otherwise —
+     * which was 95 of the legacy's 104, because a client's engineer is rarely
+     * on file before the task naming them exists.
+     */
+    public function getOwnerContactNameResolvedAttribute(): ?string
+    {
+        if ($this->owner_contact_id && $this->ownerContact) {
+            return trim($this->ownerContact->first_name . ' ' . $this->ownerContact->last_name);
+        }
+
+        return $this->owner_contact_name;
+    }
+
+    /** Externally owned and not finished — what somebody has to chase. */
+    public function scopeAwaitingOthers(Builder $q): Builder
+    {
+        return $q->where('owner_party', '!=', 'internal')->where('status', '!=', self::DONE);
     }
 
     public function getIsOverdueAttribute(): bool

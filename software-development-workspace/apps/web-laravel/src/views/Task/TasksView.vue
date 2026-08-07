@@ -21,6 +21,8 @@ import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
+import AccountPicker from "../../components/AccountPicker.vue";
+import VendorPartnerPicker from "../../components/VendorPartnerPicker.vue";
 
 interface Person { id: number | null; name: string | null }
 interface TaskRow {
@@ -33,6 +35,7 @@ interface TaskRow {
   assignee: Person | null;
   assignees: Person[];
   project: { id: number; name: string } | null;
+  owner: { party: string; is_ours: boolean; name: string | null; contact_name: string | null };
   open_issue_count: number;
 }
 interface Ask {
@@ -44,6 +47,7 @@ interface Ask {
 interface Summary {
   total: number; todo: number; in_progress: number;
   awaiting: number; completed: number; overdue: number;
+  awaiting_others: number;
 }
 
 const router = useRouter();
@@ -56,7 +60,9 @@ const search  = ref("");
 const page    = ref(1);
 const lastPage = ref(1);
 
-const summary = ref<Summary>({ total: 0, todo: 0, in_progress: 0, awaiting: 0, completed: 0, overdue: 0 });
+const summary = ref<Summary>({
+  total: 0, todo: 0, in_progress: 0, awaiting: 0, completed: 0, overdue: 0, awaiting_others: 0,
+});
 const incoming = ref<Ask[]>([]);
 const outgoing = ref<Ask[]>([]);
 
@@ -65,6 +71,16 @@ const status = ref("todo");
 const showFilters = ref(false);
 const category = ref("");
 const onlyOverdue = ref(false);
+const ownerParty = ref("");
+
+/**
+ * Everything outstanding that somebody outside owes.
+ *
+ * Its own mode rather than a status filter, because it spans To Do, In
+ * Progress and Awaiting Approval — the same reason Overdue is a count and not
+ * a column.
+ */
+const awaitingOthers = ref(false);
 
 const org = () => currentOrgSlug.value;
 
@@ -86,8 +102,10 @@ async function load() {
       params: {
         search: search.value || undefined,
         category: category.value || undefined,
-        state: onlyOverdue.value ? "overdue" : undefined,
-        status: view.value === "list" ? status.value : undefined,
+        owner_party: ownerParty.value || undefined,
+        state: awaitingOthers.value ? "awaiting_others" : (onlyOverdue.value ? "overdue" : undefined),
+        // Cuts across statuses, so pinning one would hide most of it.
+        status: view.value === "list" && ! awaitingOthers.value ? status.value : undefined,
         page: view.value === "list" ? page.value : undefined,
         per_page: view.value === "list" ? 10 : 200,
       },
@@ -139,6 +157,12 @@ const blank = () => ({
   title: "", description: "", category: "internal", priority: "medium",
   status: "todo", deadline: "", effort_estimate_days: "" as string | number,
   assigned_to: null as number | null,
+  // Ours unless somebody says otherwise — which was 7,977 of the legacy's
+  // 9,055 tasks, and 974 more that meant it by leaving the field blank.
+  owner_party: "internal",
+  owner_account_id: null as number | null,
+  owner_vendor_partner_id: null as number | null,
+  owner_contact_name: "",
 });
 const form = ref(blank());
 
@@ -157,6 +181,7 @@ async function create() {
         ...form.value,
         deadline: form.value.deadline || null,
         effort_estimate_days: form.value.effort_estimate_days === "" ? null : form.value.effort_estimate_days,
+        owner_contact_name: form.value.owner_contact_name || null,
       },
     });
     showNew.value = false;
@@ -248,7 +273,10 @@ onMounted(refresh);
       <div>
         <h1 class="tk-title">Tasks</h1>
         <p class="tk-sub">
-          You have {{ summary.total - summary.completed }} ongoing tasks.
+          You have {{ summary.total - summary.completed - summary.awaiting_others }} ongoing tasks.
+          <template v-if="summary.awaiting_others">
+            {{ summary.awaiting_others }} more are waiting on somebody outside.
+          </template>
           Stay focused and complete them on time
         </p>
       </div>
@@ -284,6 +312,19 @@ onMounted(refresh);
         <span class="tk-stat-label">Overdue Tasks</span>
         <span :class="['tk-stat-value', { late: summary.overdue }]">{{ summary.overdue }}</span>
       </div>
+      <!--
+        Owed by a client or a supplier, and counted apart from the rest.
+
+        Somebody chasing eleven things a client owes is not overloaded, and a
+        total that mixes the two says they are. Clicking it is how you get the
+        list to chase from.
+      -->
+      <button class="tk-stat tk-stat-btn"
+              :class="{ active: awaitingOthers }"
+              @click="awaitingOthers = !awaitingOthers; onlyOverdue = false; setView('list')">
+        <span class="tk-stat-label">Waiting on Others</span>
+        <span class="tk-stat-value">{{ summary.awaiting_others }}</span>
+      </button>
     </div>
 
     <!-- ── View switch ──────────────────────────────────────────────────── -->
@@ -305,7 +346,12 @@ onMounted(refresh);
 
     <!-- Status chips belong to the list; on the board the columns are the
          same thing and two of them would disagree. -->
-    <div v-if="view === 'list'" class="tk-chips">
+    <div v-if="awaitingOthers" class="tk-mode">
+      Showing everything outstanding that a customer or vendor owes.
+      <button class="link-btn" @click="awaitingOthers = false; load()">Show all tasks</button>
+    </div>
+
+    <div v-if="view === 'list' && !awaitingOthers" class="tk-chips">
       <button v-for="c in COLUMNS" :key="c.key"
               :class="['tk-chip', { active: status === c.key }]"
               @click="setStatus(c.key)">
@@ -330,6 +376,13 @@ onMounted(refresh);
         <select v-model="category" class="control" @change="page = 1; load()">
           <option value="">Every kind</option>
           <option v-for="c in CATEGORIES" :key="c" :value="c">{{ titleCase(c) }}</option>
+        </select></label>
+      <label class="tk-field"><span>Who owes it</span>
+        <select v-model="ownerParty" class="control" @change="page = 1; load()">
+          <option value="">Anyone</option>
+          <option value="internal">Us</option>
+          <option value="customer">A customer</option>
+          <option value="vendor">A vendor or OEM</option>
         </select></label>
       <label class="tk-check">
         <input v-model="onlyOverdue" type="checkbox" @change="page = 1; load()" />
@@ -363,6 +416,12 @@ onMounted(refresh);
 
           <!-- An open issue is not the same thing as the column the card is
                in: a task can be In Progress and still be stuck. -->
+          <!-- Owed by somebody outside, so nobody mistakes it for our work. -->
+          <p v-if="!t.owner.is_ours" class="tk-card-owner">
+            Owed by {{ t.owner.name ?? "somebody outside" }}
+            <template v-if="t.owner.contact_name"> — {{ t.owner.contact_name }}</template>
+          </p>
+
           <p v-if="t.open_issue_count" class="tk-card-issues">
             {{ t.open_issue_count }} open issue{{ t.open_issue_count === 1 ? "" : "s" }}
           </p>
@@ -397,12 +456,16 @@ onMounted(refresh);
         <table class="tk-table">
           <thead>
             <tr>
-              <th>Task</th><th>Assignee</th><th>Due Date</th><th>Priority</th><th>Actions</th>
+              <th>Task</th><th>Owed by</th><th>Assignee</th><th>Due Date</th><th>Priority</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="t in rows" :key="t.id" :class="{ overdue: t.is_overdue }">
               <td class="tk-name">{{ t.title }}</td>
+              <td>
+                <span v-if="t.owner.is_ours" class="tk-muted">Us</span>
+                <span v-else class="tk-external">{{ t.owner.name ?? "Outside" }}</span>
+              </td>
               <td>
                 <span class="tk-stack">
                   <span v-for="p in stack(t.assignees)" :key="p.id ?? p.name ?? ''" class="tk-avatar"
@@ -527,7 +590,36 @@ onMounted(refresh);
         </label>
 
         <div class="tk-field"><span>Assignee</span>
-          <EmployeePicker v-model="form.assigned_to" placeholder="Assignee" /></div>
+          <EmployeePicker v-model="form.assigned_to" placeholder="Assignee" />
+          <span class="tk-hint">Who here is accountable for it landing.</span>
+        </div>
+
+        <!--
+          Who actually does the work, which is not always us.
+
+          104 of the legacy's tasks were owed by a client or a supplier and 97
+          of those were tracked to completion. Recording it is what turns
+          "waiting on the client" from a comment into something countable.
+        -->
+        <label class="tk-field"><span>Who owes the work</span>
+          <select v-model="form.owner_party" class="control">
+            <option value="internal">Us</option>
+            <option value="customer">A customer</option>
+            <option value="vendor">A vendor or OEM</option>
+          </select></label>
+
+        <div v-if="form.owner_party === 'customer'" class="tk-field"><span>Which customer</span>
+          <AccountPicker v-model="form.owner_account_id" placeholder="Which customer owes this?" /></div>
+
+        <div v-if="form.owner_party === 'vendor'" class="tk-field"><span>Which vendor</span>
+          <VendorPartnerPicker v-model="form.owner_vendor_partner_id" placeholder="Which vendor owes this?" /></div>
+
+        <label v-if="form.owner_party !== 'internal'" class="tk-field"><span>Who there</span>
+          <input v-model="form.owner_contact_name" class="control" placeholder="Milton Ope" />
+          <span class="tk-hint">
+            Typed, not picked — their engineer is rarely on our books.
+          </span>
+        </label>
 
         <button class="btn-primary btn-block" :disabled="saving || !form.title.trim()" @click="create">
           {{ saving ? "Adding…" : "Add Task" }}
@@ -635,6 +727,21 @@ onMounted(refresh);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 .tk-card-issues { font-size: var(--text-xs-size); color: var(--color-danger-text); margin: 0; }
+.tk-card-owner { font-size: var(--text-xs-size); color: var(--color-warning-text); margin: 0; }
+.tk-external {
+  padding: 1px var(--space-2); border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle); color: var(--color-warning-text);
+  font-size: var(--text-xs-size); white-space: nowrap;
+}
+.tk-stat-btn { @apply cursor-pointer border-none text-left; background: transparent; font-family: inherit; border-right: 1px solid var(--color-border); }
+.tk-stat-btn.active { background: var(--color-warning-subtle); }
+.tk-stat-btn.active .tk-stat-value { color: var(--color-warning-text); }
+.tk-mode {
+  @apply flex flex-wrap items-center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
+  border-radius: var(--radius-md); background: var(--color-warning-subtle);
+  color: var(--color-warning-text); font-size: var(--text-sm-size);
+}
 .tk-card-foot { @apply flex items-center justify-between; gap: var(--space-2); margin-top: var(--space-1); }
 
 /* Priority flag, coloured as the designs have it. */

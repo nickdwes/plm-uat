@@ -18,6 +18,8 @@ import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
+import AccountPicker from "../../components/AccountPicker.vue";
+import VendorPartnerPicker from "../../components/VendorPartnerPicker.vue";
 
 const props = defineProps<{ id: string }>();
 const emit  = defineEmits<{ (e: "changed"): void }>();
@@ -61,6 +63,11 @@ interface Task {
   approver: Person | null; can_approve: boolean;
   started_by: Person | null; completed_by: Person | null;
   assignee: Person | null; assignees: Person[];
+  owner: {
+    party: string; is_ours: boolean; name: string | null;
+    account_id: number | null; vendor_partner_id: number | null;
+    contact_id: number | null; contact_name: string | null;
+  };
   project: { id: number; name: string } | null;
   assisting: { id: number; employee: Person }[];
   requests: Ask[];
@@ -161,6 +168,10 @@ const form = ref({
   deadline: "", started_on: "", effort_estimate_days: "" as string | number,
   assigned_to: null as number | null,
   requires_approval: false, approver_id: null as number | null,
+  owner_party: "internal",
+  owner_account_id: null as number | null,
+  owner_vendor_partner_id: null as number | null,
+  owner_contact_name: "",
 });
 
 function beginEdit() {
@@ -173,6 +184,12 @@ function beginEdit() {
     assigned_to: t.assignee?.id ?? null,
     requires_approval: t.requires_approval,
     approver_id: t.approver?.id ?? null,
+    owner_party: t.owner.party,
+    owner_account_id: t.owner.account_id,
+    owner_vendor_partner_id: t.owner.vendor_partner_id,
+    // The typed name only — a linked contact is left alone rather than
+    // flattened into free text and saved back as one.
+    owner_contact_name: t.owner.contact_id ? "" : (t.owner.contact_name ?? ""),
   };
   editing.value = true;
 }
@@ -183,6 +200,7 @@ async function save() {
     deadline: form.value.deadline || null,
     started_on: form.value.started_on || null,
     effort_estimate_days: form.value.effort_estimate_days === "" ? null : form.value.effort_estimate_days,
+    owner_contact_name: form.value.owner_contact_name || null,
   }, "Task updated.");
   if (ok) editing.value = false;
 }
@@ -463,6 +481,19 @@ function badge(name: Tab): number {
         </div>
 
         <!--
+          Owed by somebody outside, said up front.
+
+          It changes what every other number on this panel means: the elapsed
+          days are not our effort, and the person assigned is chasing it rather
+          than doing it.
+        -->
+        <p v-if="!task.owner.is_ours" class="tp-external">
+          <strong>{{ task.owner.name ?? "Somebody outside" }}</strong> owes this work
+          <template v-if="task.owner.contact_name"> — {{ task.owner.contact_name }}</template>.
+          <template v-if="task.assignee?.name"> {{ task.assignee.name }} is chasing it.</template>
+        </p>
+
+        <!--
           The approver's controls, only where they can act.
 
           Approval had columns, a status and a board column and nothing that
@@ -500,6 +531,9 @@ function badge(name: Tab): number {
             </span></div>
           <div class="tp-fact"><span class="tp-fact-key">Status</span>
             <span :class="['pill', `pill-${statusTone(task.status)}`]">{{ titleCase(task.status) }}</span></div>
+          <div class="tp-fact"><span class="tp-fact-key">Owed by</span>
+            <span v-if="task.owner.is_ours" class="tp-fact-value">Us</span>
+            <span v-else class="tp-fact-value external">{{ task.owner.name ?? "Outside" }}</span></div>
           <div class="tp-fact"><span class="tp-fact-key">Assignees</span>
             <span class="tp-stack">
               <span v-for="p in task.assignees.slice(0, 4)" :key="p.id ?? ''" class="tp-avatar"
@@ -511,7 +545,11 @@ function badge(name: Tab): number {
                and never once made. -->
           <div class="tp-fact"><span class="tp-fact-key">Against estimate</span>
             <span v-if="variance" :class="['pill', `pill-${variance.tone}`]">{{ variance.text }}</span>
-            <span v-else class="tp-muted">Not estimated</span></div>
+            <span v-else class="tp-muted">Not estimated</span>
+            <!-- Counting somebody else's hours as our capacity makes our own
+                 delivery look worse than it is. -->
+            <span v-if="!task.owner.is_ours" class="tp-hint">Not our effort.</span>
+          </div>
           <div class="tp-fact tp-fact-edit">
             <button class="link-btn" @click="beginEdit">Edit details</button>
           </div>
@@ -995,6 +1033,24 @@ function badge(name: Tab): number {
           <div v-if="form.requires_approval" class="tp-field"><span>Who approves it</span>
             <EmployeePicker v-model="form.approver_id" placeholder="Who signs it off?" />
           </div>
+
+          <label class="tp-field"><span>Who owes the work</span>
+            <select v-model="form.owner_party" class="control">
+              <option value="internal">Us</option>
+              <option value="customer">A customer</option>
+              <option value="vendor">A vendor or OEM</option>
+            </select></label>
+
+          <div v-if="form.owner_party === 'customer'" class="tp-field"><span>Which customer</span>
+            <AccountPicker v-model="form.owner_account_id" placeholder="Which customer owes this?" /></div>
+
+          <div v-if="form.owner_party === 'vendor'" class="tp-field"><span>Which vendor</span>
+            <VendorPartnerPicker v-model="form.owner_vendor_partner_id" placeholder="Which vendor owes this?" /></div>
+
+          <label v-if="form.owner_party !== 'internal'" class="tp-field"><span>Who there</span>
+            <input v-model="form.owner_contact_name" class="control" placeholder="Milton Ope" />
+            <span class="tp-hint">Typed, not picked — their engineer is rarely on our books.</span>
+          </label>
           <button class="btn-primary btn-block" :disabled="saving || !form.title.trim()" @click="save">
             {{ saving ? "Saving…" : "Save" }}
           </button>
@@ -1047,6 +1103,12 @@ function badge(name: Tab): number {
 }
 .tp-approval-text { font-size: var(--text-sm-size); color: var(--color-warning-text); margin: 0; }
 .tp-approval-actions { @apply flex; gap: var(--space-2); }
+.tp-external {
+  font-size: var(--text-sm-size); color: var(--color-warning-text); margin: 0;
+  padding: var(--space-3) var(--space-5); background: var(--color-warning-subtle);
+  border-bottom: 1px solid var(--color-border);
+}
+.tp-fact-value.external { color: var(--color-warning-text); font-weight: 500; }
 .tp-sent-back {
   font-size: var(--text-sm-size); color: var(--color-danger-text); margin: 0;
   padding: var(--space-3) var(--space-5); background: var(--color-danger-subtle);
