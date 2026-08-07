@@ -33,8 +33,10 @@ use App\Http\Controllers\Training\VendorComplianceController;
 use App\Http\Controllers\Vendor\VendorController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\Attendance\AttendanceAnalyticsController;
 use App\Http\Controllers\Attendance\AttendanceCommitmentController;
 use App\Http\Controllers\Attendance\AttendanceController;
+use App\Http\Controllers\Attendance\EnablementDayController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
 use App\Http\Controllers\Pipeline\OpportunityController;
@@ -216,6 +218,30 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::put('/commitments/{commitment}',    [AttendanceCommitmentController::class, 'update']);
         Route::delete('/commitments/{commitment}', [AttendanceCommitmentController::class, 'destroy']);
         Route::post('/commitments/{commitment}/report', [AttendanceCommitmentController::class, 'report']);
+
+        /*
+         * What the workforce actually did. Scoped like everything else — a
+         * manager's report covers their own reports and nobody else's.
+         */
+        Route::prefix('analytics')->group(function () {
+            Route::get('/people',       [AttendanceAnalyticsController::class, 'people']);
+            Route::get('/trends',       [AttendanceAnalyticsController::class, 'trends']);
+            Route::get('/distribution', [AttendanceAnalyticsController::class, 'distribution']);
+        });
+
+        /*
+         * The one day a week for training, certification, research and
+         * improvement. Asked for, not taken — it displaces work other people
+         * are waiting on, so somebody accountable decides.
+         */
+        Route::prefix('enablement')->group(function () {
+            // What is in the way, before committing to ask.
+            Route::post('/check',   [EnablementDayController::class, 'check']);
+            Route::post('/request', [EnablementDayController::class, 'request']);
+            Route::get('/pending',  [EnablementDayController::class, 'pending']);
+            Route::post('/{attendanceDay}/decide',   [EnablementDayController::class, 'decide']);
+            Route::delete('/{attendanceDay}',        [EnablementDayController::class, 'withdraw']);
+        });
 
         Route::get('/{attendanceDay}', [AttendanceController::class, 'show']);
     });

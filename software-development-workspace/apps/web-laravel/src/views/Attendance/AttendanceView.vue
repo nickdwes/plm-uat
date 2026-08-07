@@ -59,6 +59,9 @@ interface Day {
   tally: { promised: number; done: number; missed: number; unexplained: number; open: number };
   is_reported: boolean;
   reminded_at: string | null;
+  is_enablement_day: boolean;
+  enablement_status: string | null;
+  enablement_note: string | null;
   audits?: { field: string; from: string | null; to: string | null; at: string | null; by: string | null }[];
 }
 interface Summary {
@@ -342,6 +345,83 @@ async function saveExplanation() {
   finally { saving.value = false; }
 }
 
+// ── The enablement day ──────────────────────────────────────────────────────
+
+/**
+ * One day a week for training, certification, research and improvement.
+ *
+ * The conflicts are checked before anybody commits to asking, so somebody can
+ * see the client is on site on Thursday and quietly ask for Friday instead —
+ * rather than putting a request in front of their manager only to withdraw it.
+ */
+interface Conflict { kind: string; severity: string; detail: string }
+interface Pending {
+  id: number; work_date: string; status: string | null; note: string | null;
+  employee: { id: number; name: string } | null;
+  conflicts?: Conflict[];
+}
+
+const showEnablement = ref(false);
+const enablement = ref({ work_date: "", note: "" });
+const conflicts = ref<Conflict[]>([]);
+const alreadyTaken = ref<string | null>(null);
+const pending = ref<Pending[]>([]);
+
+async function checkEnablement() {
+  if (!enablement.value.work_date) return;
+  try {
+    const res = await api<{ conflicts: Conflict[]; already_taken: string | null }>(
+      "POST", "/api/v1/attendance/enablement/check",
+      { org: org(), body: { work_date: enablement.value.work_date } },
+    );
+    conflicts.value = res.conflicts;
+    alreadyTaken.value = res.already_taken;
+  } catch (e) { fail(e, "Could not check that day."); }
+}
+
+function openEnablement() {
+  enablement.value = { work_date: "", note: "" };
+  conflicts.value = [];
+  alreadyTaken.value = null;
+  showEnablement.value = true;
+  loadPending();
+}
+
+async function requestEnablement() {
+  if (!enablement.value.work_date) return;
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/attendance/enablement/request", {
+      org: org(), body: { ...enablement.value, note: enablement.value.note || null },
+    });
+    showEnablement.value = false;
+    notifySaved("Asked. Your manager has been told.");
+    await load();
+  } catch (e) { fail(e, "Could not ask for that day."); }
+  finally { saving.value = false; }
+}
+
+/** What is waiting on the person reading this, if they approve for anybody. */
+async function loadPending() {
+  try {
+    pending.value = (await api<{ data: Pending[] }>(
+      "GET", "/api/v1/attendance/enablement/pending", { org: org() },
+    )).data;
+  } catch { pending.value = []; }
+}
+
+async function decide(p: Pending, approved: boolean) {
+  saving.value = true;
+  try {
+    await api("POST", `/api/v1/attendance/enablement/${p.id}/decide`, {
+      org: org(), body: { approved },
+    });
+    notifySaved(approved ? "Approved." : "Declined.");
+    await Promise.all([loadPending(), load()]);
+  } catch (e) { fail(e, "Could not record that."); }
+  finally { saving.value = false; }
+}
+
 // ── One day ─────────────────────────────────────────────────────────────────
 
 const open = ref<Day | null>(null);
@@ -488,6 +568,10 @@ onMounted(load);
         <p class="at-sub">Analyze your attendance record</p>
       </div>
       <div class="at-actions">
+        <button class="btn-ghost" @click="$router.push({ name: 'attendance-report' })">
+          Attendance Report
+        </button>
+        <button class="btn-ghost" @click="openEnablement">Enablement day</button>
         <button class="btn-ghost" @click="showHours = true">Add Hours</button>
         <button v-if="!clockedIn" class="btn-primary" :disabled="saving" @click="clock('in')">
           ▶ Clock In
@@ -627,6 +711,11 @@ onMounted(load);
                 <!-- What was promised and how much of it landed. The
                      unexplained count leads, because that is the only part
                      anybody has to act on. -->
+                <!-- An enablement day reads as its own thing, not as a
+                     work-from-home day that happens to be quiet. -->
+                <span v-if="byDate[iso]?.is_enablement_day" class="at-chip chip-ok">
+                  Enablement{{ byDate[iso].enablement_status === "requested" ? " (asked)" : "" }}
+                </span>
                 <span v-if="byDate[iso]?.tally?.unexplained" class="at-chip chip-bad">
                   {{ byDate[iso].tally.unexplained }} unexplained
                 </span>
@@ -912,6 +1001,71 @@ onMounted(load);
       </div>
     </div>
 
+    <!-- ── Enablement day ───────────────────────────────────────────────── -->
+    <div v-if="showEnablement" class="at-backdrop" @click.self="showEnablement = false">
+      <aside class="at-sheet" role="dialog" aria-modal="true" aria-label="Enablement day">
+        <div class="at-sheet-head">
+          <h3 class="at-sheet-title">Enablement day</h3>
+          <button class="at-close" aria-label="Close" @click="showEnablement = false">×</button>
+        </div>
+
+        <p class="at-hint">
+          One day a week, worked from home, for training, certification,
+          knowledge transfer, research or improving how we work. Your manager
+          approves it, because it displaces work other people are waiting on.
+        </p>
+
+        <label class="at-field"><span>Which day</span>
+          <input v-model="enablement.work_date" class="control" type="date" @change="checkEnablement" /></label>
+
+        <p v-if="alreadyTaken" class="at-warn">
+          You already have an enablement day that week, on {{ alreadyTaken }}.
+        </p>
+
+        <!-- Shown before committing to ask, so a clashing day can be swapped
+             quietly rather than requested and withdrawn. -->
+        <div v-if="conflicts.length" class="at-conflicts">
+          <h4 class="at-sheet-sub">What this would displace</h4>
+          <p v-for="c in conflicts" :key="c.kind"
+             :class="['at-conflict', c.severity === 'blocking' ? 'blocking' : '']">
+            {{ c.detail }}
+          </p>
+          <p class="at-hint">
+            None of this stops you asking — your manager weighs it.
+          </p>
+        </div>
+        <p v-else-if="enablement.work_date" class="at-clear">Nothing in the way that day.</p>
+
+        <label class="at-field"><span>What you plan to do</span>
+          <textarea v-model="enablement.note" class="control" rows="3"
+                    placeholder="Sitting the Fortinet NSE 5 exam."></textarea></label>
+
+        <button class="btn-primary btn-block"
+                :disabled="saving || !enablement.work_date || !!alreadyTaken"
+                @click="requestEnablement">
+          Ask for this day
+        </button>
+
+        <!-- What is waiting on the person reading this, if they approve for
+             anybody. A request nobody is shown is a request nobody answers. -->
+        <section v-if="pending.length">
+          <h4 class="at-sheet-sub">Waiting on you</h4>
+          <div v-for="p in pending" :key="p.id" class="at-pending">
+            <strong>{{ p.employee?.name }}</strong> — {{ p.work_date }}
+            <p v-if="p.note" class="at-muted">“{{ p.note }}”</p>
+            <p v-for="c in p.conflicts ?? []" :key="c.kind"
+               :class="['at-conflict', c.severity === 'blocking' ? 'blocking' : '']">
+              {{ c.detail }}
+            </p>
+            <div class="at-pending-actions">
+              <button class="btn-ghost btn-sm" :disabled="saving" @click="decide(p, false)">Decline</button>
+              <button class="btn-primary btn-sm" :disabled="saving" @click="decide(p, true)">Approve</button>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </div>
+
     <!-- ── Why it did not land ──────────────────────────────────────────── -->
     <div v-if="explaining" class="at-modal-backdrop" @click.self="explaining = null">
       <div class="at-modal" role="dialog" aria-modal="true" aria-label="What happened">
@@ -1039,6 +1193,23 @@ onMounted(load);
 
 .at-zoom { max-width: 10rem; }
 
+.at-conflicts { @apply flex flex-col; gap: var(--space-1); }
+.at-conflict {
+  font-size: var(--text-xs-size); color: var(--color-warning-text); margin: 0;
+  padding-left: var(--space-3); border-left: 2px solid var(--color-warning-text);
+}
+/* Somebody else has arranged their day around this one. */
+.at-conflict.blocking { color: var(--color-danger-text); border-left-color: var(--color-danger-text); }
+.at-clear { font-size: var(--text-xs-size); color: var(--color-success-text); margin: 0; }
+.at-warn { font-size: var(--text-sm-size); color: var(--color-danger-text); margin: 0; }
+.at-pending {
+  @apply flex flex-col; gap: var(--space-1);
+  padding: var(--space-3); margin-top: var(--space-2);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  font-size: var(--text-sm-size);
+}
+.at-pending-actions { @apply flex justify-end; gap: var(--space-2); margin-top: var(--space-2); }
+
 .at-nudge {
   @apply flex flex-wrap items-center justify-between; gap: var(--space-3);
   padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4);
@@ -1144,6 +1315,8 @@ onMounted(load);
 .btn-primary.danger { background: var(--color-danger-text); }
 .btn-block { width: 100%; }
 .btn-primary:disabled { @apply cursor-not-allowed opacity-50; }
+
+.btn-sm { padding: 5px var(--space-3); font-size: var(--text-xs-size); }
 
 .btn-ghost {
   @apply inline-flex cursor-pointer items-center justify-center;

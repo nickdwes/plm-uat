@@ -525,6 +525,7 @@ class AttendanceController extends Controller
 
             'is_enablement_day'  => $d->is_enablement_day,
             'enablement_status'  => $d->enablement_status,
+            'enablement_note'    => $d->enablement_note,
 
             'notes' => $d->notes,
 
