@@ -279,6 +279,17 @@ watch(() => route.name, () => {
         Projects
       </router-link>
 
+      <!-- Tasks sits with the modules rather than under Projects, because most
+           work has no project — support, meetings, training and internal jobs
+           made up three quarters of the legacy's. -->
+      <router-link :to="{ name: 'tasks' }" :class="['nav-item', { active: isActive('task') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7 4h9M7 10h9M7 16h9" /><path d="M3 4.5l1 1 1.5-2M3 10.5l1 1 1.5-2M3 16.5l1 1 1.5-2" />
+        </svg>
+        Tasks
+      </router-link>
+
       <!-- ── Customers ──────────────────────────────────────────────────────── -->
       <!-- Before Travel, because a travel request names the customer it is
            for — you reach for this to file one, not after. -->

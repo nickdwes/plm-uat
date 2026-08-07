@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Models\Project;
+namespace App\Models\Task;
 
 use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Builder;
@@ -13,27 +13,42 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 /**
  * A task, or a sub-task — they are the same thing at different depths.
  *
- * The legacy's plan phase and sub-phase were separate tables, which meant a
- * sub-phase carried a name and nothing else: no owner, no date, no status.
- * One table with a parent gives a sub-task everything a task has, and the
- * import from 527 phases and 485 sub-phases lands on it unchanged.
+ * Not a project feature. Of the legacy's 9,055 tasks only a quarter carried a
+ * project; the rest were support, training, meetings and plain internal work,
+ * and its twelve categories doubled as the module map. So the project link is
+ * one of several and all of them are optional.
+ *
+ * Sub-tasks are tasks. The legacy's separate sub-phase table meant a sub-phase
+ * carried a name and nothing else — no owner, date or status — and one table
+ * with a parent gives it everything a task has.
  */
-class ProjectTask extends Model
+class Task extends Model
 {
     use BelongsToOrganization, SoftDeletes;
 
-    protected $table = 'project_tasks';
+    protected $table = 'tasks';
 
     protected $fillable = [
-        'organization_id', 'project_id', 'parent_task_id', 'reference',
+        'organization_id', 'parent_task_id', 'reference',
         'title', 'description', 'status', 'priority', 'deadline',
         'completed_at', 'position', 'created_by',
+
+        // What kind of work, and what raised it. All optional — most tasks
+        // belong to nothing but the person doing them.
+        'category', 'project_id', 'opportunity_id', 'lead_id', 'research_id', 'account_id',
+
+        'effort_estimate_days', 'started_on', 'assigned_to',
+        'requires_approval', 'approved_at', 'approved_by',
     ];
 
     protected $casts = [
         'deadline'     => 'date',
+        'started_on'   => 'date',
         'completed_at' => 'datetime',
+        'approved_at'  => 'datetime',
         'position'     => 'integer',
+        'requires_approval'    => 'boolean',
+        'effort_estimate_days' => 'decimal:2',
     ];
 
     protected $attributes = ['status' => 'todo', 'priority' => 'medium'];
@@ -43,12 +58,41 @@ class ProjectTask extends Model
 
     public const PRIORITIES = ['low', 'medium', 'high'];
 
+    /**
+     * The legacy's twelve, which were the module map as much as a filter.
+     *
+     * Kept whole rather than trimmed to what is built: a task raised against a
+     * ticket is a real thing people do, and dropping the category would just
+     * move it into "internal" where nothing can find it.
+     */
+    public const CATEGORIES = [
+        'opportunity', 'project', 'support', 'meeting', 'training', 'certificate',
+        'research', 'collaboration', 'internal', 'ticket', 'account', 'leave',
+    ];
+
     /** The one status that means the work is done, named once. */
     public const DONE = 'completed';
 
     public function project(): BelongsTo
     {
-        return $this->belongsTo(Project::class);
+        return $this->belongsTo(\App\Models\Project\Project::class);
+    }
+
+    public function assignee(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Employee::class, 'assigned_to');
+    }
+
+    /** Requests to assist, delegate or collaborate. */
+    public function requests(): HasMany
+    {
+        return $this->hasMany(TaskRequest::class);
+    }
+
+    /** Documents this task cannot close without. */
+    public function requiredDocuments(): HasMany
+    {
+        return $this->hasMany(TaskRequiredDocument::class);
     }
 
     public function parent(): BelongsTo
@@ -63,13 +107,13 @@ class ProjectTask extends Model
 
     public function members(): HasMany
     {
-        return $this->hasMany(ProjectTaskMember::class);
+        return $this->hasMany(TaskMember::class);
     }
 
     public function dependencies(): BelongsToMany
     {
         return $this->belongsToMany(
-            self::class, 'project_task_dependencies', 'project_task_id', 'depends_on_task_id',
+            self::class, 'task_dependencies', 'task_id', 'depends_on_task_id',
         )->withTimestamps();
     }
 
@@ -77,18 +121,19 @@ class ProjectTask extends Model
     public function dependents(): BelongsToMany
     {
         return $this->belongsToMany(
-            self::class, 'project_task_dependencies', 'depends_on_task_id', 'project_task_id',
+            self::class, 'task_dependencies', 'depends_on_task_id', 'task_id',
         )->withTimestamps();
     }
 
     public function comments(): HasMany
     {
-        return $this->hasMany(ProjectComment::class)->whereNull('parent_id')->oldest('id');
+        return $this->hasMany(\App\Models\Project\ProjectComment::class, 'task_id')
+            ->whereNull('parent_id')->oldest('id');
     }
 
     public function attachments(): HasMany
     {
-        return $this->hasMany(ProjectAttachment::class);
+        return $this->hasMany(\App\Models\Project\ProjectAttachment::class, 'task_id');
     }
 
     // ── Derived ───────────────────────────────────────────────────────────
@@ -130,5 +175,28 @@ class ProjectTask extends Model
     public function scopeOpen(Builder $q): Builder
     {
         return $q->where('status', '!=', self::DONE);
+    }
+
+    /**
+     * How long it actually took, in days.
+     *
+     * Against `effort_estimate_days`, this is the comparison the legacy had the
+     * data for on nine tasks in ten and never once made.
+     */
+    public function getElapsedDaysAttribute(): ?int
+    {
+        if ($this->started_on === null || $this->completed_at === null) {
+            return null;
+        }
+
+        return (int) $this->started_on->diffInDays($this->completed_at->startOfDay());
+    }
+
+    /** Days over or under the estimate. Null until both exist. */
+    public function getEffortVarianceAttribute(): ?float
+    {
+        return $this->effort_estimate_days === null || $this->elapsed_days === null
+            ? null
+            : round($this->elapsed_days - (float) $this->effort_estimate_days, 2);
     }
 }

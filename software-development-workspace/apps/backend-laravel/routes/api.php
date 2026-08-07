@@ -41,7 +41,8 @@ use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Pipeline\ResearchController;
 use App\Http\Controllers\Project\ProjectController;
 use App\Http\Controllers\Project\ProjectMilestoneController;
-use App\Http\Controllers\Project\ProjectTaskController;
+use App\Http\Controllers\Task\TaskBoardController;
+use App\Http\Controllers\Task\TaskController;
 use App\Http\Controllers\Asset\AssetController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
@@ -359,6 +360,35 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     });
 
     /*
+     * Tasks — across the whole system, not one project's.
+     *
+     * A quarter of the legacy's 9,055 tasks carried a project; the rest were
+     * support, training, meetings and internal work. The project-nested
+     * endpoints below remain as a filtered view of the same table.
+     */
+    Route::prefix('tasks')->group(function () {
+        Route::get('/',       [TaskBoardController::class, 'index']);
+        Route::post('/',      [TaskBoardController::class, 'store']);
+
+        // Before /{task}: what has been asked of me, and what I have asked of
+        // others. The screen the legacy never had — 261 of its 354 delegations
+        // were never answered because nothing showed them.
+        Route::get('/inbox',  [TaskBoardController::class, 'inbox']);
+
+        Route::get('/{task}', [TaskBoardController::class, 'show']);
+        Route::put('/{task}', [TaskBoardController::class, 'update']);
+
+        // Asking somebody, rather than assigning them.
+        Route::post('/{task}/requests',                    [TaskBoardController::class, 'storeRequest']);
+        Route::post('/{task}/requests/{taskRequest}/respond', [TaskBoardController::class, 'respondToRequest']);
+
+        // Documents the task cannot close without.
+        Route::post('/{task}/required-documents',             [TaskBoardController::class, 'storeRequiredDocument']);
+        Route::post('/{task}/required-documents/{document}/fulfil', [TaskBoardController::class, 'fulfilRequiredDocument']);
+        Route::get('/{task}/required-documents/{document}/download', [TaskBoardController::class, 'downloadRequiredDocument']);
+    });
+
+    /*
      * Projects — the work a won deal starts.
      *
      * Filtered by ?opportunity_id= for the deal that produced it, and
@@ -375,24 +405,24 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::delete('/{project}/team/{member}',[ProjectController::class, 'destroyTeamMember']);
 
         // ── Tasks ─────────────────────────────────────────────────────────
-        Route::get('/{project}/tasks',           [ProjectTaskController::class, 'index']);
-        Route::post('/{project}/tasks',          [ProjectTaskController::class, 'store']);
+        Route::get('/{project}/tasks',           [TaskController::class, 'index']);
+        Route::post('/{project}/tasks',          [TaskController::class, 'store']);
         // Before /{task}: a literal segment after a route parameter is never
         // reached.
-        Route::post('/{project}/tasks/reorder',  [ProjectTaskController::class, 'reorder']);
-        Route::get('/{project}/tasks/{task}',    [ProjectTaskController::class, 'show']);
-        Route::put('/{project}/tasks/{task}',    [ProjectTaskController::class, 'update']);
-        Route::delete('/{project}/tasks/{task}', [ProjectTaskController::class, 'destroy']);
+        Route::post('/{project}/tasks/reorder',  [TaskController::class, 'reorder']);
+        Route::get('/{project}/tasks/{task}',    [TaskController::class, 'show']);
+        Route::put('/{project}/tasks/{task}',    [TaskController::class, 'update']);
+        Route::delete('/{project}/tasks/{task}', [TaskController::class, 'destroy']);
 
-        Route::post('/{project}/tasks/{task}/members',           [ProjectTaskController::class, 'storeMember']);
-        Route::delete('/{project}/tasks/{task}/members/{member}',[ProjectTaskController::class, 'destroyMember']);
+        Route::post('/{project}/tasks/{task}/members',           [TaskController::class, 'storeMember']);
+        Route::delete('/{project}/tasks/{task}/members/{member}',[TaskController::class, 'destroyMember']);
 
-        Route::post('/{project}/tasks/{task}/dependencies',              [ProjectTaskController::class, 'storeDependency']);
-        Route::delete('/{project}/tasks/{task}/dependencies/{dependency}',[ProjectTaskController::class, 'destroyDependency']);
+        Route::post('/{project}/tasks/{task}/dependencies',              [TaskController::class, 'storeDependency']);
+        Route::delete('/{project}/tasks/{task}/dependencies/{dependency}',[TaskController::class, 'destroyDependency']);
 
-        Route::get('/{project}/activities', [ProjectTaskController::class, 'activities']);
-        Route::get('/{project}/comments',  [ProjectTaskController::class, 'comments']);
-        Route::post('/{project}/comments', [ProjectTaskController::class, 'storeComment']);
+        Route::get('/{project}/activities', [TaskController::class, 'activities']);
+        Route::get('/{project}/comments',  [TaskController::class, 'comments']);
+        Route::post('/{project}/comments', [TaskController::class, 'storeComment']);
 
         // ── Contract milestones ───────────────────────────────────────────
         // What the customer agreed to pay, and against which task.
@@ -402,8 +432,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::delete('/{project}/milestones/{milestone}',[ProjectMilestoneController::class, 'destroy']);
         Route::post('/{project}/milestones/{milestone}/transition', [ProjectMilestoneController::class, 'transition']);
 
-        Route::post('/{project}/attachments', [ProjectTaskController::class, 'storeAttachment']);
-        Route::get('/{project}/attachments/{attachment}/download', [ProjectTaskController::class, 'downloadAttachment']);
+        Route::post('/{project}/attachments', [TaskController::class, 'storeAttachment']);
+        Route::get('/{project}/attachments/{attachment}/download', [TaskController::class, 'downloadAttachment']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────

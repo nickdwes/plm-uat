@@ -84,6 +84,8 @@ import ResearchDetailView             from "../views/Pipeline/ResearchDetailView
 // Projects
 import ProjectsView                   from "../views/Project/ProjectsView.vue";
 import ProjectDetailView              from "../views/Project/ProjectDetailView.vue";
+import TasksView                       from "../views/Task/TasksView.vue";
+import TaskDetailView                  from "../views/Task/TaskDetailView.vue";
 import OpportunityDetailView         from "../views/Pipeline/OpportunityDetailView.vue";
 
 // Vendor Module
@@ -172,6 +174,12 @@ const routes: RouteRecordRaw[] = [
   { path: "/research/:id",      name: "research-detail", component: ResearchDetailView, props: true },
   { path: "/projects",          name: "projects",        component: ProjectsView },
   { path: "/projects/:id",      name: "project",         component: ProjectDetailView, props: true },
+
+  // ── Tasks ─────────────────────────────────────────────────────────────────
+  // Not under /projects: three quarters of the legacy's 9,055 tasks had no
+  // project at all, so this is its own module rather than a project sub-screen.
+  { path: "/tasks",             name: "tasks",           component: TasksView },
+  { path: "/tasks/:id",         name: "task",            component: TaskDetailView, props: true },
 
   // ── Vendor Module ─────────────────────────────────────────────────────────
   { path: "/vendors",       name: "vendors",        component: VendorsView },

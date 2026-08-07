@@ -1,13 +1,13 @@
 <?php
 
-namespace App\Http\Controllers\Project;
+namespace App\Http\Controllers\Task;
 
 use App\Http\Controllers\Controller;
 use App\Models\Project\Project;
 use App\Models\Project\ProjectAttachment;
 use App\Models\Project\ProjectComment;
-use App\Models\Project\ProjectTask;
-use App\Models\Project\ProjectTaskMember;
+use App\Models\Task\Task;
+use App\Models\Task\TaskMember;
 use App\Support\Account\ReferenceSequence;
 use App\Services\Project\ProjectActivityService;
 use App\Support\Storage\DocumentVault;
@@ -24,7 +24,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  * apart from its project, and a second permission family for it would be one
  * more thing nobody assigns.
  */
-class ProjectTaskController extends Controller
+class TaskController extends Controller
 {
     public function __construct(private readonly ProjectActivityService $activities) {}
 
@@ -50,7 +50,7 @@ class ProjectTaskController extends Controller
         $data = $this->rules($request, $project);
 
         $task = $project->tasks()->create($data + [
-            'reference'       => ReferenceSequence::next('TK', 'project_tasks', $project->organization_id),
+            'reference'       => ReferenceSequence::next('TK', 'tasks', $project->organization_id),
             'organization_id' => $project->organization_id,
             // Appended rather than inserted: a new task belongs at the end
             // until somebody moves it.
@@ -66,7 +66,7 @@ class ProjectTaskController extends Controller
         return response()->json(['data' => $this->payload($task->load(self::DETAIL))], 201);
     }
 
-    public function show(Project $project, ProjectTask $task): JsonResponse
+    public function show(Project $project, Task $task): JsonResponse
     {
         $this->authorize('view', $project);
         abort_unless($task->project_id === $project->id, 404);
@@ -76,7 +76,7 @@ class ProjectTaskController extends Controller
         ]);
     }
 
-    public function update(Request $request, Project $project, ProjectTask $task): JsonResponse
+    public function update(Request $request, Project $project, Task $task): JsonResponse
     {
         $this->authorize('update', $project);
         abort_unless($task->project_id === $project->id, 404);
@@ -88,7 +88,7 @@ class ProjectTaskController extends Controller
          * on a reopened task is the same lie as a delivery date on a reopened
          * project — it would report finished work that is back in progress.
          */
-        if (($data['status'] ?? $task->status) === ProjectTask::DONE) {
+        if (($data['status'] ?? $task->status) === Task::DONE) {
             $data['completed_at'] = $task->completed_at ?? now();
         } elseif (array_key_exists('status', $data)) {
             $data['completed_at'] = null;
@@ -105,7 +105,7 @@ class ProjectTaskController extends Controller
         return response()->json(['data' => $this->payload($task->fresh(self::DETAIL))]);
     }
 
-    public function destroy(Project $project, ProjectTask $task): JsonResponse
+    public function destroy(Project $project, Task $task): JsonResponse
     {
         $this->authorize('update', $project);
         abort_unless($task->project_id === $project->id, 404);
@@ -122,11 +122,11 @@ class ProjectTaskController extends Controller
 
         $data = $request->validate([
             'order'   => ['required', 'array'],
-            'order.*' => ['integer', Rule::exists('project_tasks', 'id')->where('project_id', $project->id)],
+            'order.*' => ['integer', Rule::exists('tasks', 'id')->where('project_id', $project->id)],
         ]);
 
         foreach ($data['order'] as $position => $id) {
-            ProjectTask::where('id', $id)->update(['position' => $position]);
+            Task::where('id', $id)->update(['position' => $position]);
         }
 
         return $this->index($request, $project);
@@ -134,7 +134,7 @@ class ProjectTaskController extends Controller
 
     // ── Members ───────────────────────────────────────────────────────────
 
-    public function storeMember(Request $request, Project $project, ProjectTask $task): JsonResponse
+    public function storeMember(Request $request, Project $project, Task $task): JsonResponse
     {
         $this->authorize('assign', $project);
         abort_unless($task->project_id === $project->id, 404);
@@ -142,7 +142,7 @@ class ProjectTaskController extends Controller
         $data = $request->validate([
             'employee_id' => ['required', 'integer',
                 Rule::exists('employees', 'id')->where('primary_organization_id', $project->organization_id)],
-            'capacity' => ['sometimes', Rule::in(ProjectTaskMember::CAPACITIES)],
+            'capacity' => ['sometimes', Rule::in(TaskMember::CAPACITIES)],
         ]);
 
         $task->members()->firstOrCreate([
@@ -153,10 +153,10 @@ class ProjectTaskController extends Controller
         return response()->json(['data' => $this->payload($task->fresh(self::DETAIL))]);
     }
 
-    public function destroyMember(Project $project, ProjectTask $task, ProjectTaskMember $member): JsonResponse
+    public function destroyMember(Project $project, Task $task, TaskMember $member): JsonResponse
     {
         $this->authorize('assign', $project);
-        abort_unless($task->project_id === $project->id && $member->project_task_id === $task->id, 404);
+        abort_unless($task->project_id === $project->id && $member->task_id === $task->id, 404);
 
         $member->delete();
 
@@ -165,7 +165,7 @@ class ProjectTaskController extends Controller
 
     // ── Dependencies ──────────────────────────────────────────────────────
 
-    public function storeDependency(Request $request, Project $project, ProjectTask $task): JsonResponse
+    public function storeDependency(Request $request, Project $project, Task $task): JsonResponse
     {
         $this->authorize('update', $project);
         abort_unless($task->project_id === $project->id, 404);
@@ -173,7 +173,7 @@ class ProjectTaskController extends Controller
         $data = $request->validate([
             // Scoped to this project: a task cannot wait on somebody else's.
             'depends_on_task_id' => ['required', 'integer',
-                Rule::exists('project_tasks', 'id')->where('project_id', $project->id)],
+                Rule::exists('tasks', 'id')->where('project_id', $project->id)],
         ]);
 
         if ((int) $data['depends_on_task_id'] === $task->id) {
@@ -197,7 +197,7 @@ class ProjectTaskController extends Controller
         return response()->json(['data' => $this->payload($task->fresh(self::DETAIL))]);
     }
 
-    public function destroyDependency(Project $project, ProjectTask $task, ProjectTask $dependency): JsonResponse
+    public function destroyDependency(Project $project, Task $task, Task $dependency): JsonResponse
     {
         $this->authorize('update', $project);
         abort_unless($task->project_id === $project->id, 404);
@@ -220,7 +220,7 @@ class ProjectTaskController extends Controller
 
         $seen[] = $prerequisiteId;
 
-        foreach (ProjectTask::find($prerequisiteId)?->dependencies()->pluck('depends_on_task_id') ?? [] as $next) {
+        foreach (Task::find($prerequisiteId)?->dependencies()->pluck('depends_on_task_id') ?? [] as $next) {
             if ($this->wouldCycle($taskId, (int) $next, $seen)) {
                 return true;
             }
@@ -239,8 +239,8 @@ class ProjectTaskController extends Controller
 
         $data = $request->validate([
             'body' => ['required', 'string', 'max:10000'],
-            'project_task_id' => ['nullable', 'integer',
-                Rule::exists('project_tasks', 'id')->where('project_id', $project->id)],
+            'task_id' => ['nullable', 'integer',
+                Rule::exists('tasks', 'id')->where('project_id', $project->id)],
             'parent_id' => ['nullable', 'integer',
                 Rule::exists('project_comments', 'id')->where('project_id', $project->id)],
         ]);
@@ -317,15 +317,15 @@ class ProjectTaskController extends Controller
                 'mimes:pdf,doc,docx,xls,xlsx,ppt,pptx,png,jpg,jpeg,zip'],
             'label' => ['nullable', 'string', 'max:255'],
             'document_type' => ['sometimes', Rule::in(ProjectAttachment::DOCUMENT_TYPES)],
-            'project_task_id' => ['nullable', 'integer',
-                Rule::exists('project_tasks', 'id')->where('project_id', $project->id)],
+            'task_id' => ['nullable', 'integer',
+                Rule::exists('tasks', 'id')->where('project_id', $project->id)],
         ]);
 
         $file = $request->file('file');
 
         $project->attachments()->create([
             'organization_id' => $project->organization_id,
-            'project_task_id' => $data['project_task_id'] ?? null,
+            'task_id' => $data['task_id'] ?? null,
             'document_type'   => $data['document_type'] ?? 'internal',
             'label'           => ($data['label'] ?? null) ?: $file->getClientOriginalName(),
             'original_name'   => $file->getClientOriginalName(),
@@ -354,22 +354,22 @@ class ProjectTaskController extends Controller
 
     // ── Shapes ────────────────────────────────────────────────────────────
 
-    private function rules(Request $request, Project $project, ?ProjectTask $task = null): array
+    private function rules(Request $request, Project $project, ?Task $task = null): array
     {
         return $request->validate([
             'title'       => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:50000'],
-            'status'      => ['sometimes', Rule::in(ProjectTask::STATUSES)],
-            'priority'    => ['sometimes', Rule::in(ProjectTask::PRIORITIES)],
+            'status'      => ['sometimes', Rule::in(Task::STATUSES)],
+            'priority'    => ['sometimes', Rule::in(Task::PRIORITIES)],
             'deadline'    => ['nullable', 'date'],
 
             'parent_task_id' => ['nullable', 'integer',
-                Rule::exists('project_tasks', 'id')->where('project_id', $project->id)
+                Rule::exists('tasks', 'id')->where('project_id', $project->id)
                     ->when($task !== null, fn ($q) => $q->whereNot('id', $task?->id))],
         ]);
     }
 
-    private function payload(ProjectTask $task): array
+    private function payload(Task $task): array
     {
         return [
             'id'          => $task->id,
@@ -412,7 +412,7 @@ class ProjectTaskController extends Controller
         ];
     }
 
-    private function members(ProjectTask $task, string $capacity): array
+    private function members(Task $task, string $capacity): array
     {
         if (! $task->relationLoaded('members')) {
             return [];
@@ -442,7 +442,7 @@ class ProjectTaskController extends Controller
         return [
             'id' => $a->id, 'label' => $a->label, 'document_type' => $a->document_type,
             'original_name' => $a->original_name, 'size_bytes' => $a->size_bytes,
-            'project_task_id' => $a->project_task_id,
+            'task_id' => $a->task_id,
             'uploaded_at' => $a->created_at?->toIso8601String(),
         ];
     }

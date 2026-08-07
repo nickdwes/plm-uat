@@ -23,7 +23,7 @@ class ProjectComment extends Model
     protected $table = 'project_comments';
 
     protected $fillable = [
-        'organization_id', 'project_id', 'project_task_id', 'parent_id',
+        'organization_id', 'project_id', 'task_id', 'parent_id',
         'body', 'employee_id', 'created_by',
     ];
 

@@ -3,6 +3,7 @@
 namespace App\Models\Project;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Task\Task;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -15,7 +16,7 @@ class ProjectAttachment extends Model
     protected $table = 'project_attachments';
 
     protected $fillable = [
-        'organization_id', 'project_id', 'project_task_id', 'document_type',
+        'organization_id', 'project_id', 'task_id', 'document_type',
         'label', 'original_name', 'storage_path', 'mime_type', 'size_bytes', 'uploaded_by',
     ];
 
@@ -25,6 +26,6 @@ class ProjectAttachment extends Model
 
     public function task(): BelongsTo
     {
-        return $this->belongsTo(ProjectTask::class, 'project_task_id');
+        return $this->belongsTo(Task::class, 'task_id');
     }
 }

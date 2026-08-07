@@ -8,7 +8,7 @@ use App\Models\Organization;
 use App\Models\Pipeline\Opportunity;
 use App\Models\Project\Project;
 use App\Models\Project\ProjectContractMilestone;
-use App\Models\Project\ProjectTask;
+use App\Models\Task\Task;
 use App\Models\Role;
 use App\Models\User;
 use App\Support\Authorization\Permission;
@@ -76,9 +76,9 @@ class ContractMilestoneTest extends TestCase
         return "/api/v1/projects/{$this->project->id}{$path}?org={$this->org->slug}";
     }
 
-    private function task(array $attrs = []): ProjectTask
+    private function task(array $attrs = []): Task
     {
-        return ProjectTask::create($attrs + [
+        return Task::create($attrs + [
             'organization_id' => $this->org->id, 'project_id' => $this->project->id,
             'title' => 'Phase 1 — Network',
         ]);
@@ -95,7 +95,7 @@ class ContractMilestoneTest extends TestCase
 
         $res = $this->postJson($this->url('/milestones'), [
             'name' => 'On delivery of Phase 1', 'value' => 381394.71,
-            'project_task_id' => $task->id, 'due_on' => '2026-03-31',
+            'task_id' => $task->id, 'due_on' => '2026-03-31',
         ])->assertCreated();
 
         $this->assertSame($task->id, $res->json('data.task.id'));
@@ -126,13 +126,13 @@ class ContractMilestoneTest extends TestCase
     {
         $this->editor();
         $other = Project::create(['organization_id' => $this->org->id, 'name' => 'Elsewhere']);
-        $theirs = ProjectTask::create([
+        $theirs = Task::create([
             'organization_id' => $this->org->id, 'project_id' => $other->id, 'title' => 'Theirs',
         ]);
 
         $this->postJson($this->url('/milestones'), [
-            'name' => 'Wrong', 'value' => 1000, 'project_task_id' => $theirs->id,
-        ])->assertStatus(422)->assertJsonValidationErrors('project_task_id');
+            'name' => 'Wrong', 'value' => 1000, 'task_id' => $theirs->id,
+        ])->assertStatus(422)->assertJsonValidationErrors('task_id');
     }
 
     // ── The status the legacy never used ──────────────────────────────────
@@ -228,12 +228,12 @@ class ContractMilestoneTest extends TestCase
          */
         $this->editor();
         $task = $this->task();
-        $m = $this->milestone(['project_task_id' => $task->id]);
+        $m = $this->milestone(['task_id' => $task->id]);
 
         $rows = collect($this->getJson($this->url('/milestones'))->json('data'))->keyBy('id');
         $this->assertFalse($rows[$m->id]['work_is_done']);
 
-        $task->update(['status' => ProjectTask::DONE]);
+        $task->update(['status' => Task::DONE]);
 
         $rows = collect($this->getJson($this->url('/milestones'))->json('data'))->keyBy('id');
         $this->assertTrue($rows[$m->id]['work_is_done']);

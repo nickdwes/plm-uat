@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Models\Project;
+namespace App\Models\Task;
 
 use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Employee;
@@ -14,13 +14,13 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  * capacity rather than two, because two would have to be kept from disagreeing
  * about whether the same person is on the task twice.
  */
-class ProjectTaskMember extends Model
+class TaskMember extends Model
 {
     use BelongsToOrganization;
 
-    protected $table = 'project_task_members';
+    protected $table = 'task_members';
 
-    protected $fillable = ['organization_id', 'project_task_id', 'employee_id', 'capacity'];
+    protected $fillable = ['organization_id', 'task_id', 'employee_id', 'capacity'];
 
     /** Doing it, versus helping with it. */
     public const CAPACITIES = ['assignee', 'assisting'];
@@ -32,6 +32,6 @@ class ProjectTaskMember extends Model
 
     public function task(): BelongsTo
     {
-        return $this->belongsTo(ProjectTask::class, 'project_task_id');
+        return $this->belongsTo(Task::class);
     }
 }

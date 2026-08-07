@@ -5,7 +5,7 @@ namespace Tests\Feature\Project;
 use App\Models\Employee;
 use App\Models\Organization;
 use App\Models\Project\Project;
-use App\Models\Project\ProjectTask;
+use App\Models\Task\Task;
 use App\Models\Role;
 use App\Models\User;
 use App\Support\Authorization\Permission;
@@ -77,9 +77,9 @@ class ProjectTaskTest extends TestCase
         return "/api/v1/projects/{$this->project->id}{$path}?org={$this->org->slug}";
     }
 
-    private function task(array $attrs = []): ProjectTask
+    private function task(array $attrs = []): Task
     {
-        return ProjectTask::create($attrs + [
+        return Task::create($attrs + [
             'organization_id' => $this->org->id,
             'project_id'      => $this->project->id,
             'title'           => 'Redesign messaging component library',
@@ -277,7 +277,7 @@ class ProjectTaskTest extends TestCase
     {
         $this->editor();
         $other = Project::create(['organization_id' => $this->org->id, 'name' => 'Elsewhere']);
-        $theirs = ProjectTask::create([
+        $theirs = Task::create([
             'organization_id' => $this->org->id, 'project_id' => $other->id, 'title' => 'Theirs',
         ]);
 
@@ -425,7 +425,7 @@ class ProjectTaskTest extends TestCase
     {
         $this->editor();
         $other = Project::create(['organization_id' => $this->org->id, 'name' => 'Elsewhere']);
-        $theirs = ProjectTask::create([
+        $theirs = Task::create([
             'organization_id' => $this->org->id, 'project_id' => $other->id, 'title' => 'Theirs',
         ]);
 

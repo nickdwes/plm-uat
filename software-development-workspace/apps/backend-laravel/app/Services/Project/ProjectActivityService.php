@@ -4,7 +4,7 @@ namespace App\Services\Project;
 
 use App\Models\Project\Project;
 use App\Models\Project\ProjectActivity;
-use App\Models\Project\ProjectTask;
+use App\Models\Task\Task;
 
 /**
  * The project's timeline.
@@ -24,13 +24,13 @@ class ProjectActivityService
         Project $project,
         string $type,
         string $body,
-        ?ProjectTask $task = null,
+        ?Task $task = null,
         ?int $actorId = null,
         ?int $employeeId = null,
     ): ProjectActivity {
         return $project->activities()->create([
             'organization_id' => $project->organization_id,
-            'project_task_id' => $task?->id,
+            'task_id' => $task?->id,
             'kind'            => 'system',
             'type'            => $type,
             'body'            => $body,
@@ -46,15 +46,15 @@ class ProjectActivityService
      * Only the transitions worth reading: created, finished, and put back. A
      * priority edit is not a story.
      */
-    public function taskChanged(Project $project, ProjectTask $task, string $was, ?int $actorId, ?int $employeeId): void
+    public function taskChanged(Project $project, Task $task, string $was, ?int $actorId, ?int $employeeId): void
     {
         if ($was === $task->status) {
             return;
         }
 
         $body = match ($task->status) {
-            ProjectTask::DONE => "Completed “{$task->title}”",
-            default => $was === ProjectTask::DONE
+            Task::DONE => "Completed “{$task->title}”",
+            default => $was === Task::DONE
                 ? "Reopened “{$task->title}”"
                 : null,
         };

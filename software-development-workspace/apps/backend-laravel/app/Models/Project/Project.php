@@ -7,6 +7,7 @@ use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Employee;
 use App\Models\Pipeline\Opportunity;
 use App\Models\Pipeline\OpportunityDocument;
+use App\Models\Task\Task;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -75,7 +76,7 @@ class Project extends Model
 
     public function tasks(): HasMany
     {
-        return $this->hasMany(ProjectTask::class)->orderBy('position');
+        return $this->hasMany(Task::class)->orderBy('position');
     }
 
     /** Top-level tasks. Sub-tasks belong under their parent, not beside it. */
@@ -156,7 +157,7 @@ class Project extends Model
             return null;
         }
 
-        $done = $tasks->where('status', ProjectTask::DONE)->count();
+        $done = $tasks->where('status', Task::DONE)->count();
 
         return (int) round($done / $tasks->count() * 100);
     }

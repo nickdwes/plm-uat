@@ -3,6 +3,7 @@
 namespace App\Models\Project;
 
 use App\Models\Concerns\BelongsToOrganization;
+use App\Models\Task\Task;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -23,7 +24,7 @@ class ProjectContractMilestone extends Model
     protected $table = 'project_contract_milestones';
 
     protected $fillable = [
-        'organization_id', 'project_id', 'project_task_id', 'reference',
+        'organization_id', 'project_id', 'task_id', 'reference',
         'name', 'description', 'currency', 'value', 'status',
         'due_on', 'invoiced_at', 'paid_at', 'invoice_reference', 'notes', 'created_by',
     ];
@@ -47,7 +48,7 @@ class ProjectContractMilestone extends Model
     /** The work it is paid against — a legacy plan phase, now a task. */
     public function task(): BelongsTo
     {
-        return $this->belongsTo(ProjectTask::class, 'project_task_id');
+        return $this->belongsTo(Task::class, 'task_id');
     }
 
     // ── Derived ───────────────────────────────────────────────────────────
@@ -105,6 +106,6 @@ class ProjectContractMilestone extends Model
     public function scopeBillable(Builder $q): Builder
     {
         return $q->where('status', 'pending')
-            ->whereHas('task', fn ($t) => $t->where('status', ProjectTask::DONE));
+            ->whereHas('task', fn ($t) => $t->where('status', Task::DONE));
     }
 }

@@ -136,8 +136,8 @@ class ProjectMilestoneController extends Controller
 
             // Scoped to this project: a milestone cannot be paid against
             // somebody else's work.
-            'project_task_id' => ['nullable', 'integer',
-                Rule::exists('project_tasks', 'id')->where('project_id', $project->id)],
+            'task_id' => ['nullable', 'integer',
+                Rule::exists('tasks', 'id')->where('project_id', $project->id)],
         ]);
     }
 
