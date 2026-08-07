@@ -382,6 +382,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::put('/{task}',    [TaskBoardController::class, 'update']);
         Route::delete('/{task}', [TaskBoardController::class, 'destroy']);
 
+        // Signing a task off, or sending it back. Only the named approver.
+        Route::post('/{task}/approval', [TaskBoardController::class, 'decideApproval']);
+
         // Asking somebody, rather than assigning them.
         Route::post('/{task}/requests',                    [TaskBoardController::class, 'storeRequest']);
         Route::post('/{task}/requests/{taskRequest}/respond', [TaskBoardController::class, 'respondToRequest']);

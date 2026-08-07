@@ -57,7 +57,9 @@ interface Task {
   is_done: boolean; is_overdue: boolean;
   effort_estimate_days: number | string | null;
   elapsed_days: number | null; effort_variance: number | string | null;
-  requires_approval: boolean; approved_at: string | null;
+  requires_approval: boolean; approved_at: string | null; approval_note: string | null;
+  approver: Person | null; can_approve: boolean;
+  started_by: Person | null; completed_by: Person | null;
   assignee: Person | null; assignees: Person[];
   project: { id: number; name: string } | null;
   assisting: { id: number; employee: Person }[];
@@ -115,8 +117,30 @@ onMounted(load);
 
 // ── Header actions ──────────────────────────────────────────────────────────
 
+/**
+ * A task that needs signing off goes for approval instead of finishing.
+ *
+ * The server enforces this; the button says so up front rather than letting
+ * somebody press Complete and be surprised by where it lands.
+ */
 async function markComplete() {
-  await send("PUT", "", { title: task.value!.title, status: "completed" }, "Marked complete.");
+  const needsSignOff = task.value!.requires_approval && !task.value!.approved_at;
+  await send("PUT", "", { title: task.value!.title, status: "completed" },
+    needsSignOff ? "Sent for approval." : "Marked complete.");
+}
+
+// ── Approval ────────────────────────────────────────────────────────────────
+
+const rejecting = ref(false);
+const rejectNote = ref("");
+
+const decide = (approved: boolean, note?: string) =>
+  send("POST", "/approval", { approved, note: note ?? null },
+    approved ? "Approved." : "Sent back.");
+
+async function reject() {
+  const ok = await decide(false, rejectNote.value.trim() || undefined);
+  if (ok) { rejecting.value = false; rejectNote.value = ""; }
 }
 
 const confirmingDelete = ref(false);
@@ -135,7 +159,8 @@ const editing = ref(false);
 const form = ref({
   title: "", description: "", category: "internal", status: "todo", priority: "medium",
   deadline: "", started_on: "", effort_estimate_days: "" as string | number,
-  assigned_to: null as number | null, requires_approval: false,
+  assigned_to: null as number | null,
+  requires_approval: false, approver_id: null as number | null,
 });
 
 function beginEdit() {
@@ -147,6 +172,7 @@ function beginEdit() {
     effort_estimate_days: t.effort_estimate_days ?? "",
     assigned_to: t.assignee?.id ?? null,
     requires_approval: t.requires_approval,
+    approver_id: t.approver?.id ?? null,
   };
   editing.value = true;
 }
@@ -414,9 +440,13 @@ function badge(name: Tab): number {
 
         <!-- ── Title block ──────────────────────────────────────────────── -->
         <div class="tp-title-block">
-          <button v-if="!task.is_done" class="tp-complete" :disabled="saving" @click="markComplete">
-            ✓ Mark as complete
+          <button v-if="!task.is_done && task.status !== 'awaiting_approval'"
+                  class="tp-complete" :disabled="saving" @click="markComplete">
+            ✓ {{ task.requires_approval && !task.approved_at ? "Send for approval" : "Mark as complete" }}
           </button>
+          <span v-else-if="task.status === 'awaiting_approval'" class="tp-complete waiting">
+            ⏳ Waiting on {{ task.approver?.name ?? "an approver" }}
+          </span>
           <span v-else class="tp-complete done">✓ Completed</span>
 
           <h1 class="tp-title">{{ task.title }}</h1>
@@ -431,6 +461,31 @@ function badge(name: Tab): number {
             </template>
           </p>
         </div>
+
+        <!--
+          The approver's controls, only where they can act.
+
+          Approval had columns, a status and a board column and nothing that
+          could act on any of it — a task could reach Awaiting Approval and
+          stay there forever.
+        -->
+        <div v-if="task.status === 'awaiting_approval'" class="tp-approval">
+          <p class="tp-approval-text">
+            This task is waiting on <strong>{{ task.approver?.name ?? "nobody in particular" }}</strong>.
+          </p>
+          <!-- Only for the person who can actually decide. Showing a button
+               the server will refuse is worse than showing none. -->
+          <div v-if="task.can_approve" class="tp-approval-actions">
+            <button class="btn-ghost btn-sm" :disabled="saving" @click="rejecting = true">Send back</button>
+            <button class="btn-primary btn-sm" :disabled="saving" @click="decide(true)">Approve</button>
+          </div>
+        </div>
+
+        <!-- Why it came back. A rejection with no reason puts the task where
+             it was with nothing learned. -->
+        <p v-else-if="task.approval_note && !task.approved_at" class="tp-sent-back">
+          Sent back: “{{ task.approval_note }}”
+        </p>
 
         <!-- ── Facts ────────────────────────────────────────────────────── -->
         <div class="tp-facts">
@@ -679,12 +734,17 @@ function badge(name: Tab): number {
             <ul class="tp-list">
               <li v-if="task.completed_at" class="tp-activity">
                 Completed {{ ago(task.completed_at) }}
+                <!-- Who finished it, which is not the same as who owns it once
+                     several people are on a task. -->
+                <template v-if="task.completed_by"> by {{ task.completed_by.name }}</template>
               </li>
               <li v-if="task.started_on" class="tp-activity">
                 Started {{ date(task.started_on) }}
+                <template v-if="task.started_by"> by {{ task.started_by.name }}</template>
               </li>
               <li v-if="task.approved_at" class="tp-activity">
                 Approved {{ ago(task.approved_at) }}
+                <template v-if="task.approver"> by {{ task.approver.name }}</template>
               </li>
               <li v-for="r in task.requests.filter((x) => x.status !== 'pending')" :key="r.id" class="tp-activity">
                 {{ r.to?.name }} {{ r.status }} the {{ r.kind }} request
@@ -873,6 +933,23 @@ function badge(name: Tab): number {
         </div>
       </div>
 
+      <div v-if="rejecting" class="tp-modal-backdrop" @click.self="rejecting = false">
+        <div class="tp-modal" role="dialog" aria-modal="true" aria-label="Send task back">
+          <div class="tp-modal-head">
+            <h3 class="tp-modal-title">Send back</h3>
+            <button class="tp-close" aria-label="Close" @click="rejecting = false">×</button>
+          </div>
+          <p class="tp-hint">
+            It goes back to In Progress, not to the start — the work was done
+            and found wanting, not left untouched.
+          </p>
+          <label class="tp-field"><span>What needs fixing</span>
+            <textarea v-model="rejectNote" class="control" rows="3"
+                      placeholder="The configuration backup is missing."></textarea></label>
+          <button class="btn-primary btn-block" :disabled="saving" @click="reject">Send back</button>
+        </div>
+      </div>
+
       <div v-if="editing" class="tp-modal-backdrop" @click.self="editing = false">
         <div class="tp-modal" role="dialog" aria-modal="true" aria-label="Edit task">
           <div class="tp-modal-head">
@@ -913,6 +990,11 @@ function badge(name: Tab): number {
             <input v-model="form.requires_approval" type="checkbox" />
             <span>Somebody has to sign this off before it counts as done.</span>
           </label>
+          <!-- Without a name, "needs approval" leaves the task waiting on
+               nobody in particular. -->
+          <div v-if="form.requires_approval" class="tp-field"><span>Who approves it</span>
+            <EmployeePicker v-model="form.approver_id" placeholder="Who signs it off?" />
+          </div>
           <button class="btn-primary btn-block" :disabled="saving || !form.title.trim()" @click="save">
             {{ saving ? "Saving…" : "Save" }}
           </button>
@@ -955,6 +1037,21 @@ function badge(name: Tab): number {
   font-family: inherit; font-size: var(--text-xs-size); color: var(--color-text-muted);
 }
 .tp-complete.done { border-color: color-mix(in oklab, var(--color-success-text) 35%, transparent); color: var(--color-success-text); background: var(--color-success-subtle); }
+.tp-complete.waiting { border-color: color-mix(in oklab, var(--color-warning-text) 35%, transparent); color: var(--color-warning-text); background: var(--color-warning-subtle); }
+
+.tp-approval {
+  @apply flex flex-wrap items-center justify-between; gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-warning-subtle);
+  border-bottom: 1px solid var(--color-border);
+}
+.tp-approval-text { font-size: var(--text-sm-size); color: var(--color-warning-text); margin: 0; }
+.tp-approval-actions { @apply flex; gap: var(--space-2); }
+.tp-sent-back {
+  font-size: var(--text-sm-size); color: var(--color-danger-text); margin: 0;
+  padding: var(--space-3) var(--space-5); background: var(--color-danger-subtle);
+  border-bottom: 1px solid var(--color-border);
+}
 .tp-complete:disabled { @apply cursor-not-allowed opacity-50; }
 .tp-title { font-size: var(--text-lg-size); font-weight: 600; color: var(--color-text); margin: 0; }
 .tp-byline { @apply flex flex-wrap items-center; gap: var(--space-1); margin: 0; font-size: var(--text-xs-size); color: var(--color-text-muted); }

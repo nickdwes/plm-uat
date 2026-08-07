@@ -38,7 +38,10 @@ class Task extends Model
         'category', 'project_id', 'opportunity_id', 'lead_id', 'research_id', 'account_id',
 
         'effort_estimate_days', 'started_on', 'assigned_to',
-        'requires_approval', 'approved_at', 'approved_by',
+
+        // What actually happened, and who signs it off.
+        'started_by', 'completed_by',
+        'requires_approval', 'approver_id', 'approved_at', 'approved_by', 'approval_note',
     ];
 
     protected $casts = [
@@ -81,6 +84,22 @@ class Task extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(\App\Models\Employee::class, 'assigned_to');
+    }
+
+    /** Who has to sign it off. Named, so they can actually be told. */
+    public function approver(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Employee::class, 'approver_id');
+    }
+
+    public function starter(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Employee::class, 'started_by');
+    }
+
+    public function completer(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Employee::class, 'completed_by');
     }
 
     /** Requests to assist, delegate or collaborate. */

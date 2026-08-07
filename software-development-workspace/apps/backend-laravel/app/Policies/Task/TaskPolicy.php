@@ -64,7 +64,13 @@ class TaskPolicy extends BasePolicy
         return $this->canTouch($user, Permission::TASKS_DELETE, $task);
     }
 
-    /** Assigned to them, helping with it, or asked about it. */
+    /**
+     * Assigned to them, helping with it, asked about it, or signing it off.
+     *
+     * The approver belongs here for the same reason as the rest: somebody who
+     * cannot open a task cannot act on it, and a task waiting on an approver
+     * who cannot see it waits forever.
+     */
     private function isTheirs(User $user, Task $task): bool
     {
         $employeeId = $user->employeeId();
@@ -74,6 +80,7 @@ class TaskPolicy extends BasePolicy
         }
 
         return $task->assigned_to === $employeeId
+            || $task->approver_id === $employeeId
             || $task->members()->where('employee_id', $employeeId)->exists()
             || $task->requests()->where('to_employee_id', $employeeId)->exists();
     }

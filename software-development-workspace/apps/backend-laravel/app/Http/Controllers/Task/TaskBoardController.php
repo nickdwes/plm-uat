@@ -12,6 +12,7 @@ use App\Models\Task\TaskRequest;
 use App\Models\Task\TaskRequiredDocument;
 use App\Support\Account\ReferenceSequence;
 use App\Support\Authorization\Permission;
+use App\Services\Task\TaskNotifier;
 use App\Support\Storage\DocumentVault;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,8 +35,13 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
  */
 class TaskBoardController extends Controller
 {
+    public function __construct(private TaskNotifier $notifier)
+    {
+    }
+
     private const DETAIL = [
-        'assignee', 'members.employee', 'subtasks.members.employee', 'subtasks.assignee',
+        'assignee', 'approver', 'starter', 'completer',
+        'members.employee', 'subtasks.members.employee', 'subtasks.assignee',
         'dependencies', 'externalDependencies', 'requests.toEmployee', 'requests.requester',
         'requiredDocuments', 'project', 'attachments',
         'comments.employee', 'comments.replies.employee', 'comments.reactions',
@@ -132,6 +138,9 @@ class TaskBoardController extends Controller
         $me = $request->user()->employeeId();
 
         return $q->where(fn ($w) => $w->where('assigned_to', $me)
+            // A task waiting on my sign-off is my work, and it has to appear
+            // somewhere I look or it waits forever.
+            ->orWhere('approver_id', $me)
             ->orWhereHas('members', fn ($m) => $m->where('employee_id', $me))
             ->orWhereHas('requests', fn ($r) => $r->where('to_employee_id', $me)));
     }
@@ -190,16 +199,46 @@ class TaskBoardController extends Controller
         $this->authorize('update', $task);
 
         $data = $this->rules($request, $task->organization_id);
+        $me   = $request->user()->employeeId();
 
-        // Completing stamps the time; reopening clears it — the same rule as
-        // everywhere else, so a finished timestamp never survives reopening.
-        if (($data['status'] ?? $task->status) === Task::DONE) {
+        $next = $data['status'] ?? $task->status;
+
+        /*
+         * A task that needs signing off cannot be finished by finishing it.
+         *
+         * Marking it done sends it for approval instead. Otherwise
+         * `requires_approval` would be a note rather than a rule, and the
+         * Awaiting Approval column would only ever hold what somebody
+         * remembered to put there.
+         */
+        if ($next === Task::DONE && $task->requires_approval && $task->approved_at === null) {
+            $next = 'awaiting_approval';
+            $data['status'] = $next;
+        }
+
+        // Completing stamps the time and the person; reopening clears both, so
+        // a finished record never survives the state it described.
+        if ($next === Task::DONE) {
             $data['completed_at'] = $task->completed_at ?? now();
+            $data['completed_by'] = $task->completed_by ?? $me;
         } elseif (array_key_exists('status', $data)) {
             $data['completed_at'] = null;
+            $data['completed_by'] = null;
+        }
+
+        // Who actually picked it up. Stamped the first time it leaves todo,
+        // because that is the moment it happened — not whenever somebody
+        // later types a start date.
+        if ($next !== 'todo' && $task->started_by === null) {
+            $data['started_by'] = $me;
+            $data['started_on'] = $data['started_on'] ?? $task->started_on ?? now()->toDateString();
         }
 
         $task->update($data);
+
+        if ($next === 'awaiting_approval' && $task->approver_id) {
+            $this->notifier->awaitingApproval($task->fresh());
+        }
 
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
     }
@@ -218,6 +257,69 @@ class TaskBoardController extends Controller
         $task->delete();
 
         return response()->json(['deleted' => true]);
+    }
+
+    // ── Approval ──────────────────────────────────────────────────────────
+
+    /**
+     * Sign a task off, or send it back.
+     *
+     * This existed as three columns, a status and a column on the board, and
+     * nothing that could act on any of it — a task could reach Awaiting
+     * Approval and stay there forever. 24% of the legacy's tasks were
+     * approved, so it was a live path left half-built, which is worse than
+     * not building it: the column implies the button.
+     *
+     * Only the named approver may decide. `requires_approval` on its own said
+     * a signature was needed without saying whose, which leaves the task
+     * waiting on nobody in particular.
+     */
+    public function decideApproval(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('view', $task);
+
+        $me = $request->user()->employeeId();
+
+        abort_unless(
+            $task->approver_id !== null && $task->approver_id === $me,
+            403,
+            'Only the named approver can decide this.',
+        );
+
+        $data = $request->validate([
+            'approved' => ['required', 'boolean'],
+            'note'     => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        if ($data['approved']) {
+            $task->update([
+                'status'       => Task::DONE,
+                'approved_at'  => now(),
+                'approved_by'  => $request->user()->id,
+                'approval_note' => $data['note'] ?? null,
+                'completed_at' => $task->completed_at ?? now(),
+                'completed_by' => $task->completed_by ?? $task->assigned_to,
+            ]);
+        } else {
+            /*
+             * Sent back to in progress, not to todo. The work was done and
+             * found wanting; putting it back at the start would say nobody had
+             * touched it, and the approval stamps are cleared so a later
+             * approval is a fresh decision.
+             */
+            $task->update([
+                'status'        => 'in_progress',
+                'approved_at'   => null,
+                'approved_by'   => null,
+                'approval_note' => $data['note'] ?? null,
+                'completed_at'  => null,
+                'completed_by'  => null,
+            ]);
+        }
+
+        $this->notifier->approvalDecided($task->fresh(), $data['approved'], $data['note'] ?? null);
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
     }
 
     // ── Requests ──────────────────────────────────────────────────────────
@@ -246,7 +348,7 @@ class TaskBoardController extends Controller
             ]);
         }
 
-        $task->requests()->updateOrCreate(
+        $taskRequest = $task->requests()->updateOrCreate(
             ['to_employee_id' => $data['to_employee_id'], 'kind' => $data['kind']],
             [
                 'organization_id' => $task->organization_id,
@@ -259,6 +361,9 @@ class TaskBoardController extends Controller
                 'responded_at'    => null,
             ],
         );
+
+        // Being asked is the whole mechanism, so it is worth interrupting for.
+        $this->notifier->requested($task, $taskRequest);
 
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
     }
@@ -300,6 +405,10 @@ class TaskBoardController extends Controller
                 );
             }
         }
+
+        // Told either way: from the asker's side, silence and a decline look
+        // identical until somebody says so.
+        $this->notifier->answered($task, $taskRequest->fresh());
 
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
     }
@@ -609,6 +718,8 @@ class TaskBoardController extends Controller
                 'employee_id'     => $to,
                 'raised_by'       => $request->user()->employeeId(),
             ]);
+
+            $this->notifier->escalated($task, $issue, $to, $request->user()->employeeId());
         }
 
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
@@ -662,6 +773,8 @@ class TaskBoardController extends Controller
             'raised_by'       => $request->user()->employeeId(),
         ]);
 
+        $this->notifier->escalated($task, $issue, $data['employee_id'], $request->user()->employeeId());
+
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
     }
 
@@ -685,6 +798,11 @@ class TaskBoardController extends Controller
             // tasks carried one and nothing ever read it.
             'effort_estimate_days' => ['nullable', 'numeric', 'min:0', 'max:9999.99'],
             'requires_approval'    => ['sometimes', 'boolean'],
+
+            // Who signs it off. Without a name, `requires_approval` leaves the
+            // task waiting on nobody in particular.
+            'approver_id' => ['nullable', 'integer',
+                Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
 
             'assigned_to' => ['nullable', 'integer',
                 Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
@@ -728,6 +846,27 @@ class TaskBoardController extends Controller
 
             'requires_approval' => $t->requires_approval,
             'approved_at'       => $t->approved_at?->toIso8601String(),
+            'approval_note'     => $t->approval_note,
+
+            /*
+             * Whether the person reading this is the one who can decide.
+             *
+             * Answered here rather than by the client comparing ids, so the
+             * rule lives in one place — the client showing an Approve button
+             * the server will refuse is worse than not showing it at all.
+             */
+            'can_approve' => $t->status === 'awaiting_approval'
+                && $t->approver_id !== null
+                && $t->approver_id === request()->user()?->employeeId(),
+            'approver' => $t->relationLoaded('approver') && $t->approver
+                ? ['id' => $t->approver->id, 'name' => $t->approver->full_name] : null,
+
+            // Who actually picked it up and who actually finished it — not the
+            // same questions as who owns it once several people are on a task.
+            'started_by' => $t->relationLoaded('starter') && $t->starter
+                ? ['id' => $t->starter->id, 'name' => $t->starter->full_name] : null,
+            'completed_by' => $t->relationLoaded('completer') && $t->completer
+                ? ['id' => $t->completer->id, 'name' => $t->completer->full_name] : null,
 
             'assignee' => $t->assignee ? ['id' => $t->assignee->id, 'name' => $t->assignee->full_name] : null,
 
