@@ -56,6 +56,11 @@ interface Project {
   opportunity?: { id: number; reference: string | null; name: string } | null;
   project_lead?: Person | null;
   team?: { id: number; employee: Person; role: string | null }[];
+  delivery?: {
+    vendor_partner?: { id: number; name: string } | null;
+    days_own: string | null; days_oem: string | null; total_days: number | null;
+    oem_share: number | null; oem_share_drift: number | null; oem_ps_cost: string | null;
+  };
   created_at: string | null;
 }
 
@@ -437,6 +442,18 @@ onMounted(load);
               <span v-else class="pd-stack">
                 <span v-for="m in project.team.slice(0, 5)" :key="m.id" class="pd-avatar"
                       :title="m.employee.name ?? ''">{{ initials(m.employee.name) }}</span>
+              </span>
+            </dd></div>
+          <div v-if="project.delivery && project.delivery.oem_share !== null"><dt>Delivery split</dt>
+            <dd>
+              {{ 100 - project.delivery.oem_share }}% us ·
+              {{ project.delivery.oem_share }}% {{ project.delivery.vendor_partner?.name ?? "OEM" }}
+              <!-- Delivered against scoped. A deal quoted at 20% OEM and
+                   delivered at 60% either mis-scoped or lost people, and both
+                   matter before the next quote. -->
+              <span v-if="project.delivery.oem_share_drift" class="pd-drift"
+                    :title="`${Math.abs(project.delivery.oem_share_drift)} points ${project.delivery.oem_share_drift > 0 ? 'more' : 'less'} OEM than scoped`">
+                {{ project.delivery.oem_share_drift > 0 ? "+" : "" }}{{ project.delivery.oem_share_drift }} pts vs plan
               </span>
             </dd></div>
           <div v-if="project.opportunity"><dt>From deal</dt>
@@ -862,6 +879,11 @@ onMounted(load);
 .pd-facts dd { font-size: var(--text-sm-size); color: var(--color-text); margin: 0; }
 .pd-status { border-left: 2px solid var(--color-brand-base); padding-left: var(--space-2); }
 .pd-late { color: var(--color-danger-text); }
+.pd-drift {
+  margin-left: var(--space-2); padding: 1px var(--space-2); border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle); color: var(--color-warning-text);
+  font-size: var(--text-xs-size); cursor: help;
+}
 
 .pd-tabs { @apply flex flex-wrap gap-1 overflow-x-auto; border-bottom: 1px solid var(--color-border); }
 .pd-tab {

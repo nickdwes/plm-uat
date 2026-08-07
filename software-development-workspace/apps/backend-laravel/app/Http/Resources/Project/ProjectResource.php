@@ -47,6 +47,25 @@ class ProjectResource extends JsonResource
             'contract_value'      => $showsMoney ? $this->contract_value : null,
             'commercials_visible' => $showsMoney,
 
+            /*
+             * How the delivery was split with the OEM. Days are shown without
+             * the commercial elevation — how many people a job took is a
+             * resourcing fact — while what the OEM charged is masked.
+             */
+            'delivery' => [
+                'vendor_partner' => $this->whenLoaded('vendorPartner', fn () => $this->vendorPartner ? [
+                    'id' => $this->vendorPartner->id, 'name' => $this->vendorPartner->name,
+                ] : null),
+                'days_own'   => $this->delivery_days_own,
+                'days_oem'   => $this->delivery_days_oem,
+                'total_days' => $this->total_delivery_days,
+                'oem_share'  => $this->oem_share,
+                // Delivered share less planned share, in points. The number
+                // this whole thing exists to produce.
+                'oem_share_drift' => $this->oem_share_drift,
+                'oem_ps_cost' => $showsMoney ? $this->oem_ps_cost : null,
+            ],
+
             'account' => $this->whenLoaded('account', fn () => $this->account ? [
                 'id' => $this->account->id, 'name' => $this->account->name,
                 'initials' => $this->account->initials,

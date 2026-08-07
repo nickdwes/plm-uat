@@ -30,6 +30,9 @@ interface Estimate {
   id: number; name: string;
   budget: string | null; revenue: string | null; cost: string | null; profit: string | null;
   implied_profit: string | null; documents: Doc[];
+  vendor_partner: { id: number; name: string } | null;
+  delivery_days_own: string | null; delivery_days_oem: string | null;
+  total_delivery_days: number | null; oem_share: number | null; oem_ps_cost: string | null;
 }
 interface Objective {
   id: number; name: string; expected_start_date: string | null;
@@ -158,13 +161,53 @@ const markQualified = () => act("POST", "/mark-qualified", undefined, "Marked as
 // ── Estimates ───────────────────────────────────────────────────────────────
 
 const showEstimate = ref(false);
-const estimateForm = ref({ name: "", budget: null, revenue: null, cost: null, profit: null } as Record<string, unknown>);
+const blankEstimate = () => ({
+  name: "", budget: null, revenue: null, cost: null, profit: null,
+  vendor_partner_id: null, delivery_days_own: null, delivery_days_oem: null, oem_ps_cost: null,
+} as Record<string, unknown>);
+const estimateForm = ref(blankEstimate());
+
+/**
+ * OEM partners, for the professional-services allocation.
+ *
+ * Loaded once. A failed lookup leaves the list empty rather than blocking the
+ * form — the allocation is optional, and an unnamed OEM is better than no
+ * estimate.
+ */
+const partners = ref<{ id: number; name: string }[]>([]);
+
+/**
+ * Whether the partner list was refused rather than empty.
+ *
+ * The endpoint needs vendor permissions, which somebody working the pipeline
+ * may not hold. An empty dropdown reads as "we have no OEM partners", which is
+ * how a real one ends up unrecorded — so the two are told apart.
+ */
+const partnersBlocked = ref(false);
+
+async function loadPartners() {
+  try {
+    partners.value = (await api<{ data: { id: number; name: string }[] }>(
+      "GET", "/api/v1/vendors", { org: org(), params: { per_page: 100 } })).data;
+    partnersBlocked.value = false;
+  } catch (e) {
+    partners.value = [];
+    partnersBlocked.value = e instanceof ApiError && e.status === 403;
+  }
+}
+
+/** Shown live so the effect of moving days between the two sides is visible. */
+const projectedOemShare = computed(() => {
+  const own = Number(estimateForm.value.delivery_days_own ?? 0);
+  const oem = Number(estimateForm.value.delivery_days_oem ?? 0);
+  return own + oem <= 0 ? null : Math.round((oem / (own + oem)) * 100);
+});
 const openEstimate = ref<Estimate | null>(null);
 
 async function saveEstimate() {
   if (await act("POST", "/estimates", estimateForm.value, "Estimate added.")) {
     showEstimate.value = false;
-    estimateForm.value = { name: "", budget: null, revenue: null, cost: null, profit: null };
+    estimateForm.value = blankEstimate();
   }
 }
 
@@ -345,6 +388,7 @@ const BAND_LABELS: Record<string, string> = {
 };
 
 watch(() => props.opportunityId, load, { immediate: true });
+void loadPartners();
 </script>
 
 <template>
@@ -532,12 +576,11 @@ watch(() => props.opportunityId, load, { immediate: true });
         <p v-if="!pipeline.estimates.length" class="pl-empty">No estimates yet.</p>
 
         <table v-else class="pl-table">
-          <thead><tr><th>Name</th><th class="pl-num">Budget</th><th class="pl-num">Revenue</th>
-            <th class="pl-num">Cost</th><th class="pl-num">Profit</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th class="pl-num">Revenue</th><th class="pl-num">Cost</th>
+            <th class="pl-num">Profit</th><th>Delivery split</th><th></th></tr></thead>
           <tbody>
             <tr v-for="e in pipeline.estimates" :key="e.id">
               <td class="pl-strong">{{ e.name }}</td>
-              <td class="pl-num">{{ money(e.budget) }}</td>
               <td class="pl-num">{{ money(e.revenue) }}</td>
               <td class="pl-num">{{ money(e.cost) }}</td>
               <td class="pl-num">
@@ -547,6 +590,20 @@ watch(() => props.opportunityId, load, { immediate: true });
                 <span v-if="pipeline.commercials_visible && e.implied_profit !== null
                             && Number(e.implied_profit) !== Number(e.profit)"
                       class="pl-warn" :title="`Revenue less cost is ${money(e.implied_profit)}`">⚠</span>
+              </td>
+              <td>
+                <!-- Days on both sides, so the share cannot be read backwards
+                     the way the legacy's single ratio could. -->
+                <span v-if="e.oem_share === null" class="pl-muted">Not allocated</span>
+                <span v-else class="pl-split">
+                  <span class="pl-split-bar">
+                    <span class="pl-split-own" :style="{ width: `${100 - e.oem_share}%` }"></span>
+                  </span>
+                  <span class="pl-split-text">
+                    {{ 100 - e.oem_share }}% us · {{ e.oem_share }}%
+                    {{ e.vendor_partner?.name ?? "OEM" }}
+                  </span>
+                </span>
               </td>
               <td><button class="link-btn" @click="openEstimate = e">View Details</button></td>
             </tr>
@@ -772,6 +829,42 @@ watch(() => props.opportunityId, load, { immediate: true });
         <label class="pl-field"><span>Profit</span>
           <input v-model.number="estimateForm.profit" class="control" type="number" min="0" />
           <span class="pl-hint">Kept as quoted. Revenue less cost is shown beside it if the two differ.</span></label>
+
+        <fieldset class="pl-alloc">
+          <legend>Delivery allocation</legend>
+          <p class="pl-hint">
+            How much of the scope we take, and how much goes to the OEM's professional
+            services. Days rather than a percentage — days can be costed, staffed and
+            compared with what was actually delivered.
+          </p>
+
+          <label class="pl-field"><span>OEM</span>
+            <select v-model.number="estimateForm.vendor_partner_id" class="control" :disabled="partnersBlocked">
+              <option :value="null">None — we deliver all of it</option>
+              <option v-for="p in partners" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <span v-if="partnersBlocked" class="pl-hint">
+              You cannot read the partner list, so the OEM cannot be named here. The
+              day split can still be recorded.
+            </span>
+            <span v-else-if="!partners.length" class="pl-hint">
+              No OEM partners on file yet — add them under Vendor Management.
+            </span></label>
+
+          <div class="pl-grid">
+            <label class="pl-field"><span>Our days</span>
+              <input v-model.number="estimateForm.delivery_days_own" class="control" type="number" min="0" step="0.5" /></label>
+            <label class="pl-field"><span>OEM days</span>
+              <input v-model.number="estimateForm.delivery_days_oem" class="control" type="number" min="0" step="0.5" /></label>
+          </div>
+
+          <p v-if="projectedOemShare !== null" class="pl-hint">
+            That is <strong>{{ 100 - projectedOemShare }}% us, {{ projectedOemShare }}% OEM</strong>.
+          </p>
+
+          <label class="pl-field"><span>What the OEM charges us</span>
+            <input v-model.number="estimateForm.oem_ps_cost" class="control" type="number" min="0" /></label>
+        </fieldset>
         <button class="btn-primary btn-block" :disabled="saving || !estimateForm.name" @click="saveEstimate">
           Create Estimate
         </button>
@@ -789,6 +882,16 @@ watch(() => props.opportunityId, load, { immediate: true });
           <div><dt>Profit</dt><dd>{{ money(openEstimate.profit) }}</dd></div>
           <div v-if="pipeline.commercials_visible && openEstimate.implied_profit !== null">
             <dt>Revenue less cost</dt><dd>{{ money(openEstimate.implied_profit) }}</dd></div>
+        </dl>
+
+        <h4 class="pl-h3">Delivery allocation</h4>
+        <dl class="pl-mini">
+          <div><dt>OEM</dt><dd>{{ openEstimate.vendor_partner?.name ?? "—" }}</dd></div>
+          <div><dt>Our days</dt><dd>{{ openEstimate.delivery_days_own ?? "—" }}</dd></div>
+          <div><dt>OEM days</dt><dd>{{ openEstimate.delivery_days_oem ?? "—" }}</dd></div>
+          <div><dt>OEM share</dt>
+            <dd>{{ openEstimate.oem_share === null ? "Not allocated" : `${openEstimate.oem_share}%` }}</dd></div>
+          <div><dt>OEM cost</dt><dd>{{ money(openEstimate.oem_ps_cost) }}</dd></div>
         </dl>
         <div class="pl-files">
           <label class="btn-ghost pl-upload">
@@ -1031,6 +1134,19 @@ watch(() => props.opportunityId, load, { immediate: true });
 .pl-nowrap { white-space: nowrap; }
 .pl-high { color: var(--color-danger-text); }
 .pl-warn { color: var(--color-warning-text); margin-left: 4px; cursor: help; }
+.pl-muted { color: var(--color-text-light); font-size: var(--text-xs-size); }
+
+/* The split, drawn from both sides so it cannot be read backwards. */
+.pl-split { @apply inline-flex flex-col; gap: 2px; min-width: 9rem; }
+.pl-split-bar { @apply block; height: 5px; border-radius: 999px; background: var(--color-warning-text); overflow: hidden; }
+.pl-split-own { @apply block; height: 100%; background: var(--color-brand-base); }
+.pl-split-text { font-size: var(--text-xs-size); color: var(--color-text-muted); white-space: nowrap; }
+
+.pl-alloc {
+  @apply flex flex-col; gap: var(--space-2);
+  border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3);
+}
+.pl-alloc legend { font-size: var(--text-xs-size); color: var(--color-text-muted); padding: 0 var(--space-1); }
 
 .pl-card {
   @apply flex flex-col; gap: var(--space-3);

@@ -52,7 +52,7 @@ class OpportunityPipelineController extends Controller
         $this->authorize('view', $opportunity);
 
         $opportunity->load([
-            'phase', 'stageProgress', 'estimates.documents', 'objectives',
+            'phase', 'stageProgress', 'estimates.documents', 'estimates.vendorPartner', 'objectives',
             'bids.documents', 'documents', 'contracts.attachments',
             'projects', 'researches.researchLead',
         ]);
@@ -129,6 +129,22 @@ class OpportunityPipelineController extends Controller
 
                 'estimates'  => $opportunity->estimates->map(fn ($e) => [
                     'id' => $e->id, 'name' => $e->name,
+
+                    /*
+                     * The OEM allocation. Days are visible without the
+                     * commercial elevation — how many people a job needs is a
+                     * resourcing fact, not a price — but what the OEM charges
+                     * us is money and is masked like the rest.
+                     */
+                    'vendor_partner' => $e->vendorPartner
+                        ? ['id' => $e->vendorPartner->id, 'name' => $e->vendorPartner->name]
+                        : null,
+                    'delivery_days_own' => $e->delivery_days_own,
+                    'delivery_days_oem' => $e->delivery_days_oem,
+                    'total_delivery_days' => $e->total_delivery_days,
+                    'oem_share'   => $e->oem_share,
+                    'oem_ps_cost' => $money($e->oem_ps_cost),
+
                     'budget' => $money($e->budget), 'revenue' => $money($e->revenue),
                     'cost' => $money($e->cost), 'profit' => $money($e->profit),
                     // Surfaced so a figure that does not add up is visible
@@ -271,6 +287,17 @@ class OpportunityPipelineController extends Controller
         $data = $request->validate([
             'name'    => ['required', 'string', 'max:255'],
             'budget'  => $money, 'revenue' => $money, 'cost' => $money, 'profit' => $money,
+
+            /*
+             * How much of the delivery we take and how much the OEM does.
+             * Days, not a percentage: a percentage cannot be costed, staffed,
+             * or checked against what was delivered.
+             */
+            'vendor_partner_id' => ['nullable', 'integer',
+                Rule::exists('vendor_partners', 'id')->where('organization_id', $opportunity->organization_id)],
+            'delivery_days_own' => ['nullable', 'numeric', 'min:0', 'max:99999.9'],
+            'delivery_days_oem' => ['nullable', 'numeric', 'min:0', 'max:99999.9'],
+            'oem_ps_cost'       => $money,
         ]);
 
         $opportunity->estimates()->create($data + [

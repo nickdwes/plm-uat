@@ -24,6 +24,9 @@ class OpportunityEstimate extends Model
     protected $fillable = [
         'organization_id', 'opportunity_id', 'name',
         'budget', 'revenue', 'cost', 'profit', 'created_by',
+
+        // How much of the delivery we take and how much goes to the OEM.
+        'vendor_partner_id', 'delivery_days_own', 'delivery_days_oem', 'oem_ps_cost',
     ];
 
     protected $casts = [
@@ -31,6 +34,9 @@ class OpportunityEstimate extends Model
         'revenue' => 'decimal:2',
         'cost'    => 'decimal:2',
         'profit'  => 'decimal:2',
+        'delivery_days_own' => 'decimal:1',
+        'delivery_days_oem' => 'decimal:1',
+        'oem_ps_cost'       => 'decimal:2',
     ];
 
     public function opportunity(): BelongsTo
@@ -41,6 +47,28 @@ class OpportunityEstimate extends Model
     public function documents(): HasMany
     {
         return $this->hasMany(OpportunityDocument::class, 'estimate_id');
+    }
+
+    /** Whose professional services take the OEM share. */
+    public function vendorPartner(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Training\VendorPartner::class, 'vendor_partner_id');
+    }
+
+    /**
+     * The OEM's share of effort, derived from two named quantities.
+     *
+     * Never stored — the legacy stored a ratio and nobody could tell which side
+     * `100` referred to.
+     */
+    public function getOemShareAttribute(): ?int
+    {
+        return \App\Support\Pipeline\DeliverySplit::oemShare($this->delivery_days_own, $this->delivery_days_oem);
+    }
+
+    public function getTotalDeliveryDaysAttribute(): ?float
+    {
+        return \App\Support\Pipeline\DeliverySplit::totalDays($this->delivery_days_own, $this->delivery_days_oem);
     }
 
     /**

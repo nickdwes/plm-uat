@@ -23,7 +23,9 @@ use Illuminate\Validation\Rule;
  */
 class ProjectController extends Controller
 {
-    private const DETAIL = ['account', 'opportunity', 'projectLead', 'team.employee'];
+    private const DETAIL = [
+        'account', 'opportunity.estimates', 'projectLead', 'team.employee', 'vendorPartner',
+    ];
 
     /** Someone holding only `view_own` sees what they lead or deliver. */
     private function limitToOwn($q, Request $request): void
@@ -182,6 +184,13 @@ class ProjectController extends Controller
                 Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
 
             'contract_value' => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
+
+            // The delivered split, recorded separately from what was planned.
+            'vendor_partner_id' => ['nullable', 'integer',
+                Rule::exists('vendor_partners', 'id')->where('organization_id', $orgId)],
+            'delivery_days_own' => ['nullable', 'numeric', 'min:0', 'max:99999.9'],
+            'delivery_days_oem' => ['nullable', 'numeric', 'min:0', 'max:99999.9'],
+            'oem_ps_cost'       => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
         ]);
     }
 }

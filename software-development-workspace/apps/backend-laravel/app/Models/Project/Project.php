@@ -32,6 +32,10 @@ class Project extends Model
         'organization_id', 'account_id', 'opportunity_id', 'reference', 'name',
         'description', 'status', 'priority', 'deadline', 'started_on', 'delivered_on',
         'contract_value', 'project_lead_id', 'created_by',
+
+        // The delivered split, kept apart from the estimate's planned one —
+        // the gap between them is the point.
+        'vendor_partner_id', 'delivery_days_own', 'delivery_days_oem', 'oem_ps_cost',
     ];
 
     protected $casts = [
@@ -39,6 +43,9 @@ class Project extends Model
         'started_on'     => 'date',
         'delivered_on'   => 'date',
         'contract_value' => 'decimal:2',
+        'delivery_days_own' => 'decimal:1',
+        'delivery_days_oem' => 'decimal:1',
+        'oem_ps_cost'       => 'decimal:2',
     ];
 
     protected $attributes = ['status' => 'kickoff', 'priority' => 'medium'];
@@ -90,6 +97,36 @@ class Project extends Model
     public function attachments(): HasMany
     {
         return $this->hasMany(ProjectAttachment::class);
+    }
+
+    /** Whose professional services took the OEM share of delivery. */
+    public function vendorPartner(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Training\VendorPartner::class, 'vendor_partner_id');
+    }
+
+    /** The delivered OEM share, computed exactly as the estimate's is. */
+    public function getOemShareAttribute(): ?int
+    {
+        return \App\Support\Pipeline\DeliverySplit::oemShare($this->delivery_days_own, $this->delivery_days_oem);
+    }
+
+    public function getTotalDeliveryDaysAttribute(): ?float
+    {
+        return \App\Support\Pipeline\DeliverySplit::totalDays($this->delivery_days_own, $this->delivery_days_oem);
+    }
+
+    /**
+     * How far the delivered split moved from what the deal was scoped at.
+     *
+     * The number this whole thing exists to produce. Null until both exist —
+     * a project with no estimate behind it has nothing to drift from.
+     */
+    public function getOemShareDriftAttribute(): ?int
+    {
+        $planned = $this->opportunity?->estimates?->first()?->oem_share;
+
+        return \App\Support\Pipeline\DeliverySplit::drift($planned, $this->oem_share);
     }
 
     /** What the customer agreed to pay, and against which piece of work. */
