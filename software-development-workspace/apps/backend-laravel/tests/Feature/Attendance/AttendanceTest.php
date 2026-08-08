@@ -211,6 +211,13 @@ class AttendanceTest extends TestCase
      */
     public function test_a_day_is_not_absent_until_it_is_over(): void
     {
+        /*
+         * Pinned to a weekday. "Today" is only a working day five times a
+         * week, and a test that passes on Wednesday and fails on Saturday
+         * teaches people to rerun the suite rather than read it.
+         */
+        $this->travelTo($this->aWorkday()->setTime(14, 0));
+
         $this->staff();
 
         $this->postJson($this->url('/record'), [

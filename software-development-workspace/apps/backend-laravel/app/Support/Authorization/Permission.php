@@ -76,6 +76,15 @@ final class Permission
     public const DEPARTMENTS_MANAGE   = 'departments.manage';
 
     // ── Recruitment ───────────────────────────────────────────────────────
+    /*
+     * Raising a requisition and deciding one are different acts. Anybody
+     * running a team asks for headcount; far fewer agree to it, and the whole
+     * point of the chain is that those are not the same people.
+     */
+    public const REQUISITIONS_VIEW    = 'requisitions.view';
+    public const REQUISITIONS_CREATE  = 'requisitions.create';
+    public const REQUISITIONS_MANAGE  = 'requisitions.manage';
+
     public const RECRUITMENT_VIEW    = 'recruitment.view';
     public const RECRUITMENT_MANAGE  = 'recruitment.manage';
     public const VACANCIES_MANAGE    = 'vacancies.manage';
@@ -267,6 +276,9 @@ final class Permission
             'payslip'       => [self::PAYSLIP_VIEW_OWN],
             'organizations' => [self::ORGANIZATIONS_VIEW, self::ORGANIZATIONS_MANAGE],
             'departments'   => [self::DEPARTMENTS_VIEW, self::DEPARTMENTS_MANAGE],
+            'requisitions'  => [
+                self::REQUISITIONS_VIEW, self::REQUISITIONS_CREATE, self::REQUISITIONS_MANAGE,
+            ],
             'recruitment'   => [self::RECRUITMENT_VIEW, self::RECRUITMENT_MANAGE],
             'vacancies'     => [self::VACANCIES_MANAGE],
             'candidates'    => [self::CANDIDATES_VIEW],

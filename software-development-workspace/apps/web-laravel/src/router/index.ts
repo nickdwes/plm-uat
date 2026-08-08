@@ -36,6 +36,8 @@ import AssetsView          from "../views/Asset/AssetsView.vue";
 import AssetDetailView     from "../views/Asset/AssetDetailView.vue";
 
 // Recruitment
+import TalentRequisitionsView          from "../views/Recruitment/TalentRequisitionsView.vue";
+import TalentRequisitionDetailView     from "../views/Recruitment/TalentRequisitionDetailView.vue";
 import RecruitmentView      from "../views/Recruitment/RecruitmentView.vue";
 import VacanciesView        from "../views/Recruitment/VacanciesView.vue";
 import VacancyDetailView    from "../views/Recruitment/VacancyDetailView.vue";
@@ -135,6 +137,15 @@ const routes: RouteRecordRaw[] = [
   { path: "/goals",                name: "goals",            component: GoalsView },
   { path: "/okr/cycles",           name: "okr-cycles",       component: OkrCyclesView },
   // ── Recruitment ──────────────────────────────────────────────────────────
+  /*
+   * Talent Requisition is now where the journey starts — a vacancy is what an
+   * approved requisition becomes. The old recruitment landing stays reachable
+   * for the parts that have not moved yet.
+   */
+  { path: "/requisitions",      name: "requisitions",      component: TalentRequisitionsView },
+  { path: "/requisitions/:id",  name: "requisition",       component: TalentRequisitionDetailView, props: true },
+  { path: "/requisitions-inbox", name: "requisition-inbox", component: TalentRequisitionsView },
+
   { path: "/recruitment",                   name: "recruitment",      component: RecruitmentView },
   { path: "/recruitment/vacancies",         name: "vacancies",        component: VacanciesView },
   { path: "/recruitment/vacancies/new",     name: "vacancy-new",      component: VacancyWizardView },

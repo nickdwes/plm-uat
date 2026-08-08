@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Recruitment\TalentRequisitionController;
 use App\Http\Controllers\HR\ComplianceController;
 use App\Http\Controllers\Benefits\BenefitController;
 use App\Http\Controllers\HR\DocumentController;
@@ -856,6 +857,30 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     });
 
     // ── Recruitment ───────────────────────────────────────────────────────────
+    /*
+     * Talent requisitions — asking for a role, and the decision on it.
+     *
+     * Ahead of the recruitment group, because this is now where the journey
+     * starts: a vacancy is what an approved requisition becomes.
+     */
+    Route::prefix('requisitions')->group(function () {
+        Route::get('/',        [TalentRequisitionController::class, 'index']);
+        Route::post('/',       [TalentRequisitionController::class, 'store']);
+        // Before /{requisition}, or the router reads these as ids.
+        Route::get('/summary', [TalentRequisitionController::class, 'summary']);
+        Route::get('/inbox',   [TalentRequisitionController::class, 'inbox']);
+        Route::get('/policy',  [TalentRequisitionController::class, 'policyFor']);
+
+        Route::get('/{requisition}',  [TalentRequisitionController::class, 'show']);
+        Route::put('/{requisition}',  [TalentRequisitionController::class, 'update']);
+
+        Route::post('/{requisition}/submit', [TalentRequisitionController::class, 'submit']);
+        // Approve, hold or decline — authorised by the chain, not a role.
+        Route::post('/{requisition}/decide', [TalentRequisitionController::class, 'decide']);
+        Route::post('/{requisition}/resume', [TalentRequisitionController::class, 'resume']);
+        Route::post('/{requisition}/close',  [TalentRequisitionController::class, 'close']);
+    });
+
     Route::prefix('recruitment')->group(function () {
         // Dashboard stats
         Route::get('/stats', [VacancyController::class, 'stats']);
