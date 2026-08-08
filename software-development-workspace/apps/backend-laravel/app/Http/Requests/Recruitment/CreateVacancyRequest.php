@@ -6,9 +6,17 @@ use Illuminate\Foundation\Http\FormRequest;
 
 class CreateVacancyRequest extends FormRequest
 {
+    /**
+     * Deferred to the policy, so there is one answer rather than two.
+     *
+     * This used to check a role name directly, which meant a custom role
+     * granted `vacancies.manage` was refused here while the policy would have
+     * allowed it — the sort of disagreement nobody finds until somebody cannot
+     * do their job.
+     */
     public function authorize(): bool
     {
-        return $this->user()->isOrgHR(app('current.organization_id'));
+        return $this->user()?->can('create', \App\Models\Recruitment\Vacancy::class) ?? false;
     }
 
     public function rules(): array

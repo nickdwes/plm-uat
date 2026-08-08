@@ -28,6 +28,15 @@ class VacancyController extends Controller
 
     public function store(CreateVacancyRequest $request): VacancyResource
     {
+        /*
+         * Stated here as well as on the form request.
+         *
+         * A rule that lives only in a request object is a rule nobody reading
+         * the controller can see, and the next endpoint added beside this one
+         * gets written without it.
+         */
+        $this->authorize('create', Vacancy::class);
+
         $vacancy = $this->service->create(
             organizationId: app('current.organization_id'),
             data: $request->validated(),

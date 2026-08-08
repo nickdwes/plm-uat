@@ -147,9 +147,17 @@ const routes: RouteRecordRaw[] = [
   { path: "/requisitions-inbox", name: "requisition-inbox", component: TalentRequisitionsView },
 
   { path: "/recruitment",                   name: "recruitment",      component: RecruitmentView },
-  { path: "/recruitment/vacancies",         name: "vacancies",        component: VacanciesView },
-  { path: "/recruitment/vacancies/new",     name: "vacancy-new",      component: VacancyWizardView },
-  { path: "/recruitment/vacancies/:id",     name: "vacancy-detail",   component: VacancyDetailView, props: true },
+  /*
+   * Job openings are their own page, not a card under Recruitment.
+   *
+   * A vacancy carries the hiring manager, the pipeline, the application form
+   * and the screening rules — it is where the hiring is actually run, and
+   * reaching it through a landing grid made it look like a sub-feature of
+   * something else.
+   */
+  { path: "/vacancies",         name: "vacancies",      component: VacanciesView },
+  { path: "/vacancies/new",     name: "vacancy-new",    component: VacancyWizardView },
+  { path: "/vacancies/:id",     name: "vacancy-detail", component: VacancyDetailView, props: true },
   { path: "/recruitment/candidates",        name: "candidates",       component: CandidatesView },
   { path: "/recruitment/candidates/:id",    name: "candidate-detail", component: CandidateDetailView, props: true },
   { path: "/recruitment/templates",         name: "rec-templates",    component: TemplatesView },
