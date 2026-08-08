@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\Recruitment\Application;
 use App\Models\Recruitment\Candidate;
 use App\Models\Recruitment\Vacancy;
+use App\Support\Storage\DocumentVault;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -27,7 +28,10 @@ class PublicJobController extends Controller
                 'organization',
             ])
             ->where('status', 'open')
-            ->whereNull('deleted_at');
+            ->whereNull('deleted_at')
+            // A switched-off tenant should not still be advertising, and
+            // certainly should not still be collecting CVs into itself.
+            ->whereHas('organization', fn ($q) => $q->where('is_active', true));
 
         if ($search = $request->input('search')) {
             $search = strip_tags($search);
@@ -68,6 +72,7 @@ class PublicJobController extends Controller
             ->where('uuid', $uuid)
             ->where('status', 'open')
             ->whereNull('deleted_at')
+            ->whereHas('organization', fn ($q) => $q->where('is_active', true))
             ->firstOrFail();
 
         return response()->json(['data' => $this->publicDetail($v)]);
@@ -84,37 +89,68 @@ class PublicJobController extends Controller
             ->where('uuid', $uuid)
             ->where('status', 'open')
             ->whereNull('deleted_at')
+            ->whereHas('organization', fn ($q) => $q->where('is_active', true))
             ->firstOrFail();
+
+        /*
+         * Past its closing date is closed, whatever the status column says.
+         *
+         * A vacancy nobody remembered to close keeps accepting applications for
+         * ever otherwise — and every one of them is a CV taken for a role that
+         * is not being filled.
+         */
+        abort_if(
+            $v->closing_date !== null && $v->closing_date->endOfDay()->isPast(),
+            404,
+        );
 
         $validated = $request->validate([
             'first_name'    => 'required|string|max:100',
             'last_name'     => 'required|string|max:100',
-            'email'         => 'required|email:rfc,dns|max:255',
+            /*
+             * `rfc` without `dns`. A DNS lookup on an anonymous endpoint is a
+             * slow path the caller chooses — a domain with a black-holed
+             * nameserver holds a worker open for the resolver timeout, and
+             * they are free to submit as many as the throttle allows.
+             */
+            'email'         => 'required|email:rfc|max:255',
             'phone'         => 'nullable|string|max:30',
             'location'      => 'nullable|string|max:255',
             'linkedin_url'  => 'nullable|url|max:500',
             'cover_letter'  => 'nullable|string|max:8000',
-            'cv'            => 'required|file|mimes:pdf,doc,docx|max:5120',
-            'attachment'    => 'nullable|file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120',
+            /*
+             * Both rules, deliberately. `mimes` checks the extension against a
+             * guessed type; `mimetypes` checks what the bytes actually are. A
+             * renamed executable satisfies the first on its own.
+             */
+            'cv' => [
+                'required', 'file', 'max:5120', 'mimes:pdf,doc,docx',
+                'mimetypes:application/pdf,application/msword,'
+                    . 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            ],
+            'attachment' => [
+                'nullable', 'file', 'max:5120', 'mimes:pdf,doc,docx,jpg,jpeg,png',
+                'mimetypes:application/pdf,application/msword,'
+                    . 'application/vnd.openxmlformats-officedocument.wordprocessingml.document,'
+                    . 'image/jpeg,image/png',
+            ],
         ]);
 
-        // Store CV with a safe random name
-        $cvExtension = $request->file('cv')->getClientOriginalExtension();
-        $cvPath = $request->file('cv')->storeAs(
-            'resumes/' . $v->uuid,
-            Str::uuid() . '.' . $cvExtension,
-            'candidate_docs'
-        );
+        /*
+         * Sealed before it reaches storage, like every other document class.
+         *
+         * `candidate_docs` is listed in config/documents.php as an encrypted
+         * disk, and this endpoint wrote raw bytes straight past the vault — so
+         * CVs were the only class held in the clear, arriving through the one
+         * door anonymous strangers can reach. A CV carries a name, an address,
+         * a phone number and an employment history; it is the most sensitive
+         * thing this system accepts from outside.
+         */
+        $cvPath = DocumentVault::store($request->file('cv'), 'candidate_docs', 'resumes/' . $v->uuid);
 
-        $attachmentPath = null;
-        if ($request->hasFile('attachment')) {
-            $ext  = $request->file('attachment')->getClientOriginalExtension();
-            $attachmentPath = $request->file('attachment')->storeAs(
-                'attachments/' . $v->uuid,
-                Str::uuid() . '.' . $ext,
-                'candidate_docs'
-            );
-        }
+        $attachmentPath = $request->hasFile('attachment')
+            ? DocumentVault::store($request->file('attachment'), 'candidate_docs', 'attachments/' . $v->uuid)
+            : null;
 
         // Find or create the candidate (unique per org + email)
         $candidate = Candidate::firstOrCreate(
@@ -135,15 +171,33 @@ class PublicJobController extends Controller
             $candidate->update(['resume_path' => $cvPath]);
         }
 
-        // Guard: no duplicate application for same vacancy
-        if (Application::where('vacancy_id', $v->id)->where('candidate_id', $candidate->id)->exists()) {
-            return response()->json(['message' => 'You have already applied for this position.'], 422);
+        /*
+         * Applying twice updates the CV and says the same thing as applying
+         * once.
+         *
+         * The old reply — "You have already applied" — let anybody holding a
+         * vacancy link test whether a given email had applied to it, one
+         * address at a time. Answering identically either way removes the
+         * oracle, and it is the better outcome anyway: somebody re-applying
+         * usually means to send a newer CV, which is exactly what happens.
+         */
+        $existing = Application::where('vacancy_id', $v->id)
+            ->where('candidate_id', $candidate->id)->first();
+
+        if ($existing) {
+            return response()->json([
+                'message'   => 'Application submitted successfully. We will be in touch shortly.',
+                'reference' => $existing->reference,
+            ], 201);
         }
 
         // First stage of the workflow
         $firstStage = $v->workflow?->stages()?->orderBy('order_index')->first();
 
         $application = Application::create([
+            // Random rather than the primary key: `APP-000042` told an
+            // applicant how many applications the whole portal had taken.
+            'reference'        => 'APP-' . strtoupper(Str::random(10)),
             'vacancy_id'       => $v->id,
             'candidate_id'     => $candidate->id,
             'current_stage_id' => $firstStage?->id,
@@ -158,7 +212,7 @@ class PublicJobController extends Controller
 
         return response()->json([
             'message'   => 'Application submitted successfully. We will be in touch shortly.',
-            'reference' => 'APP-' . str_pad($application->id, 6, '0', STR_PAD_LEFT),
+            'reference' => $application->reference,
         ], 201);
     }
 

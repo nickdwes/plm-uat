@@ -14,6 +14,9 @@ class Application extends Model
     protected $table = 'applications';
 
     protected $fillable = [
+        // Quoted back to the applicant. Random rather than the primary key,
+        // which told them how many applications the whole portal had taken.
+        'reference',
         'vacancy_id',
         'candidate_id',
         'current_stage_id',
