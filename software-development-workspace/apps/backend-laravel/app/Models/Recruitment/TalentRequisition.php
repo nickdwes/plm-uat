@@ -28,7 +28,8 @@ class TalentRequisition extends Model
 
     protected $fillable = [
         'organization_id', 'uuid', 'reference',
-        'job_title', 'department_id', 'positions', 'priority',
+        'job_title', 'department_id', 'vacancy_template_id', 'workflow_id',
+        'positions', 'priority',
         'target_hire_date', 'employment_type', 'period',
         'job_summary', 'key_responsibilities', 'required_qualifications', 'skills',
         'status', 'requested_by', 'decision_reason', 'vacancy_id', 'created_by',
@@ -86,6 +87,31 @@ class TalentRequisition extends Model
     public function vacancy(): BelongsTo
     {
         return $this->belongsTo(Vacancy::class);
+    }
+
+    /**
+     * The template this was raised from.
+     *
+     * Carries the job details, the application form the opening will ask for,
+     * the screening rules behind weighted evaluation, and which pipeline
+     * candidates move through — all of it configured before requisitions
+     * existed, and none of it worth building a second time.
+     */
+    public function template(): BelongsTo
+    {
+        return $this->belongsTo(VacancyTemplate::class, 'vacancy_template_id');
+    }
+
+    /**
+     * The pipeline candidates will move through.
+     *
+     * Copied from the template at submission rather than read through it, so
+     * retemplating next quarter cannot move candidates already halfway down a
+     * board.
+     */
+    public function workflow(): BelongsTo
+    {
+        return $this->belongsTo(RecruitmentWorkflow::class, 'workflow_id');
     }
 
     public function approvals(): HasMany

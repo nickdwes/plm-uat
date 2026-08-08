@@ -29,6 +29,18 @@ interface Summary {
   closed_this_month: number; awaiting_me: number;
 }
 interface PolicyStep { position: number; label: string; resolver: string }
+/**
+ * A template carries the job details, the application form candidates fill in,
+ * the screening rules behind weighted evaluation, and which pipeline they move
+ * down — all configured before requisitions existed and none of it worth
+ * building a second time.
+ */
+interface Template {
+  id: number; name: string; job_title: string | null;
+  department_id: number | null; default_positions: number | null;
+  form_fields: number; has_screening_rules: boolean;
+  pipeline: { id: number; name: string } | null;
+}
 
 const router  = useRouter();
 const rows    = ref<Row[]>([]);
@@ -88,10 +100,12 @@ function go(p: number) {
 
 const showNew = ref(false);
 const departments = ref<Named[]>([]);
+const templates = ref<Template[]>([]);
 const chain = ref<PolicyStep[] | null>(null);
 
 const blank = () => ({
   job_title: "", department_id: null as number | null,
+  vacancy_template_id: null as number | null,
   positions: 1, priority: "medium",
   target_hire_date: "", employment_type: "permanent", period: "",
   job_summary: "", key_responsibilities: "", required_qualifications: "",
@@ -99,6 +113,34 @@ const blank = () => ({
 });
 const form = ref(blank());
 const skillDraft = ref("");
+
+async function loadTemplates() {
+  try {
+    templates.value = (await api<{ data: Template[] }>("GET", "/api/v1/requisitions/templates", {
+      org: org(),
+    })).data ?? [];
+  } catch { templates.value = []; }
+}
+
+/**
+ * Choosing a template fills the gaps, and only the gaps.
+ *
+ * Anything already typed is left alone — somebody who set the job title before
+ * picking a template meant that title.
+ */
+function applyTemplate() {
+  const t = templates.value.find((x) => x.id === form.value.vacancy_template_id);
+  if (!t) return;
+
+  if (!form.value.job_title.trim() && t.job_title) form.value.job_title = t.job_title;
+  if (!form.value.department_id && t.department_id) form.value.department_id = t.department_id;
+  if (t.default_positions) form.value.positions = t.default_positions;
+
+  loadChain();
+}
+
+const chosenTemplate = computed(() =>
+  templates.value.find((t) => t.id === form.value.vacancy_template_id) ?? null);
 
 async function loadDepartments() {
   try {
@@ -131,6 +173,7 @@ function openNew() {
   chain.value = null;
   showNew.value = true;
   loadDepartments();
+  loadTemplates();
 }
 
 function addSkill() {
@@ -310,6 +353,25 @@ onMounted(refresh);
 
         <section>
           <h4 class="tr-section">1. Requisition Information</h4>
+          <!--
+            The template comes first, because it decides most of what follows —
+            the job details, the form candidates fill in, and the board they
+            move down. Offering it after the fields would mean typing them
+            twice.
+          -->
+          <label class="tr-field"><span>Start from a template</span>
+            <select v-model="form.vacancy_template_id" class="control" @change="applyTemplate">
+              <option :value="null">None — describe the role from scratch</option>
+              <option v-for="t in templates" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
+            <span v-if="chosenTemplate" class="tr-hint">
+              Brings {{ chosenTemplate.pipeline?.name ?? "the default pipeline" }}<template
+                v-if="chosenTemplate.form_fields">, a {{ chosenTemplate.form_fields }}-field application
+                form</template><template v-if="chosenTemplate.has_screening_rules">, and screening
+                rules</template>.
+            </span>
+          </label>
+
           <div class="tr-grid">
             <label class="tr-field"><span>Job Title *</span>
               <input v-model="form.job_title" class="control" placeholder="Job Title" /></label>

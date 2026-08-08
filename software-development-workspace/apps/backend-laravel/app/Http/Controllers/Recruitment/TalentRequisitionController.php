@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Recruitment;
 
 use App\Http\Controllers\Controller;
+use App\Models\Recruitment\RecruitmentWorkflow;
 use App\Models\Recruitment\RequisitionApprovalPolicy;
 use App\Models\Recruitment\TalentRequisition;
+use App\Models\Recruitment\VacancyTemplate;
 use App\Services\Recruitment\RequisitionService;
 use App\Support\Authorization\Permission;
 use Illuminate\Http\JsonResponse;
@@ -20,7 +22,10 @@ use Illuminate\Validation\Rule;
  */
 class TalentRequisitionController extends Controller
 {
-    private const DETAIL = ['department', 'requester', 'approvals.approver', 'events.actor', 'vacancy'];
+    private const DETAIL = [
+        'department', 'requester', 'approvals.approver', 'events.actor', 'vacancy',
+        'template', 'workflow.stages',
+    ];
 
     public function __construct(private RequisitionService $service)
     {
@@ -135,7 +140,7 @@ class TalentRequisitionController extends Controller
          * asked for, with a reference burnt out of the year's sequence.
          */
         $requisition = DB::transaction(function () use ($data, $orgId, $request) {
-            $requisition = TalentRequisition::create($data + [
+            $requisition = TalentRequisition::create($this->fromTemplate($data, $orgId) + [
                 'organization_id' => $orgId,
                 'reference'    => $this->service->nextReference($orgId),
                 'status'       => 'draft',
@@ -238,6 +243,49 @@ class TalentRequisitionController extends Controller
         return response()->json(['data' => $this->detail($requisition->fresh(self::DETAIL), $request)]);
     }
 
+    /**
+     * Fill the gaps from the chosen template.
+     *
+     * Only the gaps: anything typed on the form wins, because somebody who
+     * changed the job title while the template was selected meant it. The
+     * workflow is pinned here rather than followed live, so retemplating later
+     * cannot move candidates already on a board.
+     */
+    private function fromTemplate(array $data, int $orgId): array
+    {
+        $templateId = $data['vacancy_template_id'] ?? null;
+
+        if ($templateId === null) {
+            // No template still needs a pipeline, or the opening has no board
+            // to put candidates on. The organisation's default is the answer.
+            $data['workflow_id'] = RecruitmentWorkflow::where('organization_id', $orgId)
+                ->where('is_default', true)->value('id');
+
+            return $data;
+        }
+
+        $template = VacancyTemplate::where('organization_id', $orgId)->find($templateId);
+
+        if ($template === null) {
+            return $data;
+        }
+
+        $data['workflow_id'] = $template->workflow_id
+            ?? RecruitmentWorkflow::where('organization_id', $orgId)->where('is_default', true)->value('id');
+
+        foreach ([
+            'job_title'     => $template->job_title,
+            'department_id' => $template->department_id,
+            'positions'     => $template->default_positions,
+        ] as $field => $value) {
+            if (blank($data[$field] ?? null) && filled($value)) {
+                $data[$field] = $value;
+            }
+        }
+
+        return $data;
+    }
+
     // ── Shapes ────────────────────────────────────────────────────────────
 
     private function rules(Request $request, int $orgId): array
@@ -246,6 +294,14 @@ class TalentRequisitionController extends Controller
             'job_title'     => ['required', 'string', 'max:255'],
             'department_id' => ['nullable', 'integer',
                 Rule::exists('departments', 'id')->where('organization_id', $orgId)],
+
+            /*
+             * The template carries the job details, the application form, the
+             * screening rules and the pipeline. Optional — a role nobody has
+             * templated is a normal thing to ask for.
+             */
+            'vacancy_template_id' => ['nullable', 'integer',
+                Rule::exists('vacancy_templates', 'id')->where('organization_id', $orgId)],
             'positions' => ['sometimes', 'integer', 'min:1', 'max:999'],
             'priority'  => ['sometimes', Rule::in(TalentRequisition::PRIORITIES)],
             'target_hire_date' => ['nullable', 'date'],
@@ -329,6 +385,33 @@ class TalentRequisitionController extends Controller
                 : null,
 
             /*
+             * The configuration this requisition inherited, shown so the
+             * requester can see the whole journey before agreeing to it —
+             * which application form candidates will fill in, and which board
+             * they will move down.
+             */
+            'template' => $r->relationLoaded('template') && $r->template
+                ? [
+                    'id' => $r->template->id,
+                    'name' => $r->template->name,
+                    'form_fields' => count($r->template->application_form_schema ?? []),
+                    'has_screening_rules' => filled($r->template->screening_rules),
+                ]
+                : null,
+
+            'pipeline' => $r->relationLoaded('workflow') && $r->workflow
+                ? [
+                    'id' => $r->workflow->id,
+                    'name' => $r->workflow->name,
+                    'stages' => $r->workflow->relationLoaded('stages')
+                        ? $r->workflow->stages->map(fn ($s) => [
+                            'name' => $s->name, 'type' => $s->stage_type,
+                        ])->values()
+                        : [],
+                ]
+                : null,
+
+            /*
              * The requester leads the list, as the designs show — the first
              * row is "Requested", not an approval. Reading it as a decision
              * would suggest people approve their own requisitions.
@@ -364,6 +447,36 @@ class TalentRequisitionController extends Controller
             'can_decide' => $current !== null && $me !== null && $current->employee_id === $me,
             'awaiting'   => $current ? ['label' => $current->label, 'position' => $current->position] : null,
         ];
+    }
+
+    /**
+     * The templates worth offering, with what each one brings.
+     *
+     * Shown before the requisition is raised, so the requester can see they
+     * are inheriting a form and a pipeline rather than discovering it later.
+     */
+    public function templates(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', TalentRequisition::class);
+
+        $rows = VacancyTemplate::with('workflow')
+            ->where('is_active', true)
+            ->orderBy('name')->get();
+
+        return response()->json([
+            'data' => $rows->map(fn (VacancyTemplate $t) => [
+                'id' => $t->id,
+                'name' => $t->name,
+                'job_title' => $t->job_title,
+                'department_id' => $t->department_id,
+                'default_positions' => $t->default_positions,
+                // What comes with it, so the choice is an informed one.
+                'form_fields' => count($t->application_form_schema ?? []),
+                'has_screening_rules' => filled($t->screening_rules),
+                'pipeline' => $t->relationLoaded('workflow') && $t->workflow
+                    ? ['id' => $t->workflow->id, 'name' => $t->workflow->name] : null,
+            ]),
+        ]);
     }
 
     /** The chain a department would get, so the form can show it up front. */

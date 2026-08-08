@@ -870,6 +870,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/summary', [TalentRequisitionController::class, 'summary']);
         Route::get('/inbox',   [TalentRequisitionController::class, 'inbox']);
         Route::get('/policy',  [TalentRequisitionController::class, 'policyFor']);
+        // The templates a requisition can inherit from — job details, the
+        // application form, screening rules and the candidate pipeline.
+        Route::get('/templates', [TalentRequisitionController::class, 'templates']);
 
         Route::get('/{requisition}',  [TalentRequisitionController::class, 'show']);
         Route::put('/{requisition}',  [TalentRequisitionController::class, 'update']);

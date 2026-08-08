@@ -6,8 +6,10 @@ use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Notification;
 use App\Models\Organization;
+use App\Models\Recruitment\RecruitmentWorkflow;
 use App\Models\Recruitment\RequisitionApprovalPolicy;
 use App\Models\Recruitment\TalentRequisition;
+use App\Models\Recruitment\VacancyTemplate;
 use App\Models\Role;
 use App\Models\User;
 use App\Support\Authorization\Permission;
@@ -213,6 +215,128 @@ class TalentRequisitionTest extends TestCase
         $policy->steps()->update(['label' => 'People Team']);
 
         $this->getJson($this->url('/' . $id))->assertOk()->assertJsonPath('data.approvals.0.label', 'HR');
+    }
+
+    // ── Inheriting what is already configured ─────────────────────────────
+
+    /**
+     * Recruitment already carries the pipeline and the application form as
+     * configuration. The requisition names a template and inherits it, rather
+     * than the new journey growing a second copy — two definitions of "the
+     * hiring process" is how candidates end up on a board nobody configured.
+     */
+    public function test_a_requisition_inherits_its_pipeline_from_the_template(): void
+    {
+        $this->policy([['HR', $this->employee('HR')]]);
+        $this->signIn($this->employee('Asker'), [Permission::REQUISITIONS_CREATE]);
+
+        $workflow = RecruitmentWorkflow::create([
+            'organization_id' => $this->org->id, 'name' => 'Standard Hiring Pipeline',
+        ]);
+        $workflow->stages()->create(['name' => 'Phone Screening', 'order_index' => 1, 'stage_type' => 'screening']);
+        $workflow->stages()->create(['name' => 'Interview', 'order_index' => 2, 'stage_type' => 'interview']);
+
+        $template = VacancyTemplate::create([
+            'organization_id' => $this->org->id, 'workflow_id' => $workflow->id,
+            'name' => 'Software Engineer Template', 'job_title' => 'Software Engineer',
+            'default_positions' => 3,
+            'application_form_schema' => [['key' => 'cv', 'label' => 'CV', 'type' => 'file']],
+            'screening_rules' => [['type' => 'keyword_match', 'weight' => 20]],
+        ]);
+
+        $this->postJson($this->url(), [
+            'job_title' => 'Senior Product Designer',
+            'department_id' => $this->department->id,
+            'vacancy_template_id' => $template->id,
+        ])->assertCreated()
+            ->assertJsonPath('data.pipeline.name', 'Standard Hiring Pipeline')
+            ->assertJsonPath('data.pipeline.stages.0.name', 'Phone Screening')
+            ->assertJsonPath('data.template.name', 'Software Engineer Template')
+            ->assertJsonPath('data.template.form_fields', 1)
+            ->assertJsonPath('data.template.has_screening_rules', true);
+    }
+
+    /** Only the gaps: somebody who changed the job title meant it. */
+    public function test_what_was_typed_wins_over_the_template(): void
+    {
+        $this->policy([['HR', $this->employee('HR')]]);
+        $this->signIn($this->employee('Asker'), [Permission::REQUISITIONS_CREATE]);
+
+        $template = VacancyTemplate::create([
+            'organization_id' => $this->org->id,
+            'name' => 'Engineer', 'job_title' => 'Software Engineer', 'default_positions' => 3,
+        ]);
+
+        $this->postJson($this->url(), [
+            'job_title' => 'Senior Product Designer',
+            'department_id' => $this->department->id,
+            'positions' => 2,
+            'vacancy_template_id' => $template->id,
+        ])->assertCreated()
+            ->assertJsonPath('data.job_title', 'Senior Product Designer')
+            ->assertJsonPath('data.positions', 2);
+    }
+
+    /** A role nobody has templated is a normal thing to ask for. */
+    public function test_a_requisition_without_a_template_still_gets_the_default_pipeline(): void
+    {
+        $this->policy([['HR', $this->employee('HR')]]);
+        $this->signIn($this->employee('Asker'), [Permission::REQUISITIONS_CREATE]);
+
+        RecruitmentWorkflow::create([
+            'organization_id' => $this->org->id, 'name' => 'Standard Hiring Pipeline', 'is_default' => true,
+        ]);
+
+        $this->raise()->assertCreated()->assertJsonPath('data.pipeline.name', 'Standard Hiring Pipeline');
+    }
+
+    /**
+     * Pinned at submission rather than followed live, so retemplating next
+     * quarter cannot move candidates already halfway down a board.
+     */
+    public function test_repointing_the_template_does_not_move_an_existing_requisition(): void
+    {
+        $this->policy([['HR', $this->employee('HR')]]);
+        $this->signIn($this->employee('Asker'), [Permission::REQUISITIONS_CREATE]);
+
+        $first  = RecruitmentWorkflow::create(['organization_id' => $this->org->id, 'name' => 'Pipeline A']);
+        $second = RecruitmentWorkflow::create(['organization_id' => $this->org->id, 'name' => 'Pipeline B']);
+
+        $template = VacancyTemplate::create([
+            'organization_id' => $this->org->id, 'workflow_id' => $first->id,
+            'name' => 'Engineer', 'job_title' => 'Engineer',
+        ]);
+
+        $id = $this->postJson($this->url(), [
+            'job_title' => 'Engineer', 'department_id' => $this->department->id,
+            'vacancy_template_id' => $template->id,
+        ])->assertCreated()->json('data.id');
+
+        $template->update(['workflow_id' => $second->id]);
+
+        $this->getJson($this->url('/' . $id))->assertOk()->assertJsonPath('data.pipeline.name', 'Pipeline A');
+    }
+
+    public function test_the_templates_on_offer_say_what_they_bring(): void
+    {
+        $this->signIn($this->employee('Asker'), [Permission::REQUISITIONS_VIEW]);
+
+        $workflow = RecruitmentWorkflow::create(['organization_id' => $this->org->id, 'name' => 'Standard']);
+
+        VacancyTemplate::create([
+            'organization_id' => $this->org->id, 'workflow_id' => $workflow->id,
+            'name' => 'Engineer', 'job_title' => 'Software Engineer',
+            'application_form_schema' => [['key' => 'cv'], ['key' => 'years']],
+            'screening_rules' => [['type' => 'keyword_match']],
+            'is_active' => true,
+        ]);
+
+        $this->getJson($this->url('/templates'))
+            ->assertOk()
+            ->assertJsonPath('data.0.name', 'Engineer')
+            ->assertJsonPath('data.0.form_fields', 2)
+            ->assertJsonPath('data.0.has_screening_rules', true)
+            ->assertJsonPath('data.0.pipeline.name', 'Standard');
     }
 
     // ── The chain ─────────────────────────────────────────────────────────

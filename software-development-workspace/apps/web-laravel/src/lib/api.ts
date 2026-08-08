@@ -26,6 +26,7 @@ export class ApiError extends Error {
   }
 }
 
+import { clearAuth } from "../stores/auth";
 import { getToken } from "../stores/auth";
 
 // ---------------------------------------------------------------------------
@@ -99,6 +100,22 @@ export async function api<T>(
 
   if (!res.ok) {
     const d = data as { message?: string; errors?: Record<string, string[]> };
+
+    /*
+     * A dead session should end the session, not decorate the page.
+     *
+     * Without this a stale token leaves every module rendering its shell with
+     * "Unauthenticated." painted across it, which reads as the module being
+     * broken rather than as needing to sign in again.
+     */
+    if (res.status === 401) {
+      clearAuth();
+
+      if (!window.location.hash.startsWith("#/login")) {
+        window.location.hash = "#/login";
+      }
+    }
+
     throw new ApiError(res.status, d.message ?? res.statusText, d.errors);
   }
 

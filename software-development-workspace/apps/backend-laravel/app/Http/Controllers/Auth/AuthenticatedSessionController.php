@@ -24,8 +24,22 @@ class AuthenticatedSessionController extends Controller
         $user   = $request->user();
         $orgIds = $user->accessibleOrganizationIds();
 
-        // Revoke all previous tokens so only one active token exists per user.
-        $user->tokens()->delete();
+        /*
+         * Old tokens are pruned, not wiped.
+         *
+         * Deleting every token on login meant one session per person: opening
+         * the app on a phone silently signed out the laptop, and the laptop
+         * found out by painting "Unauthenticated." across whatever page it was
+         * on. Somebody with two tabs did it to themselves.
+         *
+         * A fortnight unused is a session nobody is coming back to, and
+         * dropping those keeps the table from growing without bound.
+         */
+        $user->tokens()
+            ->where('created_at', '<', now()->subDays(14))
+            ->where(fn ($q) => $q->whereNull('last_used_at')
+                ->orWhere('last_used_at', '<', now()->subDays(14)))
+            ->delete();
 
         $token = $user->createToken('spa-' . now()->timestamp, ['*'])->plainTextToken;
 

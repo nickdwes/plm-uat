@@ -39,6 +39,8 @@ interface Requisition {
   is_approved: boolean;
   requester: Person | null;
   vacancy: { id: number; name: string; status: string } | null;
+  template: { id: number; name: string; form_fields: number; has_screening_rules: boolean } | null;
+  pipeline: { id: number; name: string; stages: { name: string; type: string }[] } | null;
   approvals: Approval[];
   timeline: Event[];
   can_decide: boolean;
@@ -272,6 +274,31 @@ onMounted(load);
             </p>
           </section>
 
+          <!--
+            What this requisition inherited, shown so the requester can see the
+            whole journey before agreeing to it — which form candidates fill in
+            and which board they move down. All of it was configured before
+            requisitions existed; none of it is worth defining twice.
+          -->
+          <section v-if="req.pipeline || req.template" class="rq-card">
+            <h2 class="rq-card-title">Hiring process</h2>
+
+            <p v-if="req.template" class="rq-config">
+              From template <strong>{{ req.template.name }}</strong>
+              <template v-if="req.template.form_fields">
+                · {{ req.template.form_fields }}-field application form
+              </template>
+              <template v-if="req.template.has_screening_rules"> · screening rules</template>
+            </p>
+
+            <template v-if="req.pipeline">
+              <p class="rq-config">Pipeline <strong>{{ req.pipeline.name }}</strong></p>
+              <div class="rq-stages">
+                <span v-for="s in req.pipeline.stages" :key="s.name" class="rq-stage-chip">{{ s.name }}</span>
+              </div>
+            </template>
+          </section>
+
           <section class="rq-card">
             <h2 class="rq-card-title">Approvals</h2>
 
@@ -397,6 +424,10 @@ onMounted(load);
 .rq-stage.current .rq-stage-name { color: var(--color-brand-on-surface); font-weight: 500; }
 .rq-stage-date { font-size: 0.6rem; color: var(--color-text-light); }
 .rq-hold { font-size: var(--text-xs-size); color: var(--color-warning-text); margin: var(--space-3) 0 0; }
+
+.rq-config { font-size: var(--text-xs-size); color: var(--color-text-muted); margin: 0 0 var(--space-2); }
+.rq-stages { @apply flex flex-wrap; gap: var(--space-1); }
+.rq-stage-chip { padding: 1px var(--space-3); border-radius: 999px; background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--text-xs-size); }
 
 .rq-approval { @apply flex items-start; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); }
 .rq-approval:last-of-type { border-bottom: none; }
