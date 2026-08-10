@@ -228,6 +228,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
             Route::get('/people',       [AttendanceAnalyticsController::class, 'people']);
             Route::get('/trends',       [AttendanceAnalyticsController::class, 'trends']);
             Route::get('/distribution', [AttendanceAnalyticsController::class, 'distribution']);
+            /*
+             * Delivery against the due date — what replaced the timesheet.
+             * Reports the day work was promised, the day the person said it was
+             * done and the day it was approved, side by side.
+             */
+            Route::get('/delivery',     [AttendanceAnalyticsController::class, 'delivery']);
         });
 
         /*

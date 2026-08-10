@@ -721,6 +721,15 @@ class TaskBoardController extends Controller
             'name'     => ['required', 'string', 'max:255'],
             'details'  => ['nullable', 'string', 'max:20000'],
             'priority' => ['sometimes', Rule::in(TaskIssue::PRIORITIES)],
+            /*
+             * Something that has happened, or something that might.
+             *
+             * Defaults to issue, which is what this endpoint has always
+             * recorded. The day-close screen sends `risk` when an overdue task
+             * prompts for one — the deadline that has already gone is not the
+             * problem, the one after it is.
+             */
+            'kind'     => ['sometimes', Rule::in(TaskIssue::KINDS)],
             'escalate_to' => ['nullable', 'integer',
                 Rule::exists('employees', 'id')->where('primary_organization_id', $task->organization_id)],
         ]);
@@ -730,6 +739,7 @@ class TaskBoardController extends Controller
             'name'      => $data['name'],
             'details'   => $data['details'] ?? null,
             'priority'  => $data['priority'] ?? 'high',
+            'kind'      => $data['kind'] ?? 'issue',
             'raised_by' => $request->user()->employeeId(),
         ]);
 

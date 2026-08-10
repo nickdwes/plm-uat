@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Attendance\AttendanceCommitment;
 use App\Models\Attendance\AttendanceDay;
 use App\Models\Employee;
+use App\Models\Task\Task;
 use App\Support\Authorization\Permission;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -282,6 +283,88 @@ class AttendanceAnalyticsController extends Controller
      * builds a ten-thousand-item `IN` clause to say "no restriction" is a
      * report that gets slower as the company grows.
      */
+    /**
+     * Delivery against the date it was due.
+     *
+     * This is what replaced the timesheet. The old system asked how many hours
+     * went into a thing; nobody answered — the hours column was filled on five
+     * rows out of thirty-eight thousand — and nobody could have used the answer
+     * anyway. What a manager actually needs to know is whether the work arrived
+     * when it was promised, and if not, whether anybody said so.
+     *
+     * Both dates are reported, never one. `reported_done_at` is when the person
+     * said they had finished; `approved_at` is when somebody agreed. Collapsing
+     * them into a single "delivered" would charge a slow approval to whoever
+     * delivered on time, and a fortnight sitting in an approval queue is a fact
+     * about the queue that deserves to be visible rather than absorbed.
+     */
+    public function delivery(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', \App\Models\Attendance\AttendanceDay::class);
+
+        [$from, $to] = $this->window($request);
+        $reach = $this->reachableEmployeeIds($request);
+
+        $tasks = Task::query()
+            ->whereNotNull('deadline')
+            ->whereBetween('deadline', [$from, $to])
+            ->when($reach !== null, fn ($q) => $q->whereIn('assigned_to', $reach))
+            ->when($request->integer('employee_id'), fn ($q, $id) => $q->where('assigned_to', $id))
+            ->with(['assignee:id,first_name,last_name'])
+            ->orderBy('deadline')
+            ->get();
+
+        $rows = $tasks->map(function (Task $t) {
+            $late = $t->daysLate();
+
+            return [
+                'id'        => $t->id,
+                'reference' => $t->reference,
+                'title'     => $t->title,
+                'status'    => $t->status,
+                'employee'  => $t->assignee?->full_name,
+                'employee_id' => $t->assigned_to,
+
+                'due_on'      => $t->deadline?->toDateString(),
+                // When the person said it was finished.
+                'reported_on' => $t->reported_done_at?->toDateString(),
+                // When somebody agreed. Null is not a failure by the doer.
+                'approved_on' => $t->approved_at?->toDateString(),
+
+                'days_late'   => $late,
+                /*
+                 * Four states, not three. "Not delivered" and "not delivered
+                 * and nobody has said why" are the same fact to a report and
+                 * very different facts to a manager.
+                 */
+                'outcome' => match (true) {
+                    $t->reported_done_at === null && $t->isOverdue() => 'overdue',
+                    $t->reported_done_at === null                    => 'outstanding',
+                    $late === 0                                      => 'on_time',
+                    default                                          => 'late',
+                },
+                // Waiting on somebody else rather than on the person who did it.
+                'awaiting_approval' => $t->status === 'awaiting_approval',
+                'open_issues' => $t->issues()->where('status', 'open')->count(),
+            ];
+        });
+
+        return response()->json([
+            'range' => ['from' => $from, 'to' => $to],
+            'summary' => [
+                'due'         => $rows->count(),
+                'on_time'     => $rows->where('outcome', 'on_time')->count(),
+                'late'        => $rows->where('outcome', 'late')->count(),
+                'overdue'     => $rows->where('outcome', 'overdue')->count(),
+                'outstanding' => $rows->where('outcome', 'outstanding')->count(),
+                // Delivered and stuck. Counted separately because it is the one
+                // number here that is not about the person being measured.
+                'awaiting_approval' => $rows->where('awaiting_approval', true)->count(),
+            ],
+            'data' => $rows->values(),
+        ]);
+    }
+
     private function reachableEmployeeIds(Request $request): ?array
     {
         $user = $request->user();

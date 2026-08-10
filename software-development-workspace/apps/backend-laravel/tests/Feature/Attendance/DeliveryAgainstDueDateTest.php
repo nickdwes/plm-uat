@@ -330,4 +330,71 @@ class DeliveryAgainstDueDateTest extends TestCase
 
         $this->assertSame(1, $after);
     }
+
+    // ── The manager's view ────────────────────────────────────────────────
+
+    /**
+     * Due, reported, approved — three dates, never collapsed into one.
+     *
+     * A task delivered on Friday and signed off the following Wednesday was
+     * delivered on time. Reporting a single "delivered" date would charge those
+     * five days to the person who finished, and hide the only party who could
+     * do anything about them.
+     */
+    public function test_the_delivery_report_separates_reported_from_approved(): void
+    {
+        $staff = $this->staff();
+
+        $this->task([
+            'assigned_to'      => $staff->id,
+            'title'            => 'Delivered early, approved late',
+            'deadline'         => now()->subDays(6)->toDateString(),
+            'reported_done_at' => now()->subDays(7),
+            'approved_at'      => now()->subDay(),
+            'status'           => 'awaiting_approval',
+        ]);
+
+        $row = $this->getJson($this->url('/analytics/delivery', [
+            'from' => now()->subDays(30)->toDateString(),
+            'to'   => now()->toDateString(),
+        ]))->assertOk()->json('data.0');
+
+        $this->assertSame('on_time', $row['outcome']);
+        $this->assertSame(0, $row['days_late']);
+        $this->assertNotSame($row['reported_on'], $row['approved_on']);
+        $this->assertTrue($row['awaiting_approval']);
+    }
+
+    /** Late, outstanding and overdue are different answers. */
+    public function test_the_delivery_report_tells_the_outcomes_apart(): void
+    {
+        $staff = $this->staff();
+
+        $this->task([
+            'assigned_to' => $staff->id, 'title' => 'Late',
+            'deadline' => now()->subDays(10)->toDateString(),
+            'reported_done_at' => now()->subDays(8),
+        ]);
+
+        $this->task([
+            'assigned_to' => $staff->id, 'title' => 'Never delivered',
+            'deadline' => now()->subDays(9)->toDateString(),
+        ]);
+
+        $this->task([
+            'assigned_to' => $staff->id, 'title' => 'Not due yet',
+            'deadline' => now()->addDays(5)->toDateString(),
+        ]);
+
+        $body = $this->getJson($this->url('/analytics/delivery', [
+            'from' => now()->subDays(30)->toDateString(),
+            'to'   => now()->addDays(30)->toDateString(),
+        ]))->assertOk()->json();
+
+        $this->assertSame(3, $body['summary']['due']);
+        $this->assertSame(1, $body['summary']['late']);
+        $this->assertSame(1, $body['summary']['overdue']);
+        // Due in the future and untouched is outstanding, not overdue.
+        $this->assertSame(1, $body['summary']['outstanding']);
+    }
 }
