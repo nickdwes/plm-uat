@@ -1301,9 +1301,17 @@ onMounted(load);
             </div>
           </div>
 
+          <!--
+            This said "stored encrypted", which is not true of this class.
+            `employee_documents` is not in documents.encrypted_disks and both
+            its write and its read go straight to the disk, so contracts and ID
+            copies are held as plain files. Saying otherwise on the screen where
+            somebody decides whether to upload a passport scan is worse than
+            saying nothing.
+          -->
           <p class="ed-empty-hint" style="margin-bottom:12px">
-            Stored encrypted. Only people who can see this employee's sensitive
-            details can open them.
+            Only people who can see this employee's sensitive details can open
+            these.
           </p>
 
           <p v-if="docError" class="error" style="margin-bottom:8px">{{ docError }}</p>
