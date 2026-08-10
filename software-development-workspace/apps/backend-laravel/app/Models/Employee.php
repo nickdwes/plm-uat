@@ -39,6 +39,7 @@ class Employee extends Model
         'preferred_name',
         'date_of_birth',
         'gender',
+        'marital_status',
         'national_id',
         'passport_number',
         'tax_id',
@@ -49,6 +50,7 @@ class Employee extends Model
         'phone',
         'address',
         'city',
+        'county',
         'country',
         'employment_type',
         'status',
@@ -182,7 +184,11 @@ class Employee extends Model
     public function organizations(): BelongsToMany
     {
         return $this->belongsToMany(Organization::class, 'employee_organization_map')
-            ->withPivot(['designation_id', 'department_id', 'reports_to', 'access_scope', 'role', 'allocation_pct', 'is_billable', 'effective_from', 'effective_to', 'is_active', 'notes'])
+            ->withPivot([
+                'designation_id', 'department_id', 'reports_to', 'access_scope',
+                'role', 'engagement_type', 'allocation_pct', 'is_billable',
+                'effective_from', 'effective_to', 'is_active', 'notes',
+            ])
             ->withTimestamps();
     }
 
@@ -242,9 +248,18 @@ class Employee extends Model
         return $this->hasMany(EmployeeQualification::class)->orderByDesc('year_obtained');
     }
 
-    public function secondments(): HasMany
+    /**
+     * Every organisation besides their primary one.
+     *
+     * Secondments live on the organisation map rather than a table of their
+     * own — the map already carries the allocation, whether it is billable and
+     * who they report to there, none of which a free-text organisation name
+     * could answer.
+     */
+    public function secondments()
     {
-        return $this->hasMany(EmployeeSecondment::class)->orderByDesc('start_date');
+        return $this->organizations()
+            ->wherePivot('organization_id', '!=', $this->primary_organization_id);
     }
 
     // ── Scopes ────────────────────────────────────────────────────────────────

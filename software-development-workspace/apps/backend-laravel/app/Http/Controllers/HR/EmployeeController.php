@@ -10,7 +10,6 @@ use App\Http\Requests\Employee\UpdateEmployeeRequest;
 use App\Http\Resources\EmployeeResource;
 use App\Models\Employee;
 use App\Models\EmployeeQualification;
-use App\Models\EmployeeSecondment;
 use App\Services\HR\EmployeeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -96,7 +95,6 @@ class EmployeeController extends Controller
             'manager', 'emergencyContacts',
             'directReports.designation',
             'qualifications',
-            'secondments',
         ]);
 
         return new EmployeeResource($employee);
@@ -123,7 +121,6 @@ class EmployeeController extends Controller
             'manager', 'emergencyContacts',
             'directReports.designation',
             'qualifications',
-            'secondments',
         ]);
 
         return new EmployeeResource($record);
@@ -207,38 +204,126 @@ class EmployeeController extends Controller
 
     // ── Secondments ───────────────────────────────────────────────────────────
 
+    /**
+     * Put somebody into a second organisation for a while.
+     *
+     * Held on `employee_organization_map` rather than the free-text table it
+     * replaced. The Scope of Engagement panel asks for a time allocation and
+     * whether the time is billable, and the organisation is one of the tenants
+     * rather than a name somebody types — none of which a free-text column can
+     * answer, and answering "who is 50% billable to Tiberbu this quarter" is
+     * the only reason anybody records a secondment.
+     */
     public function storeSecondment(Request $request, int $employee): JsonResponse
     {
         $record = Employee::withoutGlobalScope('organization')->findOrFail($employee);
         $this->authorize('update', $record);
 
         $data = $request->validate([
-            'organization_name' => ['required', 'string', 'max:200'],
-            'role'              => ['nullable', 'string', 'max:150'],
-            'start_date'        => ['required', 'date'],
-            'end_date'          => ['nullable', 'date', 'after_or_equal:start_date'],
-            'notes'             => ['nullable', 'string', 'max:1000'],
+            'organization_id' => ['required', 'integer', 'exists:organizations,id'],
+            'role'            => ['nullable', 'string', 'max:150'],
+            'engagement_type' => ['nullable', 'string', 'max:32'],
+            'designation_id'  => ['nullable', 'integer', 'exists:designations,id'],
+            'department_id'   => ['nullable', 'integer', 'exists:departments,id'],
+            'reports_to'      => ['nullable', 'integer', 'exists:employees,id'],
+            // Percent of their week. Nought would be a secondment that is not
+            // happening, so the floor is one.
+            'allocation_pct'  => ['nullable', 'integer', 'min:1', 'max:100'],
+            'is_billable'     => ['sometimes', 'boolean'],
+            'effective_from'  => ['required', 'date'],
+            'effective_to'    => ['nullable', 'date', 'after_or_equal:effective_from'],
+            'notes'           => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $secondment = $record->secondments()->create($data);
+        abort_if(
+            (int) $data['organization_id'] === (int) $record->primary_organization_id,
+            422,
+            'That is already their primary organisation.',
+        );
 
-        return response()->json(['data' => [
-            'id'                => $secondment->id,
-            'organization_name' => $secondment->organization_name,
-            'role'              => $secondment->role,
-            'start_date'        => $secondment->start_date?->toDateString(),
-            'end_date'          => $secondment->end_date?->toDateString(),
-            'notes'             => $secondment->notes,
-        ]], 201);
+        /*
+         * Seconded time is checked against seconded time, not against their
+         * home organisation.
+         *
+         * The percentage means "how much of their week goes elsewhere" — the
+         * remainder stays where they normally sit. Counting the primary row
+         * would make the cap mean one thing when that row exists and another
+         * when it does not, and would force HR to reduce home first before
+         * every secondment.
+         *
+         * Somebody seconded at 60% and 60% is still a promise the week cannot
+         * keep, and noticing that is the point of recording it at all.
+         */
+        $committed = $record->organizations()
+            ->wherePivot('is_active', true)
+            ->wherePivot('organization_id', '!=', $data['organization_id'])
+            ->wherePivot('organization_id', '!=', $record->primary_organization_id)
+            ->get()->sum(fn ($o) => (int) ($o->pivot->allocation_pct ?? 0));
+
+        $asked = (int) ($data['allocation_pct'] ?? 0);
+
+        abort_if(
+            $committed + $asked > 100,
+            422,
+            "That would put them at " . ($committed + $asked) . "% across organisations.",
+        );
+
+        $record->organizations()->syncWithoutDetaching([
+            $data['organization_id'] => [
+                'role'            => $data['role'] ?? null,
+                'engagement_type' => $data['engagement_type'] ?? null,
+                'designation_id'  => $data['designation_id'] ?? null,
+                'department_id'   => $data['department_id'] ?? null,
+                'reports_to'      => $data['reports_to'] ?? null,
+                'allocation_pct'  => $data['allocation_pct'] ?? null,
+                'is_billable'     => $request->boolean('is_billable'),
+                'effective_from'  => $data['effective_from'],
+                'effective_to'    => $data['effective_to'] ?? null,
+                'is_active'       => true,
+                'notes'           => $data['notes'] ?? null,
+                'access_scope'    => 'organization',
+            ],
+        ]);
+
+        return response()->json(['data' => $this->secondments($record->fresh())], 201);
     }
 
+    /**
+     * End a secondment.
+     *
+     * Marked inactive rather than deleted: somebody was billable to that
+     * organisation for three months and payroll, reporting and anybody
+     * reconciling an invoice still need to see it.
+     */
     public function destroySecondment(int $employee, int $secondment): JsonResponse
     {
         $record = Employee::withoutGlobalScope('organization')->findOrFail($employee);
         $this->authorize('update', $record);
 
-        EmployeeSecondment::where('employee_id', $employee)->findOrFail($secondment)->delete();
+        $record->organizations()->updateExistingPivot($secondment, [
+            'is_active'    => false,
+            'effective_to' => now()->toDateString(),
+        ]);
 
-        return response()->json(null, 204);
+        return response()->json(['data' => $this->secondments($record->fresh())]);
+    }
+
+    /** Every organisation besides their primary one. */
+    private function secondments(Employee $record): array
+    {
+        return $record->organizations()
+            ->wherePivot('organization_id', '!=', $record->primary_organization_id)
+            ->get()
+            ->map(fn ($org) => [
+                'organization'    => ['id' => $org->id, 'name' => $org->name],
+                'role'            => $org->pivot->role,
+                'engagement_type' => $org->pivot->engagement_type,
+                'allocation_pct'  => $org->pivot->allocation_pct,
+                'is_billable'     => (bool) $org->pivot->is_billable,
+                'effective_from'  => $org->pivot->effective_from,
+                'effective_to'    => $org->pivot->effective_to,
+                'is_active'       => (bool) $org->pivot->is_active,
+                'notes'           => $org->pivot->notes,
+            ])->values()->all();
     }
 }
