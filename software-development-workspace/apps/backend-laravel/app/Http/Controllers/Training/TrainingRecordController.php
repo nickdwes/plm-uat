@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Training;
 
+use App\Support\Storage\DocumentVault;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Training\EnrollTrainingRequest;
 use App\Http\Requests\Training\LogProgressRequest;
@@ -169,13 +170,10 @@ class TrainingRecordController extends Controller
 
         abort_unless($file->fileExists(), 404, 'File not found.');
 
-        return response()->stream(
-            fn() => fpassthru($file->readStream()),
-            200,
-            [
-                'Content-Type'        => $file->mime_type ?? 'application/octet-stream',
-                'Content-Disposition' => 'attachment; filename="' . $file->original_name . '"',
-            ]
+        // Through the vault, which decrypts.
+        return DocumentVault::download(
+            'training_evidence', $file->storage_path, $file->original_name,
+            $file->mime_type ?? 'application/octet-stream',
         );
     }
 

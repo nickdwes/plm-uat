@@ -29,8 +29,12 @@ class PreboardingAttachment extends Model
         return Storage::disk('preboarding_docs')->exists($this->storage_path);
     }
 
-    public function readStream()
-    {
-        return Storage::disk('preboarding_docs')->readStream($this->storage_path);
-    }
+    /*
+     * There is deliberately no readStream() here.
+     *
+     * It returned the bytes as they sit on the disk, which are now
+     * ciphertext. Anything serving this file goes through
+     * DocumentVault::download(), which decrypts and still passes
+     * older plain files straight through.
+     */
 }

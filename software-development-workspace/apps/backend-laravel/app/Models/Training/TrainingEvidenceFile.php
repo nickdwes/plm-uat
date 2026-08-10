@@ -48,8 +48,12 @@ class TrainingEvidenceFile extends Model
         return Storage::disk('training_evidence')->exists($this->storage_path);
     }
 
-    public function readStream(): mixed
-    {
-        return Storage::disk('training_evidence')->readStream($this->storage_path);
-    }
+    /*
+     * There is deliberately no readStream() here.
+     *
+     * It returned the bytes as they sit on the disk, which are now
+     * ciphertext. Anything serving this file goes through
+     * DocumentVault::download(), which decrypts and still passes
+     * older plain files straight through.
+     */
 }

@@ -12,6 +12,10 @@ use App\Services\Recruitment\ApplicationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use App\Support\Storage\DocumentVault;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ApplicationController extends Controller
 {
@@ -43,6 +47,27 @@ class ApplicationController extends Controller
         return new ApplicationResource(
             $application->load(['candidate', 'currentStage', 'stageHistory.toStage', 'stageHistory.fromStage', 'stageHistory.movedBy', 'vacancy'])
         );
+    }
+
+    /**
+     * The supporting document attached to an application.
+     *
+     * Same treatment as the CV: authorised here, decrypted on the way out, and
+     * with no address of its own that anybody could hold.
+     */
+    public function downloadAttachment(Application $application): StreamedResponse
+    {
+        $this->authorize('view', $application);
+
+        $path = $application->form_data['attachment_path'] ?? null;
+
+        abort_if($path === null, 404, 'No attachment on this application.');
+        abort_unless(Storage::disk('candidate_docs')->exists($path), 404, 'File not found on disk.');
+
+        $filename = Str::slug($application->candidate?->full_name ?: 'applicant')
+            . '-attachment.' . pathinfo($path, PATHINFO_EXTENSION);
+
+        return DocumentVault::download('candidate_docs', $path, $filename);
     }
 
     public function moveStage(MoveApplicationStageRequest $request, Application $application): ApplicationResource

@@ -30,13 +30,25 @@ class ApplicationResource extends JsonResource
     private function buildFormData(): array
     {
         $data = $this->form_data ?? [];
-        if (!empty($data['attachment_path'])) {
-            $data['attachment_url'] = Storage::disk('public')->exists($data['attachment_path'])
-                ? Storage::disk('public')->url($data['attachment_path'])
-                : null;
-        } else {
-            $data['attachment_url'] = null;
-        }
+
+        /*
+         * A route, not a storage URL.
+         *
+         * This looked the attachment up on the `public` disk and handed back
+         * its symlinked address. That disk is unauthenticated — it is where the
+         * CVs were leaking from — and nothing has been written there since they
+         * moved. So the lookup missed every time and the client was told there
+         * was no attachment, while the file sat encrypted on the private disk.
+         *
+         * The path itself is deliberately not exposed: it is a storage key, and
+         * the client has no use for one it cannot fetch.
+         */
+        $data['attachment_url'] = ! empty($data['attachment_path'])
+            ? "/api/v1/applications/{$this->id}/attachment"
+            : null;
+
+        unset($data['attachment_path']);
+
         return $data;
     }
 }

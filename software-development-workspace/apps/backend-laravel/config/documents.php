@@ -27,5 +27,23 @@ return [
         'candidate_docs',
         'travel_evidence',
         'project_documents',
+
+        /*
+         * The three that were missing, and the three that hold the most
+         * sensitive documents in the system.
+         *
+         * Employment contracts, national ID and passport scans, KRA PIN
+         * certificates, academic certificates, medical evidence for a training
+         * claim. They were written straight to the disk and read straight back,
+         * so the one class with a statutory duty of care behind it was the one
+         * class stored as plain files — while tender responses, which are
+         * merely commercially awkward, were encrypted.
+         *
+         * Nothing about the list said so. It was an omission, which is exactly
+         * what the comment above hoped to prevent.
+         */
+        'employee_documents',
+        'preboarding_docs',
+        'training_evidence',
     ],
 ];

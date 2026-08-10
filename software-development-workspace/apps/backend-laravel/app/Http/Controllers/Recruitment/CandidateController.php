@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Recruitment;
 
+use App\Support\Storage\DocumentVault;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Recruitment\CreateCandidateRequest;
 use App\Http\Resources\Recruitment\CandidateResource;
@@ -110,19 +111,25 @@ class CandidateController extends Controller
         $filename = Str::slug($candidate->full_name ?: 'candidate')
             . '-cv.' . pathinfo($candidate->resume_path, PATHINFO_EXTENSION);
 
-        return response()->streamDownload(
-            function () use ($disk, $candidate) {
-                $stream = $disk->readStream($candidate->resume_path);
-                fpassthru($stream);
-                if (is_resource($stream)) fclose($stream);
-            },
+        /*
+         * Through the vault, which decrypts.
+         *
+         * This streamed the raw bytes. Every CV that arrived through the public
+         * portal is sealed, so what a recruiter downloaded was the ciphertext —
+         * a file beginning `KVAULT001:` that no reader can open. It went
+         * unnoticed only because the CVs on file today all predate the portal
+         * and happen to be plain.
+         *
+         * Worse, it was a trap: `documents:encrypt-existing` is in the runbook
+         * and would have sealed those too, turning every CV download in the
+         * system into a corrupt file at once. Unsealed input passes straight
+         * through, so this handles both.
+         */
+        return DocumentVault::download(
+            'candidate_docs',
+            $candidate->resume_path,
             $filename,
-            [
-                'Content-Type'           => $disk->mimeType($candidate->resume_path) ?: 'application/octet-stream',
-                'Content-Disposition'    => 'attachment; filename="' . addslashes($filename) . '"',
-                'X-Content-Type-Options' => 'nosniff',
-                'Cache-Control'          => 'no-store',
-            ]
+            $disk->mimeType($candidate->resume_path) ?: 'application/octet-stream',
         );
     }
 

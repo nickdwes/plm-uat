@@ -2,6 +2,7 @@
 
 namespace App\Services\Travel;
 
+use App\Support\Storage\DocumentVault;
 use App\Models\Travel\TravelExpenseEvidence;
 use App\Models\Travel\TravelRequest;
 use App\Models\Travel\TravelRequestItem;
@@ -56,7 +57,11 @@ class TravelReconciliationService
             $path = "{$item->request->organization_id}/{$item->travel_request_id}/"
                 . Str::uuid() . ".{$extension}";
 
-            Storage::disk('travel_evidence')->putFileAs(dirname($path), $file, basename($path));
+            // Sealed on the way in, like every other class on the encrypted
+            // list. This wrote the receipt untouched.
+            DocumentVault::putContents(
+                'travel_evidence', $path, (string) file_get_contents($file->getRealPath()),
+            );
 
             $evidence = $item->evidence()->create([
                 'kind'                     => 'receipt',

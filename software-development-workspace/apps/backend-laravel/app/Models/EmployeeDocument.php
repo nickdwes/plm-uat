@@ -43,11 +43,12 @@ class EmployeeDocument extends Model
         return Storage::disk('employee_documents')->exists($this->storage_path);
     }
 
-    /**
-     * Stream the file contents from the private disk.
+    /*
+     * There is deliberately no readStream() here.
+     *
+     * It returned the bytes as they sit on the disk, which are now
+     * ciphertext. Anything serving this file goes through
+     * DocumentVault::download(), which decrypts and still passes
+     * older plain files straight through.
      */
-    public function readStream(): mixed
-    {
-        return Storage::disk('employee_documents')->readStream($this->storage_path);
-    }
 }

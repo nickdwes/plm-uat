@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Travel;
 
+use App\Support\Storage\DocumentVault;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Travel\TravelRequestResource;
 use App\Models\Travel\TravelExpenseEvidence;
@@ -111,18 +112,13 @@ class TravelReconciliationController extends Controller
         $disk = Storage::disk('travel_evidence');
         abort_unless($disk->exists($evidence->storage_path), 404, 'File not found.');
 
-        return response()->streamDownload(
-            function () use ($disk, $evidence) {
-                $stream = $disk->readStream($evidence->storage_path);
-                fpassthru($stream);
-                if (is_resource($stream)) fclose($stream);
-            },
+        // Through the vault, which decrypts. travel_evidence is on the
+        // encrypted list, so a raw read here served ciphertext.
+        return DocumentVault::download(
+            'travel_evidence',
+            $evidence->storage_path,
             $evidence->original_name ?? 'receipt',
-            [
-                'Content-Type'           => $evidence->mime_type ?? 'application/octet-stream',
-                'X-Content-Type-Options' => 'nosniff',
-                'Cache-Control'          => 'no-store',
-            ],
+            $evidence->mime_type ?? 'application/octet-stream',
         );
     }
 

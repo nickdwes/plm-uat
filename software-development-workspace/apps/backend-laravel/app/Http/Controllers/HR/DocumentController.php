@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Support\Storage\DocumentVault;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\EmployeeDocument;
@@ -86,19 +87,10 @@ class DocumentController extends Controller
 
         abort_unless($doc->fileExists(), 404, 'File not found on storage.');
 
-        return response()->streamDownload(
-            function () use ($doc) {
-                $stream = $doc->readStream();
-                fpassthru($stream);
-                fclose($stream);
-            },
-            $doc->original_name,
-            [
-                'Content-Type'              => $doc->mime_type,
-                'Content-Disposition'       => 'attachment; filename="' . addslashes($doc->original_name) . '"',
-                'X-Content-Type-Options'    => 'nosniff',
-                'Cache-Control'             => 'no-store',
-            ]
+        // Through the vault, which decrypts. Streaming the raw bytes would
+        // hand back ciphertext now that this class is sealed.
+        return DocumentVault::download(
+            'employee_documents', $doc->storage_path, $doc->original_name, $doc->mime_type,
         );
     }
 

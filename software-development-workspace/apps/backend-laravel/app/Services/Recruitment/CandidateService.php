@@ -2,6 +2,7 @@
 
 namespace App\Services\Recruitment;
 
+use App\Support\Storage\DocumentVault;
 use App\Models\Recruitment\Candidate;
 use App\Repositories\Recruitment\CandidateRepository;
 use App\Services\BaseService;
@@ -85,7 +86,15 @@ class CandidateService extends BaseService
             Storage::disk('candidate_docs')->delete($candidate->resume_path);
         }
 
-        $path = $file->store("resumes/{$candidate->id}", 'candidate_docs');
+        /*
+         * Through the vault, like the public portal already was.
+         *
+         * `candidate_docs` is on the encrypted list, but this path wrote raw
+         * bytes — so the same column held sealed files from the portal and
+         * plain ones from here, and which you got depended on how the CV
+         * happened to arrive.
+         */
+        $path = DocumentVault::store($file, 'candidate_docs', "resumes/{$candidate->id}");
         $candidate->update(['resume_path' => $path]);
 
         return $candidate->fresh();

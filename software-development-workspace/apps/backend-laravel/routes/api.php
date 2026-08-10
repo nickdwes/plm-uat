@@ -919,6 +919,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Applications (standalone)
         Route::get('/applications/{application}',             [ApplicationController::class, 'show']);
+        /*
+         * The supporting document an applicant attached alongside their CV.
+         *
+         * It was stored and never served: the portal seals it onto the private
+         * disk, and the only thing that ever looked for it checked the public
+         * disk, where it has not been since CVs were moved off the storage
+         * symlink. Written, encrypted, and unreachable.
+         */
+        Route::get('/applications/{application}/attachment',  [ApplicationController::class, 'downloadAttachment']);
         Route::patch('/applications/{application}/stage',     [ApplicationController::class, 'moveStage']);
         Route::post('/applications/bulk-action',              [ApplicationController::class, 'bulkAction']);
 

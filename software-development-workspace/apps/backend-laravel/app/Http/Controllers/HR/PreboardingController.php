@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Support\Storage\DocumentVault;
 use App\Models\Preboarding\PreboardingRecord;
 use App\Http\Controllers\Controller;
 use App\Mail\PreboardingLinkMail;
@@ -255,19 +256,11 @@ class PreboardingController extends Controller
 
         abort_unless($att->fileExists(), 404, 'File not found on disk.');
 
-        return response()->streamDownload(
-            function () use ($att) {
-                $stream = $att->readStream();
-                fpassthru($stream);
-                if (is_resource($stream)) fclose($stream);
-            },
-            $att->original_name,
-            [
-                'Content-Type'              => $att->mime_type ?? 'application/octet-stream',
-                'Content-Disposition'       => 'attachment; filename="' . addslashes($att->original_name) . '"',
-                'X-Content-Type-Options'    => 'nosniff',
-                'Cache-Control'             => 'no-store',
-            ]
+        // Through the vault, which decrypts, and which serves the readable
+        // name from the database now that the key is a UUID.
+        return DocumentVault::download(
+            'preboarding_docs', $att->storage_path, $att->original_name,
+            $att->mime_type ?? 'application/octet-stream',
         );
     }
 

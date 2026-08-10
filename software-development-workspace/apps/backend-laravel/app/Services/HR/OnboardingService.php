@@ -7,6 +7,7 @@ use App\Models\EmployeeDocument;
 use App\Models\OnboardingAsset;
 use App\Models\OnboardingDocumentChecklist;
 use App\Models\OnboardingInduction;
+use App\Support\Storage\DocumentVault;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
@@ -148,8 +149,13 @@ class OnboardingService
     // ── Document file uploads ─────────────────────────────────────────────────
 
     /**
-     * Store an uploaded file on the private disk and persist the metadata record.
+     * Store an uploaded file encrypted and persist the metadata record.
+     *
      * Path pattern: {org_id}/{employee_id}/{category}/{uuid}.{ext}
+     *
+     * Written through the vault rather than straight to the disk. This class
+     * holds employment contracts, ID scans and KRA PIN certificates, and it was
+     * the one document class stored as plain files.
      */
     public function uploadDocument(
         int $employeeId,
@@ -162,10 +168,10 @@ class OnboardingService
         $uuid     = (string) \Illuminate\Support\Str::uuid();
         $path     = "{$orgId}/{$employeeId}/{$category}/{$uuid}.{$ext}";
 
-        Storage::disk('employee_documents')->putFileAs(
-            "{$orgId}/{$employeeId}/{$category}",
-            $file,
-            "{$uuid}.{$ext}"
+        DocumentVault::putContents(
+            'employee_documents',
+            $path,
+            (string) file_get_contents($file->getRealPath()),
         );
 
         return EmployeeDocument::create([

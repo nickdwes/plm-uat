@@ -2,6 +2,7 @@
 
 namespace App\Services\HR;
 
+use App\Support\Storage\DocumentVault;
 use App\Models\Preboarding\PreboardingAttachment;
 use App\Models\Preboarding\PreboardingRecord;
 use App\Models\Preboarding\PreboardingReference;
@@ -414,12 +415,24 @@ class PreboardingService
         $dateStr      = now()->format('Y-m-d');
         $standardName = "{$safeFirst}_{$safeLast}_{$safeCategory}_{$dateStr}.{$ext}";
 
-        $path = "{$record->organization_id}/{$record->id}/{$category}/{$standardName}";
+        /*
+         * The readable name is kept in the database, not in the key.
+         *
+         * This used to store the file as `Nicholas_Waweru_NATIONAL_ID.pdf`,
+         * which put a real person's name and the nature of their document into
+         * every blob listing, storage log and access trace — readable by
+         * anybody who could enumerate the container without being able to open
+         * a single file. `original_name` still carries it for display and for
+         * the download filename.
+         */
+        $ext  = $ext ?: 'bin';
+        $path = "{$record->organization_id}/{$record->id}/{$category}/"
+            . Str::uuid()->toString() . ".{$ext}";
 
-        Storage::disk('preboarding_docs')->putFileAs(
-            dirname($path),
-            $file,
-            basename($path)
+        DocumentVault::putContents(
+            'preboarding_docs',
+            $path,
+            (string) file_get_contents($file->getRealPath()),
         );
 
         return PreboardingAttachment::create([

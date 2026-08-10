@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Travel;
 
+use App\Support\Storage\DocumentVault;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Travel\TravelRequestResource;
 use App\Models\Delivery\DeliveryCourier;
@@ -195,7 +196,11 @@ class DeliveryController extends Controller
         $path = "{$travelRequest->organization_id}/{$travelRequest->id}/"
             . Str::uuid() . '.' . ($file->getClientOriginalExtension() ?: 'bin');
 
-        Storage::disk('travel_evidence')->putFileAs(dirname($path), $file, basename($path));
+        // Sealed on the way in, like every other class on the encrypted
+            // list. This wrote the receipt untouched.
+            DocumentVault::putContents(
+                'travel_evidence', $path, (string) file_get_contents($file->getRealPath()),
+            );
 
         $attachment = $travelRequest->attachments()->create([
             'document_type' => $data['document_type'],

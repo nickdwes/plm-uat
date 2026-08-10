@@ -2,6 +2,7 @@
 
 namespace App\Services\Training;
 
+use App\Support\Storage\DocumentVault;
 use App\Models\Employee;
 use App\Models\Training\DailyCheckIn;
 use App\Models\Training\EmployeeTrainingRecord;
@@ -192,7 +193,9 @@ class TrainingRecordService extends BaseService
             $ext
         );
 
-        Storage::disk('training_evidence')->put($path, $file->getContent());
+        // Encrypted like every other class. Evidence for a training claim is
+        // often a medical note or an exam result with a name on it.
+        DocumentVault::putContents('training_evidence', $path, $file->getContent());
 
         return TrainingEvidenceFile::create([
             'training_record_id' => $record->id,

@@ -107,6 +107,16 @@ final class DocumentVault
                 // Never cached by a proxy: the authorisation happened at the
                 // route, and a shared cache does not know that.
                 'Cache-Control'  => 'private, no-store, max-age=0',
+                /*
+                 * Take the declared type or nothing — never guess.
+                 *
+                 * Every byte here was uploaded by somebody else, and a browser
+                 * left to sniff will happily decide that a file stored as a CV
+                 * is HTML and run it. Each caller used to set this for itself,
+                 * so it belonged to whoever remembered; the CV route had it and
+                 * moving that route through here would have quietly dropped it.
+                 */
+                'X-Content-Type-Options' => 'nosniff',
             ]),
         );
     }
