@@ -2,11 +2,11 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Models\Preboarding\PreboardingRecord;
 use App\Http\Controllers\Controller;
 use App\Mail\PreboardingLinkMail;
 use App\Models\Organization;
 use App\Models\Preboarding\PreboardingAttachment;
-use App\Models\Preboarding\PreboardingRecord;
 use App\Models\Preboarding\PreboardingReference;
 use App\Services\HR\PreboardingService;
 use Illuminate\Http\JsonResponse;
@@ -36,6 +36,44 @@ class PreboardingController extends Controller
                 'current_page' => $records->currentPage(),
                 'per_page'     => $records->perPage(),
             ],
+        ]);
+    }
+
+    /**
+     * The five counts across the top of the onboarding queue.
+     *
+     * Onboarding states, not the requisition ones the mock inherited: there is
+     * no approval chain here and nothing to hold. What somebody reading this
+     * page can act on is a submission waiting on them, and somebody whose start
+     * date has arrived with their details still unfinished.
+     */
+    public function summary(Request $request): JsonResponse
+    {
+        $orgId = $this->orgId($request);
+        $scope = fn () => PreboardingRecord::where('organization_id', $orgId);
+
+        return response()->json([
+            // Invited, not yet opened.
+            'awaiting_submission' => $scope()->where('status', 'pending')->count(),
+            // Filling it in.
+            'in_progress' => $scope()->where('status', 'in_progress')->count(),
+            // Back with HR — the actionable one.
+            'submitted'   => $scope()->where('status', 'submitted')->count(),
+
+            /*
+             * Their first day has arrived or passed and they are still not on
+             * the system. The one number with a deadline attached.
+             */
+            'overdue' => $scope()
+                ->whereNotIn('status', ['converted', 'completed'])
+                ->whereNotNull('expected_start_date')
+                ->whereDate('expected_start_date', '<=', now()->toDateString())
+                ->count(),
+
+            'completed_this_month' => $scope()
+                ->whereIn('status', ['converted', 'completed'])
+                ->whereBetween('updated_at', [now()->startOfMonth(), now()->endOfMonth()])
+                ->count(),
         ]);
     }
 

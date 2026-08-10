@@ -233,7 +233,77 @@ class PreboardingService
             $record->update(['status' => 'in_progress']);
         }
 
+        $this->closeIfEverythingIsIn($record->fresh('sections'));
+
         return $sec->fresh();
+    }
+
+    /**
+     * Mark the record submitted once the last section is in, and tell HR.
+     *
+     * Sections could be submitted one at a time and the record itself never
+     * moved past `in_progress` — so nobody was told when a pre-hire finished,
+     * and the queue could not distinguish somebody halfway through their
+     * details from somebody waiting on HR to act. "Sarah has completed and
+     * submitted her onboarding information" is the moment this creates.
+     *
+     * Sections marked not applicable do not hold it open: they are a decision
+     * already taken, not work outstanding.
+     */
+    private function closeIfEverythingIsIn(PreboardingRecord $record): void
+    {
+        if (in_array($record->status, ['submitted', 'completed', 'converted'], true)) {
+            return;
+        }
+
+        /*
+         * Judged against the sections actually asked for, not the rows that
+         * happen to exist.
+         *
+         * Rows are seeded up front, so in practice the two agree — but a record
+         * created any other way would otherwise be declared finished the moment
+         * its first section arrived, because one row submitted is "all rows
+         * submitted".
+         */
+        $expected = $record->form_config['enabled_sections'] ?? self::SECTIONS;
+
+        $settled = $record->sections
+            ->whereIn('status', ['submitted', 'approved', 'not_applicable'])
+            ->pluck('section')->all();
+
+        if (array_diff($expected, $settled) !== []) {
+            return;
+        }
+
+        $record->update(['status' => 'submitted', 'submitted_at' => now()]);
+
+        $this->announceSubmission($record);
+    }
+
+    /**
+     * Tell whoever set the onboarding up that it is back with them.
+     *
+     * The person who initiated it, because they are the one who has to act.
+     * Falling back to nobody rather than broadcasting to every HR user: a
+     * notification everybody gets is one nobody reads.
+     */
+    private function announceSubmission(PreboardingRecord $record): void
+    {
+        if ($record->initiated_by === null) {
+            return;
+        }
+
+        app(\App\Services\NotificationService::class)->create(
+            (string) $record->organization_id,
+            $record->initiated_by,
+            'onboarding.submitted',
+            'New Onboarding Submission',
+            trim($record->first_name . ' ' . $record->last_name)
+                . ' has completed and submitted their onboarding information.',
+            ['preboarding_id' => $record->id],
+            PreboardingRecord::class,
+            (string) $record->id,
+        );
     }
 
     /** Save section data without marking it as submitted (draft/auto-save). */

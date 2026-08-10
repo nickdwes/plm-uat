@@ -231,6 +231,18 @@ watch(() => route.name, () => {
         Job Openings
       </router-link>
 
+      <!-- Everybody between an accepted offer and a first day. Beside the
+           hiring rather than buried in HR admin, because that is the journey
+           it continues. -->
+      <router-link :to="{ name: 'onboarding-queue' }"
+                   :class="['nav-item', { active: isActive('onboarding') || isActive('preboarding') }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 11a3 3 0 100-6 3 3 0 000 6z" /><path d="M4 17c0-3 2.7-4.5 6-4.5s6 1.5 6 4.5" />
+        </svg>
+        Onboarding
+      </router-link>
+
       <!-- ── Training & Competency ───────────────────────────────────────────── -->
       <button
         :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('training') }]"

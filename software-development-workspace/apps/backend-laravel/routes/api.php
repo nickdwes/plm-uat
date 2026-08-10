@@ -665,6 +665,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     Route::prefix('preboarding')->group(function () {
         Route::get('/',                                          [PreboardingController::class, 'index']);
         Route::post('/',                                         [PreboardingController::class, 'store']);
+        // Before /{preboarding}, or the router reads it as an id.
+        Route::get('/summary',                                   [PreboardingController::class, 'summary']);
         Route::get('/{preboarding}',                             [PreboardingController::class, 'show']);
         Route::put('/{preboarding}',                             [PreboardingController::class, 'update']);
         Route::delete('/{preboarding}',                          [PreboardingController::class, 'destroy']);

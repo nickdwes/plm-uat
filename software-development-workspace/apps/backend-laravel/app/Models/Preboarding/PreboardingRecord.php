@@ -16,7 +16,7 @@ class PreboardingRecord extends Model
         'organization_id', 'candidate_id', 'employee_id',
         'first_name', 'last_name', 'email', 'phone',
         'expected_start_date', 'position', 'employee_type',
-        'status', 'token', 'token_expires_at', 'token_used_at',
+        'status', 'submitted_at', 'token', 'token_expires_at', 'token_used_at',
         'link_expiry_days', 'link_resend_count',
         'medical_cover_eligible', 'form_config',
         'welcome_sent_at', 'announcement_sent_at',
@@ -25,6 +25,7 @@ class PreboardingRecord extends Model
 
     protected $casts = [
         'expected_start_date'    => 'date',
+        'submitted_at'           => 'datetime',
         'welcome_sent_at'        => 'datetime',
         'announcement_sent_at'   => 'datetime',
         'token_expires_at'       => 'datetime',
