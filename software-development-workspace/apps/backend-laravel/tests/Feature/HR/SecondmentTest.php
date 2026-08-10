@@ -41,7 +41,7 @@ class SecondmentTest extends TestCase
         $role = Role::create([
             'name' => 'r' . fake()->unique()->numberBetween(1, 999999),
             'display_name' => 'HR', 'scope' => 'organization',
-            'permissions' => [Permission::EMPLOYEES_VIEW, Permission::EMPLOYEES_UPDATE],
+            'permissions' => [Permission::EMPLOYEES_VIEW, Permission::EMPLOYEES_UPDATE, Permission::EMPLOYEES_CREATE],
         ]);
         $user->roles()->attach($role->id, ['organization_id' => $this->home->id]);
         $user->forgetCachedRoles();
@@ -158,6 +158,46 @@ class SecondmentTest extends TestCase
         $this->deleteJson($this->url('/' . $this->host->id))->assertOk();
 
         $this->second(['organization_id' => $third->id, 'allocation_pct' => 80])->assertCreated();
+    }
+
+    // ── Drafts ────────────────────────────────────────────────────────────
+
+    /**
+     * The wizard's Save as Draft.
+     *
+     * Status was hardcoded to active, so a half-filled record became a live
+     * employee the moment the first step was saved — counted in headcount and
+     * listed beside people who actually work here.
+     */
+    public function test_a_draft_employee_is_not_listed_as_an_employee(): void
+    {
+        $this->postJson("/api/v1/employees?org={$this->home->slug}", [
+            'first_name' => 'Half', 'last_name' => 'Finished',
+            'employment_type' => 'full_time', 'date_hired' => now()->toDateString(),
+            'status' => 'draft',
+        ])->assertSuccessful();
+
+        $listed = collect($this->getJson("/api/v1/employees?org={$this->home->slug}")
+            ->assertOk()->json('data'))->pluck('first_name');
+
+        $this->assertNotContains('Half', $listed);
+
+        // But findable when asked for by name, or the wizard could not resume.
+        $drafts = collect($this->getJson("/api/v1/employees?org={$this->home->slug}&status=draft")
+            ->assertOk()->json('data'))->pluck('first_name');
+
+        $this->assertContains('Half', $drafts);
+    }
+
+    /** Anything that does not ask for a status still gets a live employee. */
+    public function test_an_ordinary_create_is_still_active(): void
+    {
+        $this->postJson("/api/v1/employees?org={$this->home->slug}", [
+            'first_name' => 'Fully', 'last_name' => 'Onboarded',
+            'employment_type' => 'full_time', 'date_hired' => now()->toDateString(),
+        ])->assertSuccessful();
+
+        $this->assertSame('active', Employee::where('first_name', 'Fully')->firstOrFail()->status);
     }
 
     // ── What it is not ────────────────────────────────────────────────────

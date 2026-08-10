@@ -36,6 +36,14 @@ class EmployeeService extends BaseService
             )
             ->when($filters['department_id'] ?? null, fn ($q, $d) => $q->where('department_id', $d))
             ->when($filters['status'] ?? null, fn ($q, $s) => $q->where('status', $s))
+            /*
+             * Drafts are hidden unless asked for by name.
+             *
+             * A record halfway through the onboarding wizard is not somebody
+             * who works here yet, and listing it beside people who do is how a
+             * headcount stops being a headcount.
+             */
+            ->unless($filters['status'] ?? null, fn ($q) => $q->where('status', '!=', 'draft'))
             ->when($filters['employment_type'] ?? null, fn ($q, $t) => $q->where('employment_type', $t))
             ->with(['department', 'designation', 'jobGrade', 'manager'])
             ->orderBy('last_name')
@@ -49,7 +57,17 @@ class EmployeeService extends BaseService
 
         $data['primary_organization_id'] = $organizationId;
         $data['employee_number']         = $this->generateEmployeeNumber();
-        $data['status']                  = 'active';
+
+        /*
+         * The wizard's Save as Draft.
+         *
+         * This was hardcoded to active, which made a half-filled record a live
+         * employee the moment the first step was saved — counted in headcount,
+         * listed beside people who actually work here, and eligible for
+         * payroll. Whatever the caller asked for is respected, and active
+         * remains the default for everything that does not ask.
+         */
+        $data['status'] = $data['status'] ?? 'active';
 
         $employee = Employee::create($data);
 
