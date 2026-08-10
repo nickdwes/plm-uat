@@ -92,6 +92,14 @@ final class Permission
     public const APPLICATIONS_MANAGE = 'applications.manage';
 
     // ── Training ──────────────────────────────────────────────────────────
+    /*
+     * Vendors and OEM partners. Commercial relationships and certification
+     * requirements — the only domain with a policy and no permissions behind
+     * it, so it had nothing to grant.
+     */
+    public const VENDORS_VIEW   = 'vendors.view';
+    public const VENDORS_MANAGE = 'vendors.manage';
+
     public const TRAINING_VIEW     = 'training.view';
     public const TRAINING_VIEW_OWN = 'training.view_own';
     public const TRAINING_MANAGE   = 'training.manage';
@@ -283,6 +291,7 @@ final class Permission
             'vacancies'     => [self::VACANCIES_MANAGE],
             'candidates'    => [self::CANDIDATES_VIEW],
             'applications'  => [self::APPLICATIONS_MANAGE],
+            'vendors'       => [self::VENDORS_VIEW, self::VENDORS_MANAGE],
             'training'      => [
                 self::TRAINING_VIEW, self::TRAINING_VIEW_OWN,
                 self::TRAINING_MANAGE, self::TRAINING_APPROVE,
