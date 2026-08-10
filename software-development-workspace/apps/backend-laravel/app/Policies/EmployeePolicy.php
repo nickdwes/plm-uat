@@ -66,6 +66,20 @@ class EmployeePolicy extends BasePolicy
     }
 
     /**
+     * Ending somebody's employment.
+     *
+     * Separate from update because it is not an edit: it stops their pay, ends
+     * their access and is the one action here that a person finds out about
+     * whether or not it was meant. `employees.exit` exists in the catalogue for
+     * exactly this and was never consulted — the request gating it asked
+     * whether the caller's role was called HR.
+     */
+    public function exit(User $user, mixed $employee): bool
+    {
+        return $this->can($user, Permission::EMPLOYEES_EXIT) || $this->isCompanyHR($user);
+    }
+
+    /**
      * Deleting is not exiting.
      *
      * An employee who has left is exited and kept — payroll, tax and any

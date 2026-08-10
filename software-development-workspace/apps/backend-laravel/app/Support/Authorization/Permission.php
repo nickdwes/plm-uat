@@ -32,6 +32,18 @@ final class Permission
     public const EMPLOYEES_DELETE    = 'employees.delete';
     public const EMPLOYEES_EXIT      = 'employees.exit';
 
+    /*
+     * Salary, national ID, KRA PIN, blood group, disabilities.
+     *
+     * Separate from `employees.view` because seeing that somebody works here is
+     * not the same as seeing what they earn and what they are being treated
+     * for. Reading a colleague's directory entry is ordinary; reading their
+     * compensation is not, and the difference had no permission behind it — the
+     * resource asked only whether the caller's role was named HR, so no role,
+     * however configured, could be granted or denied it.
+     */
+    public const EMPLOYEES_VIEW_SENSITIVE = 'employees.view_sensitive';
+
     // ── Leave ─────────────────────────────────────────────────────────────
     /*
      * Attendance. Sensitive personal data, so the scopes are the point: you
@@ -265,7 +277,7 @@ final class Permission
             'employees'     => [
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,
                 self::EMPLOYEES_CREATE, self::EMPLOYEES_UPDATE, self::EMPLOYEES_DELETE,
-                self::EMPLOYEES_EXIT,
+                self::EMPLOYEES_EXIT, self::EMPLOYEES_VIEW_SENSITIVE,
             ],
             'attendance'    => [
                 self::ATTENDANCE_VIEW, self::ATTENDANCE_VIEW_OWN, self::ATTENDANCE_VIEW_TEAM,

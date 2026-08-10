@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources;
 
+use App\Support\Authorization\Permission;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -13,7 +14,19 @@ class EmployeeResource extends JsonResource
         $orgId      = app('current.organization_id');
         $isHR       = $user?->isOrgHR($orgId);
         $isSelf     = $user && $this->user_id && $user->id === $this->user_id;
-        $canSensitive = $isHR || $isSelf;
+
+        /*
+         * Who may see salary, national ID, KRA PIN and health details.
+         *
+         * The permission is consulted first, because it is the only one of
+         * these three that anybody can configure. The HR role stays because
+         * removing it would take compensation away from every existing HR user
+         * the moment this deploys, and seeing your own record stays because
+         * nobody needs a permission to read their own payslip.
+         */
+        $canSensitive = ($user?->hasPermission(Permission::EMPLOYEES_VIEW_SENSITIVE, $orgId) ?? false)
+            || $isHR
+            || $isSelf;
 
         $base = [
             'id'                      => $this->id,

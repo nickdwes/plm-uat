@@ -2,13 +2,21 @@
 
 namespace App\Http\Requests\Training;
 
+use App\Models\Training\TrainingItem;
 use Illuminate\Foundation\Http\FormRequest;
 
 class CreateTrainingItemRequest extends FormRequest
 {
+    /**
+     * Deferred to the policy, so there is one answer rather than two.
+     *
+     * This checked a role name, which meant a role granted `training.manage`
+     * was refused here whatever the policy said, and anybody whose role happens
+     * to be called HR was allowed regardless of what it grants.
+     */
     public function authorize(): bool
     {
-        return $this->user()->isOrgHR(app('current.organization_id'));
+        return $this->user()?->can('create', TrainingItem::class) ?? false;
     }
 
     public function rules(): array
