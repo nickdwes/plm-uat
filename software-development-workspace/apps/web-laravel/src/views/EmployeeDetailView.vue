@@ -2,7 +2,7 @@
 import { ref, onMounted, reactive, computed } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../lib/api";
-import { currentOrgSlug } from "../stores/auth";
+import { currentOrgSlug, authStore, getToken } from "../stores/auth";
 import type { Employee, EmergencyContact } from "../lib/types";
 
 const props  = defineProps<{ id: string }>();
@@ -12,8 +12,143 @@ const employee = ref<Employee | null>(null);
 const loading  = ref(false);
 const error    = ref("");
 
-type Tab = "overview" | "career" | "profiles" | "benefits";
+type Tab = "overview" | "career" | "profiles" | "benefits" | "documents";
 const tab = ref<Tab>("overview");
+
+// ── Documents ──────────────────────────────────────────────────────────────
+/*
+ * Contracts, ID copies, certificates. The onboarding wizard could upload these
+ * and nothing could then look at them: there was no screen anywhere that listed
+ * an employee's documents, so a signed contract went in and disappeared.
+ *
+ * They are encrypted at rest, which is why downloading is a fetch-and-blob
+ * rather than a link — the file is decrypted by the server on the way out and
+ * the request has to carry the bearer token.
+ */
+interface EmployeeDoc {
+  id: number; category: string; original_name: string;
+  mime_type: string; size_bytes: number; created_at: string;
+}
+
+const DOC_CATEGORIES = [
+  { value: "national_id",  label: "National ID / Passport" },
+  { value: "contract",     label: "Employment Contract" },
+  { value: "certificate",  label: "Academic Certificate" },
+  { value: "kra_pin",      label: "KRA PIN Certificate" },
+  { value: "nhif",         label: "NHIF Card" },
+  { value: "nssf",         label: "NSSF Card" },
+  { value: "photo",        label: "Passport Photo" },
+  { value: "bank_details", label: "Bank Account Details" },
+  { value: "other",        label: "Other" },
+];
+
+const docs          = ref<EmployeeDoc[]>([]);
+const docsLoaded    = ref(false);
+const docsLoading   = ref(false);
+const docError      = ref("");
+const docUploading  = ref(false);
+const docCategory   = ref("other");
+const docFileInput  = ref<HTMLInputElement | null>(null);
+
+const docLabel = (v: string) =>
+  DOC_CATEGORIES.find((c) => c.value === v)?.label ?? v;
+
+function humanSize(bytes: number): string {
+  if (!bytes) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+async function loadDocs(): Promise<void> {
+  if (docsLoading.value) return;
+  docsLoading.value = true; docError.value = "";
+  try {
+    const res = await api<{ data: EmployeeDoc[] }>("GET",
+      `/api/v1/employees/${props.id}/documents`, { org: org() });
+    docs.value = res.data ?? [];
+    docsLoaded.value = true;
+  } catch (e) {
+    docError.value = e instanceof Error ? e.message : "Could not load documents.";
+  } finally { docsLoading.value = false; }
+}
+
+/** Loaded when the tab is first opened, not on every page view. */
+function openDocs(): void {
+  tab.value = "documents";
+  if (!docsLoaded.value) void loadDocs();
+}
+
+async function uploadDoc(e: Event): Promise<void> {
+  const input = e.target as HTMLInputElement;
+  const file  = input.files?.[0];
+  if (!file) return;
+
+  docError.value = "";
+
+  if (file.size > 10 * 1024 * 1024) {
+    docError.value = "File must be under 10 MB.";
+    input.value = "";
+    return;
+  }
+
+  docUploading.value = true;
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("category", docCategory.value);
+
+    await api("POST", `/api/v1/employees/${props.id}/documents`, { org: org(), formData: form });
+    await loadDocs();
+  } catch (err) {
+    docError.value = err instanceof Error ? err.message : "Upload failed.";
+  } finally {
+    docUploading.value = false;
+    input.value = "";
+  }
+}
+
+/**
+ * Fetched with the token and handed to the browser as a blob.
+ *
+ * An <a href> cannot carry the Authorization header, and these are the files
+ * that most need one.
+ */
+async function downloadDoc(doc: EmployeeDoc): Promise<void> {
+  docError.value = "";
+  try {
+    const base = (import.meta.env.VITE_LARAVEL_API_URL ?? "").replace(/\/$/, "");
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const slug = org();
+    if (slug) headers["X-Organization"] = slug;
+
+    const res = await fetch(
+      `${base}/api/v1/employees/${props.id}/documents/${doc.id}/download`, { headers },
+    );
+    if (!res.ok) throw new Error(`Download failed (${res.status}).`);
+
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = doc.original_name;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    docError.value = e instanceof Error ? e.message : "Download failed.";
+  }
+}
+
+async function deleteDoc(doc: EmployeeDoc): Promise<void> {
+  if (!confirm(`Delete "${doc.original_name}"? This cannot be undone.`)) return;
+  try {
+    await api("DELETE", `/api/v1/employees/${props.id}/documents/${doc.id}`, { org: org() });
+    docs.value = docs.value.filter((d) => d.id !== doc.id);
+  } catch (e) {
+    docError.value = e instanceof Error ? e.message : "Could not delete.";
+  }
+}
 
 // Emergency contact form
 const showECForm  = ref(false);
@@ -68,7 +203,10 @@ const showSecondmentForm = ref(false);
 const secondmentSaving   = ref(false);
 const secondmentError    = ref("");
 const secondmentForm = reactive({
-  organization_name: "", role: "", start_date: "", end_date: "", notes: "",
+  organization_id: null as number | null,
+  role: "", engagement_type: "secondment",
+  allocation_pct: 50, is_billable: false,
+  effective_from: "", effective_to: "", notes: "",
 });
 
 function org(): string | null { return currentOrgSlug.value; }
@@ -282,25 +420,72 @@ async function deleteQualification(qualId: number) {
 }
 
 // ── Secondments ────────────────────────────────────────────────────────────
+
+/*
+ * This panel used to send a typed organisation name and a `start_date` to an
+ * endpoint that requires an organisation id and an `effective_from`, so every
+ * attempt was refused. It was written against the free-text table that has
+ * since been replaced by the organisation map, and nothing here was updated
+ * when it went.
+ */
+
+/** Everywhere except where they already sit — the server refuses their own. */
+const secondableOrgs = computed(() =>
+  authStore.organizations.filter(
+    (o) => o.id !== (employee.value as any)?.primary_organization?.id,
+  ));
+
+/** Seconded time is counted against seconded time, never against their home. */
+const secondedPct = computed(() =>
+  ((employee.value as any)?.secondments ?? [])
+    .filter((s: any) => s.is_active !== false)
+    .reduce((n: number, s: any) => n + (Number(s.allocation_pct) || 0), 0));
+
+const secondmentLeft = computed(() => 100 - secondedPct.value);
+
 async function addSecondment() {
   secondmentSaving.value = true; secondmentError.value = "";
   try {
-    const res = await api<{ data: any }>("POST", `/api/v1/employees/${props.id}/secondments`, {
-      org: org(), body: { ...secondmentForm },
+    const res = await api<{ data: any[] }>("POST", `/api/v1/employees/${props.id}/secondments`, {
+      org: org(),
+      body: {
+        organization_id: secondmentForm.organization_id,
+        role:            secondmentForm.role || undefined,
+        engagement_type: secondmentForm.engagement_type || undefined,
+        allocation_pct:  secondmentForm.allocation_pct,
+        is_billable:     secondmentForm.is_billable,
+        effective_from:  secondmentForm.effective_from,
+        effective_to:    secondmentForm.effective_to || undefined,
+        notes:           secondmentForm.notes || undefined,
+      },
     });
-    const e = employee.value as any;
-    e.secondments = [((res as any).data ?? res), ...(e.secondments ?? [])];
+
+    // The endpoint answers with the whole list, so take it rather than
+    // guessing at what the new row looks like.
+    (employee.value as any).secondments = res.data ?? [];
+
     showSecondmentForm.value = false;
-    Object.assign(secondmentForm, { organization_name: "", role: "", start_date: "", end_date: "", notes: "" });
+    Object.assign(secondmentForm, {
+      organization_id: null, role: "", engagement_type: "secondment",
+      allocation_pct: 50, is_billable: false,
+      effective_from: "", effective_to: "", notes: "",
+    });
   } catch (err) { secondmentError.value = err instanceof Error ? err.message : "Failed to save."; }
   finally { secondmentSaving.value = false; }
 }
 
-async function deleteSecondment(secId: number) {
-  if (!confirm("Remove this secondment record?")) return;
-  await api("DELETE", `/api/v1/employees/${props.id}/secondments/${secId}`, { org: org() });
-  const e = employee.value as any;
-  e.secondments = e.secondments?.filter((s: any) => s.id !== secId) ?? [];
+/**
+ * Ended, not deleted — somebody was billable to that organisation for three
+ * months and payroll still needs to see it. Keyed on the organisation, which is
+ * what identifies the row in the map.
+ */
+async function endSecondment(organizationId: number) {
+  if (!confirm("End this secondment? The record is kept.")) return;
+
+  const res = await api<{ data: any[] }>(
+    "DELETE", `/api/v1/employees/${props.id}/secondments/${organizationId}`, { org: org() },
+  );
+  (employee.value as any).secondments = res.data ?? [];
 }
 
 function statusBadge(status: string): string {
@@ -386,6 +571,7 @@ onMounted(load);
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'career'    }]" @click="tab = 'career'">Career</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'profiles'  }]" @click="tab = 'profiles'">Profile</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'benefits'  }]" @click="tab = 'benefits'">Benefits</button>
+        <button :class="['ed-tab', { 'ed-tab-active': tab === 'documents' }]" @click="openDocs">Documents</button>
         <router-link :to="{ name: 'employee-dependents', params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Dependents</router-link>
         <router-link :to="{ name: 'employee-vehicles',   params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Vehicles</router-link>
       </div>
@@ -759,45 +945,87 @@ onMounted(load);
           <div v-if="showSecondmentForm" class="ed-sub-form">
             <p v-if="secondmentError" class="error" style="margin-bottom:8px">{{ secondmentError }}</p>
             <div class="ed-comp-form-grid">
+              <!-- Picked, not typed, so "who is 50% billable to Tiberbu this
+                   quarter" is a question the data can answer. -->
               <div>
-                <label class="ed-form-label">Organization *</label>
-                <input v-model="secondmentForm.organization_name" type="text" class="input" placeholder="Organization name" />
+                <label class="ed-form-label">Organisation *</label>
+                <select v-model="secondmentForm.organization_id" class="input">
+                  <option :value="null">Select organisation…</option>
+                  <option v-for="o in secondableOrgs" :key="o.id" :value="o.id">{{ o.name }}</option>
+                </select>
+              </div>
+              <div>
+                <label class="ed-form-label">Engagement Type</label>
+                <select v-model="secondmentForm.engagement_type" class="input">
+                  <option value="secondment">Secondment</option>
+                  <option value="shared_service">Shared service</option>
+                  <option value="advisory">Advisory</option>
+                  <option value="project">Project assignment</option>
+                  <option value="coverage">Coverage / acting</option>
+                </select>
               </div>
               <div>
                 <label class="ed-form-label">Role / Title</label>
                 <input v-model="secondmentForm.role" type="text" class="input" placeholder="Job title during secondment" />
               </div>
               <div>
+                <label class="ed-form-label">Time Allocation (%)</label>
+                <input v-model.number="secondmentForm.allocation_pct" type="number" class="input"
+                       min="1" :max="secondmentLeft" />
+                <p class="ed-empty-hint" style="margin:4px 0 0">
+                  {{ secondmentLeft }}% of their week is still unassigned.
+                </p>
+              </div>
+              <div>
                 <label class="ed-form-label">Start Date *</label>
-                <input v-model="secondmentForm.start_date" type="date" class="input" />
+                <input v-model="secondmentForm.effective_from" type="date" class="input" />
               </div>
               <div>
                 <label class="ed-form-label">End Date</label>
-                <input v-model="secondmentForm.end_date" type="date" class="input" />
+                <input v-model="secondmentForm.effective_to" type="date" class="input" />
               </div>
+            </div>
+            <div style="margin-top:8px">
+              <label class="ed-form-label">
+                <input v-model="secondmentForm.is_billable" type="checkbox" />
+                Billable to the secondary organisation
+              </label>
             </div>
             <div style="margin-top:8px">
               <label class="ed-form-label">Notes</label>
               <input v-model="secondmentForm.notes" type="text" class="input" placeholder="Optional notes" />
             </div>
             <div style="margin-top:8px;display:flex;gap:8px">
-              <button class="btn btn-primary btn-sm" :disabled="secondmentSaving || !secondmentForm.organization_name || !secondmentForm.start_date" @click="addSecondment">
+              <button class="btn btn-primary btn-sm"
+                      :disabled="secondmentSaving || !secondmentForm.organization_id
+                        || !secondmentForm.effective_from
+                        || secondmentForm.allocation_pct < 1
+                        || secondmentForm.allocation_pct > secondmentLeft"
+                      @click="addSecondment">
                 {{ secondmentSaving ? "Saving…" : "Save Secondment" }}
               </button>
             </div>
           </div>
 
           <div v-if="(employee as any).secondments?.length" class="ed-secondment-list">
-            <div v-for="s in (employee as any).secondments" :key="s.id" class="ed-secondment-card">
+            <div v-for="s in (employee as any).secondments" :key="s.organization_id"
+                 :class="['ed-secondment-card', { 'ed-secondment-ended': s.is_active === false }]">
               <div class="ed-secondment-top">
                 <div style="flex:1;min-width:0">
                   <span class="ed-secondment-org">{{ s.organization_name }}</span>
                   <span v-if="s.role" class="ed-secondment-role">{{ s.role }}</span>
                 </div>
-                <button v-if="hasSensitive" class="act-btn act-del" @click="deleteSecondment(s.id)">✕</button>
+                <button v-if="hasSensitive && s.is_active !== false" class="act-btn act-del"
+                        title="End this secondment" @click="endSecondment(s.organization_id)">✕</button>
               </div>
               <div class="ed-secondment-dates">
                 {{ fmtDate(s.start_date) }} → {{ s.end_date ? fmtDate(s.end_date) : "Present" }}
+                <span v-if="s.allocation_pct"> · {{ s.allocation_pct }}%</span>
+                <span v-if="s.engagement_type"> · {{ s.engagement_type.replace("_", " ") }}</span>
+                <span :class="['badge', s.is_billable ? 'badge-green' : 'badge-gray']" style="margin-left:6px">
+                  {{ s.is_billable ? "Billable" : "Not billable" }}
+                </span>
+                <span v-if="s.is_active === false" class="badge badge-gray" style="margin-left:6px">Ended</span>
               </div>
               <p v-if="s.notes" class="ed-secondment-notes">{{ s.notes }}</p>
             </div>
@@ -1055,6 +1283,54 @@ onMounted(load);
         </div>
       </div>
 
+      <!-- ═══════════════  DOCUMENTS  ═══════════════ -->
+      <div v-if="tab === 'documents'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Documents</h3>
+            <div v-if="hasSensitive" class="ed-doc-upload">
+              <select v-model="docCategory" class="input ed-doc-cat">
+                <option v-for="c in DOC_CATEGORIES" :key="c.value" :value="c.value">{{ c.label }}</option>
+              </select>
+              <input ref="docFileInput" type="file" class="ed-doc-file"
+                     accept=".pdf,.jpg,.jpeg,.png,.webp,.doc,.docx" @change="uploadDoc" />
+              <button class="btn btn-outline btn-sm" :disabled="docUploading"
+                      @click="docFileInput?.click()">
+                {{ docUploading ? "Uploading…" : "+ Upload" }}
+              </button>
+            </div>
+          </div>
+
+          <p class="ed-empty-hint" style="margin-bottom:12px">
+            Stored encrypted. Only people who can see this employee's sensitive
+            details can open them.
+          </p>
+
+          <p v-if="docError" class="error" style="margin-bottom:8px">{{ docError }}</p>
+          <p v-if="docsLoading" class="ed-empty-hint">Loading…</p>
+
+          <div v-else-if="docs.length" class="ed-doc-list">
+            <div v-for="d in docs" :key="d.id" class="ed-doc-row">
+              <div class="ed-doc-main">
+                <span class="ed-doc-name">{{ d.original_name }}</span>
+                <span class="ed-doc-meta">
+                  {{ docLabel(d.category) }} · {{ humanSize(d.size_bytes) }} · {{ fmtDate(d.created_at) }}
+                </span>
+              </div>
+              <div class="ed-doc-actions">
+                <button class="btn btn-outline btn-sm" @click="downloadDoc(d)">Download</button>
+                <button v-if="hasSensitive" class="act-btn act-del" title="Delete"
+                        @click="deleteDoc(d)">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <p v-else class="ed-empty-hint">
+            No documents uploaded yet.
+          </p>
+        </div>
+      </div>
+
     </div><!-- /employee -->
   </div>
 </template>
@@ -1097,6 +1373,20 @@ onMounted(load);
 
 /* Tab body */
 .ed-tab-body { margin-top: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Documents */
+.ed-doc-upload { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ed-doc-cat { max-width: 14rem; }
+/* The real input is driven by the button beside it, so the browser's own
+   "No file chosen" text never appears next to our own controls. */
+.ed-doc-file { display: none; }
+.ed-doc-list { display: flex; flex-direction: column; }
+.ed-doc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e2e8f0; }
+.ed-doc-row:last-child { border-bottom: none; }
+.ed-doc-main { display: flex; flex-direction: column; min-width: 0; }
+.ed-doc-name { font-size: 0.88rem; color: #0f172a; font-weight: 500; overflow-wrap: anywhere; }
+.ed-doc-meta { font-size: 0.76rem; color: #64748b; }
+.ed-doc-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 /* Two column */
 .ed-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -1158,6 +1448,9 @@ onMounted(load);
 /* Secondments */
 .ed-secondment-list { display: flex; flex-direction: column; gap: 10px; }
 .ed-secondment-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; }
+/* Ended ones stay on the page — payroll and any invoice reconciliation
+   still need them — but they should not read as current. */
+.ed-secondment-ended { opacity: 0.6; }
 .ed-secondment-top { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 4px; }
 .ed-secondment-org { font-size: 0.9rem; font-weight: 600; color: #0f172a; }
 .ed-secondment-role { font-size: 0.78rem; color: #64748b; background: #f1f5f9; padding: 2px 8px; border-radius: 20px; margin-left: 6px; }
