@@ -15,6 +15,8 @@ interface NextOfKin {
 }
 interface Secondment {
   org_id: number; org_name: string; role: string; scope: string;
+  /** Why they are there — seconded, shared service, advisory. */
+  engagement_type: string;
   start_date: string; end_date: string; allocation_pct: number; is_billable: boolean; notes: string;
 }
 interface AssetItem   { name: string; serial: string; assigned_date: string }
@@ -44,16 +46,25 @@ const departments  = ref<Department[]>([]);
 const designations = ref<Designation[]>([]);
 const jobGrades    = ref<JobGrade[]>([]);
 const managers     = ref<Employee[]>([]);
-const allOrgs      = computed(() => authStore.organizations);
 
 // ─── Form Data ───────────────────────────────────────────────────────────────
 const bio = reactive({
   first_name: "", last_name: "", middle_name: "",
   national_id: "", tax_id: "",
-  date_of_birth: "", gender: "",
+  date_of_birth: "", gender: "", marital_status: "",
   phone: "", personal_email: "", work_email: "",
-  address: "", city: "", country: "KE",
+  address: "", city: "", county: "", country: "KE",
 });
+
+/**
+ * The identifiers shown only when asked for.
+ *
+ * Not a control — anybody who can open this form can reveal them. It stops the
+ * number being read over a shoulder, which is the exposure this screen actually
+ * has.
+ */
+const revealed = reactive<Record<string, boolean>>({ national_id: false, tax_id: false });
+function toggleReveal(field: string): void { revealed[field] = !revealed[field]; }
 
 const employment = reactive({
   employment_type: "full_time", date_hired: "",
@@ -66,6 +77,30 @@ const employment = reactive({
   primary_org_id: (authStore.currentOrg?.id ?? null) as number | null,
   secondments: [] as Secondment[],
 });
+
+/**
+ * The organisations somebody can be seconded to — everywhere except where they
+ * already sit. The server refuses a secondment to their own organisation, so
+ * offering it here only produces a form that cannot be submitted.
+ */
+const allOrgs = computed(() =>
+  authStore.organizations.filter(o => o.id !== employment.primary_org_id));
+
+/**
+ * How much of their week is already promised elsewhere.
+ *
+ * Their home organisation is not counted: the percentage means "how much goes
+ * elsewhere", and the remainder stays where they normally sit. The server
+ * enforces the same cap — this only saves somebody filling in a panel that will
+ * be refused.
+ */
+function allocatedExcluding(s: Secondment | null): number {
+  return employment.secondments
+    .filter(x => x !== s)
+    .reduce((n, x) => n + (Number(x.allocation_pct) || 0), 0);
+}
+
+const allocationLeft = computed(() => 100 - allocatedExcluding(scopeTarget.value));
 
 // ── Contract duration picker ─────────────────────────────────────────────────
 const contractDuration    = ref("");
@@ -191,6 +226,17 @@ function validateStep(step: number): string[] {
     if (!employment.employment_type) errs.push("Employment type is required.");
     if (!employment.date_hired)      errs.push("Start date is required.");
     if (!employment.primary_org_id)  errs.push("A primary organisation must be selected.");
+
+    if (employment.secondments.some(s => !s.org_id)) {
+      errs.push("Every secondment needs an organisation.");
+    }
+
+    // Somebody at 60% and 60% is a promise the week cannot keep. The server
+    // refuses it too; catching it here saves losing the whole form to a 422.
+    const total = allocatedExcluding(null);
+    if (total > 100) {
+      errs.push(`Secondments add up to ${total}% of their week. Reduce them to 100% or less.`);
+    }
   }
   if (step === 4) {
     for (const nok of nokList.value) {
@@ -230,8 +276,11 @@ function removeAsset(i: number): void { assets.value.splice(i, 1); }
 // ─── Secondment helpers ───────────────────────────────────────────────────────
 function addSecondment(): void {
   const s: Secondment = {
-    org_id: 0, org_name: "", role: "", scope: "full",
-    start_date: "", end_date: "", allocation_pct: 100, is_billable: false, notes: "",
+    org_id: 0, org_name: "", role: "", scope: "operational",
+    engagement_type: "secondment",
+    // Half a week, because a secondment at 100% is a transfer. It also leaves
+    // room for a second one without immediately breaching the cap.
+    start_date: "", end_date: "", allocation_pct: 50, is_billable: false, notes: "",
   };
   employment.secondments.push(s);
   openScope(s);
@@ -275,9 +324,11 @@ async function loadEmployee(): Promise<void> {
       first_name: e.first_name ?? "", last_name: e.last_name ?? "",
       middle_name: e.middle_name ?? "", national_id: e.national_id ?? "",
       tax_id: e.tax_id ?? "", date_of_birth: e.date_of_birth?.slice(0,10) ?? "",
-      gender: e.gender ?? "", phone: e.phone ?? "",
+      gender: e.gender ?? "", marital_status: e.marital_status ?? "",
+      phone: e.phone ?? "",
       personal_email: e.personal_email ?? "", work_email: e.work_email ?? "",
-      address: e.address ?? "", city: e.city ?? "", country: e.country ?? "KE",
+      address: e.address ?? "", city: e.city ?? "",
+      county: e.county ?? "", country: e.country ?? "KE",
     });
     Object.assign(employment, {
       employment_type: e.employment_type ?? "full_time",
@@ -288,28 +339,70 @@ async function loadEmployee(): Promise<void> {
       job_grade_id: e.job_grade_id ?? "", reports_to: e.reports_to ?? "",
       status: e.status ?? "active",
     });
+
+    /*
+     * Everything the form sends has to come back, or saving one field wipes
+     * the rest. The benefit flags in particular are sent unconditionally, so
+     * an unloaded `false` is indistinguishable from somebody genuinely having
+     * no medical cover.
+     */
     Object.assign(benefits, {
       nssf_number: e.nssf_number ?? "", nhif_number: e.nhif_number ?? "",
+      medical_plan: e.medical_plan ?? "", pension_provider: e.pension_provider ?? "",
+      benefits_effective_date: e.benefits_effective_date?.slice(0,10) ?? "",
+      medical: !!e.benefit_medical, pension: !!e.benefit_pension,
+      life_insurance: !!e.benefit_life_insurance, group_life: !!e.benefit_group_life,
+      wiba: !!e.benefit_wiba,
     });
+
+    Object.assign(compliance, {
+      nssf_registered: !!e.nssf_registered, nhif_registered: !!e.nhif_registered,
+      kra_registered: !!e.kra_registered, has_work_permit: !!e.has_work_permit,
+      work_permit_number: e.work_permit_number ?? "",
+      work_permit_expiry: e.work_permit_expiry?.slice(0,10) ?? "",
+    });
+
+    employment.secondments = (e.secondments ?? [])
+      .filter((s: any) => s.is_active !== false)
+      .map((s: any) => ({
+        org_id: s.organization_id, org_name: s.organization_name ?? "",
+        role: s.role ?? "", scope: s.access_scope ?? "operational",
+        engagement_type: s.engagement_type ?? "secondment",
+        start_date: s.start_date?.slice(0,10) ?? "", end_date: s.end_date?.slice(0,10) ?? "",
+        allocation_pct: s.allocation_pct ?? 50, is_billable: !!s.is_billable,
+        notes: s.notes ?? "",
+      }));
   } catch {
     error.value = "Failed to load employee data.";
   }
 }
 
 // ─── Submit ───────────────────────────────────────────────────────────────────
-async function submit(): Promise<void> {
-  error.value = "";
-  saving.value = true;
+
+/**
+ * The draft this wizard has already created, if it has.
+ *
+ * Saving a draft twice must update the same person rather than leave a trail of
+ * half-filled records behind, so the first save records the id and every save
+ * after it is an update.
+ */
+const draftId = ref<number | null>(null);
+
+/** Whichever record we are writing to — the one being edited, or our draft. */
+const targetId = computed(() => editId.value ?? draftId.value);
+
+function buildPayload(status: string): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     // Bio
     first_name: bio.first_name, last_name: bio.last_name,
     middle_name: bio.middle_name || undefined,
     national_id: bio.national_id || undefined, tax_id: bio.tax_id || undefined,
     date_of_birth: bio.date_of_birth || undefined, gender: bio.gender || undefined,
+    marital_status: bio.marital_status || undefined,
     phone: bio.phone || undefined, personal_email: bio.personal_email || undefined,
     work_email: bio.work_email || undefined,
     address: bio.address || undefined, city: bio.city || undefined,
-    country: bio.country || undefined,
+    county: bio.county || undefined, country: bio.country || undefined,
     // Employment
     employment_type: employment.employment_type, date_hired: employment.date_hired,
     probation_end_date: employment.probation_end_date || undefined,
@@ -318,7 +411,7 @@ async function submit(): Promise<void> {
     designation_id: employment.designation_id || undefined,
     job_grade_id: employment.job_grade_id || undefined,
     reports_to: employment.reports_to || undefined,
-    status: employment.status,
+    status,
     // Benefits
     nssf_number: benefits.nssf_number || undefined,
     nhif_number: benefits.nhif_number || undefined,
@@ -342,6 +435,7 @@ async function submit(): Promise<void> {
       org_id: s.org_id,
       role: s.role || undefined,
       scope: s.scope,
+      engagement_type: s.engagement_type || undefined,
       allocation_pct: s.allocation_pct,
       is_billable: s.is_billable,
       start_date: s.start_date || undefined,
@@ -349,29 +443,83 @@ async function submit(): Promise<void> {
       notes: s.notes || undefined,
     })) : undefined,
   };
+
+  return payload;
+}
+
+/**
+ * Save what has been filled in so far and leave.
+ *
+ * A record halfway through this form is not somebody who works here, so it is
+ * saved as a draft: off the employee list, out of headcount, invisible to
+ * payroll. Only Complete Onboarding makes the person real.
+ *
+ * Nothing beyond the employee record is written — next of kin, inductions and
+ * documents all need a finished record to hang off, and a draft may not have
+ * reached those steps at all.
+ */
+async function saveDraft(): Promise<void> {
+  error.value = "";
+  stepErrors.value = [];
+
+  // Enough to identify who this is meant to become.
+  if (!bio.first_name.trim() || !bio.last_name.trim()) {
+    stepErrors.value = ["A first and last name are needed before a draft can be saved."];
+    return;
+  }
+
+  saving.value = true;
+  try {
+    const payload = buildPayload(isEdit.value ? employment.status : "draft");
+
+    if (targetId.value) {
+      await api("PUT", `/api/v1/employees/${targetId.value}`, { org: org(), body: payload });
+    } else {
+      const created = await api<any>("POST", "/api/v1/employees", { org: org(), body: payload });
+      draftId.value = created?.data?.id ?? created?.id ?? null;
+    }
+
+    void router.push({ name: "employees" });
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to save the draft.";
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function submit(): Promise<void> {
+  error.value = "";
+
+  // The last step commits everything, so the earlier ones have to hold.
+  const failed = [1, 2, 4].flatMap(s => validateStep(s));
+  if (failed.length) { stepErrors.value = failed; return; }
+
+  saving.value = true;
+  // Completing onboarding is what makes the person real.
+  const payload = buildPayload(employment.status === "draft" ? "active" : employment.status);
+
   try {
     let employeeId: number;
 
-    if (isEdit.value) {
-      await api("PUT", `/api/v1/employees/${editId.value}`, { org: org(), body: payload });
-      employeeId = editId.value!;
-      // Refresh emergency contacts
-      for (const nok of nokList.value.filter(n => n.name.trim())) {
-        await api("POST", `/api/v1/employees/${employeeId}/emergency-contacts`, {
-          org: org(),
-          body: { name: nok.name, relationship: nok.relationship, phone: nok.phone || undefined, email: nok.email || undefined, is_primary: nok.is_primary },
-        });
-      }
+    // Editing, or finishing a draft this wizard already saved.
+    if (targetId.value) {
+      await api("PUT", `/api/v1/employees/${targetId.value}`, { org: org(), body: payload });
+      employeeId = targetId.value;
     } else {
       const created = await api<any>("POST", "/api/v1/employees", { org: org(), body: payload });
       employeeId = created?.data?.id ?? created?.id;
-      // Save next-of-kin as emergency contacts
-      for (const nok of nokList.value.filter(n => n.name.trim())) {
-        await api("POST", `/api/v1/employees/${employeeId}/emergency-contacts`, {
-          org: org(),
-          body: { name: nok.name, relationship: nok.relationship, phone: nok.phone || undefined, email: nok.email || undefined, is_primary: nok.is_primary },
-        });
-      }
+    }
+
+    // Next of kin, as emergency contacts.
+    for (const nok of nokList.value.filter(n => n.name.trim())) {
+      await api("POST", `/api/v1/employees/${employeeId}/emergency-contacts`, {
+        org: org(),
+        body: {
+          name: nok.name, relationship: nok.relationship,
+          phone: nok.phone || undefined, email: nok.email || undefined,
+          is_primary: nok.is_primary,
+        },
+      });
     }
 
     // Step 5: sync inductions, document checklist, assets
@@ -434,7 +582,23 @@ onMounted(async () => {
         <h2>{{ isEdit ? "Edit Employee" : "Onboard New Employee" }}</h2>
         <p class="ob-subtitle">All data is handled in compliance with the Kenya Data Protection Act 2019.</p>
       </div>
+
+      <!--
+        Available at every step rather than only at the end, because the reason
+        to stop halfway is that something is missing — a KRA PIN, a signed
+        contract — and the form should not have to be retyped when it arrives.
+      -->
+      <div class="ob-header-actions">
+        <button class="btn btn-ghost" type="button" :disabled="saving" @click="saveDraft">
+          {{ saving ? "Saving…" : "Save as Draft" }}
+        </button>
+      </div>
     </div>
+
+    <p v-if="!isEdit" class="ob-draft-note">
+      Saved drafts stay off the employee list and out of headcount until
+      onboarding is completed.
+    </p>
 
     <p v-if="loading" class="status">Loading…</p>
     <p v-if="error"   class="error">{{ error }}</p>
@@ -471,13 +635,38 @@ onMounted(async () => {
       </div>
 
       <div class="ob-grid-2">
+        <!--
+          Masked until asked for. This form is filled in at a desk with people
+          walking past, and a KRA PIN on screen is a KRA PIN in the room. It is
+          not a control — anyone who can open the form can reveal it — but it
+          stops the number being read by somebody who merely walked behind the
+          chair.
+        -->
         <div class="form-field">
           <label class="ob-label">National ID / Passport <span class="ob-admin-badge">HR Admin only</span></label>
-          <input v-model="bio.national_id" type="text" class="input" placeholder="12345678" />
+          <div class="ob-masked">
+            <input
+              v-model="bio.national_id"
+              :type="revealed.national_id ? 'text' : 'password'"
+              class="input" placeholder="12345678"
+            />
+            <button type="button" class="ob-reveal" @click="toggleReveal('national_id')">
+              {{ revealed.national_id ? "Hide" : "Show" }}
+            </button>
+          </div>
         </div>
         <div class="form-field">
           <label class="ob-label">KRA PIN <span class="ob-admin-badge">HR Admin only</span></label>
-          <input v-model="bio.tax_id" type="text" class="input" placeholder="A000000000Z" />
+          <div class="ob-masked">
+            <input
+              v-model="bio.tax_id"
+              :type="revealed.tax_id ? 'text' : 'password'"
+              class="input" placeholder="A000000000Z"
+            />
+            <button type="button" class="ob-reveal" @click="toggleReveal('tax_id')">
+              {{ revealed.tax_id ? "Hide" : "Show" }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -502,6 +691,16 @@ onMounted(async () => {
             <option value="other">Other / Prefer not to say</option>
           </select>
         </div>
+        <div class="form-field">
+          <label class="ob-label">Marital Status</label>
+          <select v-model="bio.marital_status" class="input">
+            <option value="">— Select —</option>
+            <option value="single">Single</option>
+            <option value="married">Married</option>
+            <option value="divorced">Divorced</option>
+            <option value="widowed">Widowed</option>
+          </select>
+        </div>
       </div>
 
       <div class="form-field">
@@ -524,6 +723,12 @@ onMounted(async () => {
         <div class="form-field">
           <label class="ob-label">City</label>
           <input v-model="bio.city" type="text" class="input" placeholder="Nairobi" />
+        </div>
+        <!-- Beside the country, which on its own is too coarse for anything a
+             Kenyan employer files. -->
+        <div class="form-field">
+          <label class="ob-label">County</label>
+          <input v-model="bio.county" type="text" class="input" placeholder="Nairobi" />
         </div>
         <div class="form-field">
           <label class="ob-label">Country</label>
@@ -978,11 +1183,19 @@ onMounted(async () => {
               <strong>{{ scopeTarget.org_name || "the selected organisation" }}</strong>.
             </p>
 
+            <!--
+              Bound to engagement_type, not scope. These are reasons somebody is
+              in a second organisation; `access_scope` is what they may do once
+              there (operational, read only, admin). Writing one into the other
+              meant a "full secondment" also silently described their
+              permissions.
+            -->
             <div class="form-field">
               <label class="ob-label">Engagement Type</label>
-              <select v-model="scopeTarget.scope" class="input">
-                <option value="full">Full Secondment — works entirely in secondary org</option>
+              <select v-model="scopeTarget.engagement_type" class="input">
+                <option value="secondment">Full Secondment — works entirely in secondary org</option>
                 <option value="partial">Partial Secondment — split time between orgs</option>
+                <option value="shared_service">Shared Service — serves both orgs</option>
                 <option value="project">Project Based — specific project engagement</option>
                 <option value="advisory">Advisory / Consulting — advisory role only</option>
                 <option value="coverage">Coverage — temporary coverage / acting role</option>
@@ -1003,8 +1216,16 @@ onMounted(async () => {
             <div class="ob-grid-2">
               <div class="form-field">
                 <label class="ob-label">Time Allocation (%)</label>
-                <input v-model.number="scopeTarget.allocation_pct" class="input" type="number" min="0" max="100" />
-                <p class="ob-hint-text">e.g. 50 = half time in this org</p>
+                <!-- Nought would be a secondment that is not happening, so the
+                     floor is one — the same rule the server applies. -->
+                <input
+                  v-model.number="scopeTarget.allocation_pct"
+                  class="input" type="number" min="1" :max="allocationLeft"
+                />
+                <p class="ob-hint-text">
+                  e.g. 50 = half time in this org.
+                  {{ allocationLeft }}% of their week is still unassigned.
+                </p>
               </div>
               <div class="form-field">
                 <label class="ob-label">Billable to Secondary Org?</label>
@@ -1034,6 +1255,18 @@ onMounted(async () => {
 <style scoped>
 .ob-breadcrumb { font-size: 12px; color: var(--color-text-muted); margin-bottom: 2px; }
 .ob-subtitle   { font-size: 13px; color: var(--color-text-muted); margin-top: 2px; }
+
+.ob-header-actions { display: flex; gap: 8px; align-items: center; }
+.ob-draft-note { font-size: 12px; color: var(--color-text-light); margin: 4px 0 0; }
+
+/* Masked identifiers */
+.ob-masked { display: flex; align-items: center; gap: 8px; }
+.ob-masked .input { flex: 1; min-width: 0; }
+.ob-reveal {
+  flex-shrink: 0; border: none; background: none; padding: 0; cursor: pointer;
+  font-family: inherit; font-size: 12px; color: var(--color-brand-on-surface);
+}
+.ob-reveal:hover { text-decoration: underline; }
 
 /* Step indicator */
 .ob-steps { display: flex; align-items: flex-start; padding: 24px 0; }

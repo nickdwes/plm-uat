@@ -2,14 +2,33 @@
 
 namespace App\Http\Requests\Employee;
 
+use App\Models\Employee;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class UpdateEmployeeRequest extends FormRequest
 {
+    /**
+     * Deferred to the policy, so there is one answer rather than two.
+     *
+     * This checked a role name, which meant a role granted `employees.update`
+     * was refused here whatever the policy said — the same disagreement the
+     * create request and the vacancy request had.
+     *
+     * Authorised against the employee being edited rather than the class,
+     * because the controller does not check the record itself and the policy is
+     * the only thing standing between a request and somebody else's record.
+     */
     public function authorize(): bool
     {
-        return $this->user()->isOrgHR(app('current.organization_id'));
+        $employee = Employee::withoutGlobalScope('organization')
+            ->find($this->route('employee'));
+
+        if (! $employee) {
+            return false;
+        }
+
+        return $this->user()?->can('update', $employee) ?? false;
     }
 
     public function rules(): array

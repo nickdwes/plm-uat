@@ -200,6 +200,155 @@ class SecondmentTest extends TestCase
         $this->assertSame('active', Employee::where('first_name', 'Fully')->firstOrFail()->status);
     }
 
+    // ── Arriving as a list, from the wizard ───────────────────────────────
+
+    /**
+     * The onboarding wizard sends secondments as a list on create rather than
+     * one call at a time, and that path had its own copy of the logic.
+     */
+    private function createWith(array $secondments): \Illuminate\Testing\TestResponse
+    {
+        return $this->postJson("/api/v1/employees?org={$this->home->slug}", [
+            'first_name' => 'Wanjiru', 'last_name' => 'Kamau',
+            'employment_type' => 'full_time', 'date_hired' => now()->toDateString(),
+            'secondments' => $secondments,
+        ]);
+    }
+
+    /** It was validated on the way in and then never written. */
+    public function test_the_engagement_type_is_actually_stored(): void
+    {
+        $this->createWith([[
+            'org_id' => $this->host->id, 'engagement_type' => 'shared_service',
+            'allocation_pct' => 40, 'start_date' => now()->toDateString(),
+        ]])->assertSuccessful();
+
+        $employee = Employee::where('first_name', 'Wanjiru')->firstOrFail();
+
+        $this->assertSame(
+            'shared_service',
+            $employee->organizations()->first()->pivot->engagement_type,
+        );
+    }
+
+    /**
+     * The cap is refused one at a time, so it has to be refused in a list too —
+     * otherwise the wizard is simply the way round it.
+     */
+    public function test_a_list_of_secondments_cannot_exceed_a_full_week(): void
+    {
+        $third = Organization::create(['name' => 'TEEDU Academy', 'slug' => 'teedu']);
+
+        $this->createWith([
+            ['org_id' => $this->host->id, 'allocation_pct' => 60, 'start_date' => now()->toDateString()],
+            ['org_id' => $third->id,      'allocation_pct' => 60, 'start_date' => now()->toDateString()],
+        ])->assertStatus(422);
+    }
+
+    public function test_a_list_that_fits_is_accepted(): void
+    {
+        $third = Organization::create(['name' => 'TEEDU Academy', 'slug' => 'teedu']);
+
+        $this->createWith([
+            ['org_id' => $this->host->id, 'allocation_pct' => 50, 'start_date' => now()->toDateString()],
+            ['org_id' => $third->id,      'allocation_pct' => 50, 'start_date' => now()->toDateString()],
+        ])->assertSuccessful();
+
+        $this->assertCount(2, Employee::where('first_name', 'Wanjiru')->firstOrFail()->organizations);
+    }
+
+    /**
+     * Editing somebody who has secondments filtered the pivot on a column that
+     * does not exist, so every such edit failed at the database.
+     */
+    public function test_secondments_can_be_replaced_on_edit(): void
+    {
+        $third = Organization::create(['name' => 'TEEDU Academy', 'slug' => 'teedu']);
+
+        $this->createWith([
+            ['org_id' => $this->host->id, 'allocation_pct' => 50, 'start_date' => now()->toDateString()],
+        ])->assertSuccessful();
+
+        $employee = Employee::where('first_name', 'Wanjiru')->firstOrFail();
+
+        $this->putJson("/api/v1/employees/{$employee->id}?org={$this->home->slug}", [
+            'first_name' => 'Wanjiru', 'last_name' => 'Kamau',
+            'employment_type' => 'full_time', 'date_hired' => now()->toDateString(),
+            'secondments' => [
+                ['org_id' => $third->id, 'allocation_pct' => 30, 'start_date' => now()->toDateString()],
+            ],
+        ])->assertOk();
+
+        $orgs = $employee->fresh()->organizations;
+
+        $this->assertCount(1, $orgs);
+        $this->assertSame('TEEDU Academy', $orgs->first()->name);
+    }
+
+    // ── Reading back what was written ─────────────────────────────────────
+
+    /**
+     * The wizard has to be able to reload what it saved.
+     *
+     * The resource was still reading a secondment off the free-text table that
+     * was dropped, so every field came back null and reopening somebody showed
+     * an empty panel however it had been filled in — and saving from there
+     * wiped the real rows.
+     */
+    public function test_a_secondment_reads_back_with_its_terms_intact(): void
+    {
+        $this->second(['allocation_pct' => 40, 'engagement_type' => 'advisory'])->assertCreated();
+
+        $this->getJson("/api/v1/employees/{$this->employee->id}?org={$this->home->slug}")
+            ->assertOk()
+            ->assertJsonPath('data.secondments.0.organization_id', $this->host->id)
+            ->assertJsonPath('data.secondments.0.organization_name', 'Tiberbu Healthnet')
+            ->assertJsonPath('data.secondments.0.engagement_type', 'advisory')
+            ->assertJsonPath('data.secondments.0.allocation_pct', 40)
+            ->assertJsonPath('data.secondments.0.is_billable', true)
+            ->assertJsonPath('data.secondments.0.role', 'Product Manager');
+    }
+
+    /**
+     * Benefits and statutory registration were written by the wizard and never
+     * returned, so opening somebody to change one field re-sent every flag as
+     * false and blanked their plan and provider.
+     */
+    public function test_benefits_and_compliance_read_back(): void
+    {
+        /*
+         * These live behind the resource's sensitive block, which still gates
+         * on the HR role name rather than the permission catalogue — the same
+         * disagreement the policies had, one layer further out. Granted here so
+         * the test measures the round-trip and not that gate.
+         */
+        $hr = User::factory()->create();
+        $role = Role::create([
+            'name' => Role::ORG_HR, 'display_name' => 'HR',
+            'scope' => 'organization', 'permissions' => [
+                Permission::EMPLOYEES_VIEW, Permission::EMPLOYEES_UPDATE,
+            ],
+        ]);
+        $hr->roles()->attach($role->id, ['organization_id' => $this->home->id]);
+        $hr->forgetCachedRoles();
+        Sanctum::actingAs($hr->fresh());
+
+        $this->putJson("/api/v1/employees/{$this->employee->id}?org={$this->home->slug}", [
+            'medical_plan' => 'Jubilee Health', 'pension_provider' => 'Sanlam Kenya',
+            'benefit_medical' => true, 'benefit_pension' => true,
+            'kra_registered' => true, 'has_work_permit' => false,
+        ])->assertOk();
+
+        $this->getJson("/api/v1/employees/{$this->employee->id}?org={$this->home->slug}")
+            ->assertOk()
+            ->assertJsonPath('data.medical_plan', 'Jubilee Health')
+            ->assertJsonPath('data.pension_provider', 'Sanlam Kenya')
+            ->assertJsonPath('data.benefit_medical', true)
+            ->assertJsonPath('data.benefit_pension', true)
+            ->assertJsonPath('data.kra_registered', true)
+            ->assertJsonPath('data.has_work_permit', false);
+    }
+
     // ── What it is not ────────────────────────────────────────────────────
 
     /** Their primary organisation is not one of their secondments. */

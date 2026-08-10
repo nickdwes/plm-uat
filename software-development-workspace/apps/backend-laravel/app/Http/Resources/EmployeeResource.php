@@ -26,6 +26,7 @@ class EmployeeResource extends JsonResource
             'middle_name'             => $this->middle_name,
             'preferred_name'          => $this->preferred_name,
             'gender'                  => $this->when($canSensitive, $this->gender),
+            'marital_status'          => $this->when($canSensitive, $this->marital_status),
             'date_of_birth'           => $this->when($canSensitive, $this->date_of_birth?->toDateString()),
 
             // Contact
@@ -37,6 +38,7 @@ class EmployeeResource extends JsonResource
             'address'                 => $this->when($canSensitive, $this->address),
             'residential_address'     => $this->when($canSensitive, $this->residential_address),
             'city'                    => $this->city,
+            'county'                  => $this->county,
             'country'                 => $this->country,
 
             // Profile / career narrative
@@ -104,14 +106,27 @@ class EmployeeResource extends JsonResource
                 ])
             ),
 
+            /*
+             * Read from the organisation map, which is where a secondment now
+             * lives. These fields were still being read off the free-text table
+             * that was dropped — `organization_name`, `start_date` and the rest
+             * are columns that no longer exist, so every one of them came back
+             * null and the panel looked empty however it had been filled in.
+             */
             'secondments'             => $this->whenLoaded('secondments', fn () =>
                 $this->secondments->map(fn ($s) => [
                     'id'                => $s->id,
-                    'organization_name' => $s->organization_name,
-                    'role'              => $s->role,
-                    'start_date'        => $s->start_date?->toDateString(),
-                    'end_date'          => $s->end_date?->toDateString(),
-                    'notes'             => $s->notes,
+                    'organization_id'   => $s->id,
+                    'organization_name' => $s->name,
+                    'role'              => $s->pivot->role,
+                    'engagement_type'   => $s->pivot->engagement_type,
+                    'access_scope'      => $s->pivot->access_scope,
+                    'allocation_pct'    => $s->pivot->allocation_pct,
+                    'is_billable'       => (bool) $s->pivot->is_billable,
+                    'is_active'         => (bool) $s->pivot->is_active,
+                    'start_date'        => $s->pivot->effective_from,
+                    'end_date'          => $s->pivot->effective_to,
+                    'notes'             => $s->pivot->notes,
                 ])
             ),
 
@@ -129,6 +144,30 @@ class EmployeeResource extends JsonResource
                 'nssf_number'         => $this->nssf_number,
                 'nhif_number'         => $this->nhif_number,
                 'sha_number'          => $this->nhif_number, // SHA = NHIF successor
+
+                /*
+                 * Benefits and statutory registration.
+                 *
+                 * The onboarding wizard writes all of these and none came back,
+                 * so opening somebody to change one field re-sent every
+                 * benefit flag as false and blanked their plan and provider.
+                 * A form that cannot read what it wrote quietly destroys it.
+                 */
+                'medical_plan'            => $this->medical_plan,
+                'pension_provider'        => $this->pension_provider,
+                'benefits_effective_date' => $this->benefits_effective_date?->toDateString(),
+                'benefit_medical'         => (bool) $this->benefit_medical,
+                'benefit_pension'         => (bool) $this->benefit_pension,
+                'benefit_life_insurance'  => (bool) $this->benefit_life_insurance,
+                'benefit_group_life'      => (bool) $this->benefit_group_life,
+                'benefit_wiba'            => (bool) $this->benefit_wiba,
+
+                'nssf_registered'     => (bool) $this->nssf_registered,
+                'nhif_registered'     => (bool) $this->nhif_registered,
+                'kra_registered'      => (bool) $this->kra_registered,
+                'has_work_permit'     => (bool) $this->has_work_permit,
+                'work_permit_number'  => $this->work_permit_number,
+                'work_permit_expiry'  => $this->work_permit_expiry?->toDateString(),
 
                 // Health
                 'blood_group'         => $this->blood_group,

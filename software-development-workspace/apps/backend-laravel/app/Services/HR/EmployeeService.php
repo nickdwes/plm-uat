@@ -74,17 +74,7 @@ class EmployeeService extends BaseService
         // Seed default onboarding checklists immediately after creation
         $this->onboardingService->seedEmployee($employee->id);
 
-        foreach ($secondments as $s) {
-            $this->linkToOrganization($employee, (int) $s['org_id'], [
-                'role'           => $s['role'] ?? null,
-                'access_scope'   => $s['scope'] ?? 'operational',
-                'allocation_pct' => $s['allocation_pct'] ?? 100,
-                'is_billable'    => $s['is_billable'] ?? false,
-                'effective_from' => $s['start_date'] ?? now()->toDateString(),
-                'effective_to'   => $s['end_date'] ?? null,
-                'notes'          => $s['notes'] ?? null,
-            ]);
-        }
+        $this->applySecondments($employee, $secondments);
 
         return $employee;
     }
@@ -101,19 +91,19 @@ class EmployeeService extends BaseService
         $employee->update($data);
 
         if ($secondments !== null) {
-            // Sync secondments: detach all non-primary orgs, re-attach updated list
-            $employee->organizations()->wherePivot('org_id', '!=', $employee->primary_organization_id)->detach();
-            foreach ($secondments as $s) {
-                $this->linkToOrganization($employee, (int) $s['org_id'], [
-                    'role'           => $s['role'] ?? null,
-                    'access_scope'   => $s['scope'] ?? 'operational',
-                    'allocation_pct' => $s['allocation_pct'] ?? 100,
-                    'is_billable'    => $s['is_billable'] ?? false,
-                    'effective_from' => $s['start_date'] ?? now()->toDateString(),
-                    'effective_to'   => $s['end_date'] ?? null,
-                    'notes'          => $s['notes'] ?? null,
-                ]);
-            }
+            /*
+             * Sync: drop the secondary organisations and re-attach the list.
+             *
+             * The pivot column is `organization_id`. This filtered on `org_id`,
+             * which does not exist on the table, so every edit that carried
+             * secondments failed on the way to the database rather than saving
+             * the wrong thing.
+             */
+            $employee->organizations()
+                ->wherePivot('organization_id', '!=', $employee->primary_organization_id)
+                ->detach();
+
+            $this->applySecondments($employee, $secondments);
         }
 
         return $employee->load(['primaryOrganization', 'department', 'designation', 'jobGrade', 'manager']);
@@ -122,7 +112,13 @@ class EmployeeService extends BaseService
     public function get(int $id): Employee
     {
         $orgId = app('current.organization_id');
-        return Employee::with(['primaryOrganization', 'department', 'designation', 'jobGrade', 'manager'])
+        // Secondments are eager-loaded so the onboarding wizard can read back
+        // what it wrote — without them the resource omits the key entirely and
+        // an edit silently drops every secondary assignment.
+        return Employee::with([
+            'primaryOrganization', 'department', 'designation', 'jobGrade', 'manager',
+            'secondments',
+        ])
             ->withoutGlobalScope('organization')
             ->when($orgId, fn($q) => $q->where('primary_organization_id', $orgId))
             ->findOrFail($id);
@@ -142,6 +138,55 @@ class EmployeeService extends BaseService
         ]);
 
         return $employee;
+    }
+
+    /**
+     * Attach a whole list of secondments to somebody.
+     *
+     * Two things this fixes over doing it inline.
+     *
+     * `engagement_type` — why they are in the second organisation: seconded, a
+     * shared service, an advisory seat. It was accepted by the form request and
+     * then dropped on the floor here, so the column was never written and the
+     * Scope of Engagement panel appeared to save a field that went nowhere.
+     *
+     * The allocation cap. Adding secondments one at a time through
+     * `storeSecondment` is refused past 100%, but the onboarding wizard sends
+     * them as a list on create — the same promise the week cannot keep, arriving
+     * by a different door. Someone at 60% and 60% is over-committed however the
+     * rows got there.
+     */
+    private function applySecondments(Employee $employee, array $secondments): void
+    {
+        $running = 0;
+
+        foreach ($secondments as $s) {
+            $organizationId = (int) $s['org_id'];
+
+            // Their home organisation is not one of their secondments.
+            if ($organizationId === (int) $employee->primary_organization_id) {
+                continue;
+            }
+
+            $running += (int) ($s['allocation_pct'] ?? 100);
+
+            abort_if(
+                $running > 100,
+                422,
+                "That would put them at {$running}% across organisations.",
+            );
+
+            $this->linkToOrganization($employee, $organizationId, [
+                'role'            => $s['role'] ?? null,
+                'engagement_type' => $s['engagement_type'] ?? null,
+                'access_scope'    => $s['scope'] ?? 'operational',
+                'allocation_pct'  => $s['allocation_pct'] ?? 100,
+                'is_billable'     => $s['is_billable'] ?? false,
+                'effective_from'  => $s['start_date'] ?? now()->toDateString(),
+                'effective_to'    => $s['end_date'] ?? null,
+                'notes'           => $s['notes'] ?? null,
+            ]);
+        }
     }
 
     public function linkToOrganization(Employee $employee, int $organizationId, array $context): void
