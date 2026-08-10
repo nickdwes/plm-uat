@@ -478,7 +478,7 @@ function goConvert() {
 <template>
   <div class="view">
     <div class="pb-detail-header">
-      <button class="back-btn" @click="router.push({ name: 'preboarding' })">← Back</button>
+      <button class="back-btn" @click="router.push({ name: 'onboarding-queue' })">← Back</button>
       <div v-if="record">
         <h2 class="page-title">{{ record.first_name }} {{ record.last_name }}</h2>
         <div class="pb-subtitle">{{ record.position || "—" }} · {{ record.email }}</div>

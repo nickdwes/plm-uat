@@ -204,7 +204,18 @@ onMounted(refresh);
         <h1 class="ob-title">Onboarding</h1>
         <p class="ob-sub">Manage and complete all onboarding processes organization-wide</p>
       </div>
-      <button class="btn-primary" @click="openNew">+ Initiate Onboarding</button>
+      <!--
+        Two ways in, because they are genuinely different jobs.
+
+        Initiating onboarding sends somebody a form to fill in themselves and
+        waits for it to come back. Onboarding directly is HR typing the whole
+        record in one sitting — for a transfer, a rehire, or anybody already on
+        their first day. The second used to be its own nav entry.
+      -->
+      <div class="ob-header-actions">
+        <router-link :to="{ name: 'onboard' }" class="btn-ghost">Onboard directly</router-link>
+        <button class="btn-primary" @click="openNew">+ Initiate Onboarding</button>
+      </div>
     </header>
 
     <!-- ── The counts ───────────────────────────────────────────────────── -->
@@ -377,6 +388,7 @@ onMounted(refresh);
 .ob-wrap { padding: var(--space-6); max-width: 90rem; }
 
 .ob-header { @apply flex flex-wrap items-start justify-between; gap: var(--space-4); margin-bottom: var(--space-5); }
+.ob-header-actions { @apply flex flex-wrap items-center; gap: var(--space-2); }
 .ob-title { font-size: var(--text-xl-size); font-weight: 600; color: var(--color-text); margin: 0; }
 .ob-sub { font-size: var(--text-sm-size); color: var(--color-text-muted); margin: var(--space-1) 0 0; }
 
@@ -491,7 +503,9 @@ onMounted(refresh);
 .btn-primary:disabled { @apply cursor-not-allowed opacity-50; }
 
 .btn-ghost {
-  @apply inline-flex cursor-pointer items-center justify-center;
+  /* no-underline because this one is a router-link, which otherwise inherits
+     the global anchor styling and reads as a text link beside a button. */
+  @apply inline-flex cursor-pointer items-center justify-center no-underline;
   padding: 8px var(--space-4); border-radius: var(--radius-md);
   border: 1px solid var(--color-border-strong); background: var(--color-surface);
   font-family: inherit; font-size: var(--text-sm-size); color: var(--color-text);

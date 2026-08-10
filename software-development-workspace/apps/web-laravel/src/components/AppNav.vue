@@ -28,7 +28,7 @@ async function logout(): Promise<void> {
 
 // ── Collapsible groups ────────────────────────────────────────────────────────
 // Each group auto-opens when a child route is active
-const employeesOpen  = ref(isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info');
+const employeesOpen  = ref(isActive('employee') || route.name === 'onboard' || isActive('roster') || isActive('payroll') || route.name === 'my-info');
 const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin');
 const performanceOpen = ref(isActive('performance') || isActive('goals') || route.name === 'okr-cycles');
 const travelOpen      = ref(isActive('travel') || isActive('deliver'));
@@ -38,7 +38,7 @@ const orgOpen        = ref(isActive('org'));
 
 // Re-expand groups when navigating to a child route directly
 watch(() => route.name, () => {
-  if (isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info') employeesOpen.value = true;
+  if (isActive('employee') || route.name === 'onboard' || isActive('roster') || isActive('payroll') || route.name === 'my-info') employeesOpen.value = true;
   if (route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin') leaveOpen.value = true;
   if (isActive('performance') || isActive('goals') || route.name === 'okr-cycles') performanceOpen.value = true;
   if (isActive('training')) trainingOpen.value = true;
@@ -78,7 +78,7 @@ watch(() => route.name, () => {
 
       <!-- ── Employees ──────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('employee') || isActive('onboard') || isActive('preboarding') || isActive('roster') || isActive('payroll') || route.name === 'my-info' }]"
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('employee') || route.name === 'onboard' || isActive('roster') || isActive('payroll') || route.name === 'my-info' }]"
         @click="employeesOpen = !employeesOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -102,20 +102,13 @@ watch(() => route.name, () => {
           </svg>
           All Employees
         </router-link>
-        <router-link :to="{ name: 'onboard' }" :class="['nav-item', 'nav-child', { active: isActive('onboard') }]">
-          <svg viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" />
-          </svg>
-          Onboard
-        </router-link>
-        <router-link :to="{ name: 'preboarding' }" :class="['nav-item', 'nav-child', { active: isActive('preboarding') }]">
-          <svg viewBox="0 0 20 20" fill="currentColor">
-            <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path fill-rule="evenodd" d="M17.707 9.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L13 12.586l3.293-3.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-            <path d="M11 5.072A4.992 4.992 0 007 3a4.992 4.992 0 00-4 2 6 6 0 00-2 4.5V10a1 1 0 001 1h10a1 1 0 001-1v-.5A6 6 0 0011 5.072z" />
-          </svg>
-          Pre-Onboarding
-        </router-link>
+        <!--
+          Onboard and Pre-Onboarding used to sit here as well. All three read
+          the same records, so there is now one Onboarding entry below Job
+          Openings, which is also where onboarding follows on from in the work
+          itself. Starting somebody from scratch is still a button on All
+          Employees.
+        -->
         <router-link :to="{ name: 'roster' }" :class="['nav-item', 'nav-child', { active: isActive('roster') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zM4 8h12v8H4V8zm5 2a1 1 0 000 2h2a1 1 0 100-2H9zm-1 4a1 1 0 011-1h4a1 1 0 110 2H9a1 1 0 01-1-1z" clip-rule="evenodd" />

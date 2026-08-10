@@ -53,7 +53,6 @@ import RosterView             from "../views/RosterView.vue";
 
 // Preboarding
 import OnboardingQueueView            from "../views/HR/OnboardingQueueView.vue";
-import PreboardingListView   from "../views/PreboardingListView.vue";
 import PreboardingDetailView from "../views/PreboardingDetailView.vue";
 import PreboardingFormView   from "../views/PreboardingFormView.vue";
 import InterviewScoringFormView from "../views/Recruitment/InterviewScoringFormView.vue";
@@ -166,14 +165,17 @@ const routes: RouteRecordRaw[] = [
   { path: "/recruitment/interviews/:id/scorecard", name: "interview-scorecard", component: InterviewScorecardView, props: true },
   // ── Roster ───────────────────────────────────────────────────────────────
   { path: "/roster",  name: "roster",  component: RosterView },
-  // ── Pre-Onboarding ────────────────────────────────────────────────────────
+  // ── Onboarding ────────────────────────────────────────────────────────────
   /*
-   * Onboarding is the queue between an accepted offer and a first day. The
-   * older preboarding list stays reachable at its own path for now — the two
-   * read the same records, and one will absorb the other.
+   * One queue between an accepted offer and a first day.
+   *
+   * There were two lists reading the same `/preboarding` records and a third
+   * nav entry pointing at the wizard, which meant three answers to "where do I
+   * onboard somebody". The older list is gone; its path redirects so existing
+   * links and bookmarks still land somewhere sensible.
    */
   { path: "/onboarding",                     name: "onboarding-queue",   component: OnboardingQueueView },
-  { path: "/preboarding",                    name: "preboarding",        component: PreboardingListView },
+  { path: "/preboarding",                    redirect: { name: "onboarding-queue" } },
   { path: "/preboarding/:id",                name: "preboarding-detail", component: PreboardingDetailView, props: true },
   { path: "/pre-onboarding/form/:token",     name: "preboarding-form",   component: PreboardingFormView,   props: true, meta: { public: true } },
   { path: "/score/:token",                   name: "interview-scoring",  component: InterviewScoringFormView, props: true, meta: { public: true } },
