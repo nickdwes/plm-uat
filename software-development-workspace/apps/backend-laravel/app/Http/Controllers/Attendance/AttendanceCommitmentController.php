@@ -116,6 +116,16 @@ class AttendanceCommitmentController extends Controller
             // Moved to another day rather than abandoned — the common answer
             // to "why not", and worth recording as a link rather than prose.
             'carry_to' => ['nullable', 'date'],
+            /*
+             * Done, and finished — or done, and it continues tomorrow.
+             *
+             * Asked only of a `done`, because it is meaningless otherwise, and
+             * asked every time because the default answer is the wrong one
+             * whichever way it is set: assume closed and half-finished work
+             * disappears from the board, assume ongoing and nothing is ever
+             * finished without a second visit.
+             */
+            'disposition' => ['nullable', Rule::in(AttendanceCommitment::DISPOSITIONS)],
         ]);
 
         if ($data['outcome'] === 'not_done' && ! filled($data['reason'] ?? null)) {
@@ -124,12 +134,43 @@ class AttendanceCommitmentController extends Controller
             ]);
         }
 
+        /*
+         * Asked only where there is something to close.
+         *
+         * A commitment carrying a task drives that task's status, so the answer
+         * decides whether the work leaves somebody's board. A free-text one —
+         * "team meeting", "expenses" — has nothing behind it, and demanding
+         * closed-or-ongoing there is a question with no consequence, which is
+         * how forms teach people to answer without reading.
+         */
+        if ($data['outcome'] === 'done' && $commitment->task_id !== null
+            && ! filled($data['disposition'] ?? null)) {
+            throw ValidationException::withMessages([
+                'disposition' => 'Say whether that closes it or it carries on.',
+            ]);
+        }
+
         $commitment->update([
             'outcome' => $data['outcome'],
             'reason'  => $data['outcome'] === 'done' ? null : $data['reason'],
+            'disposition' => $data['outcome'] === 'done' ? ($data['disposition'] ?? null) : null,
             'reported_at' => now(),
             'reported_by' => $request->user()->employeeId(),
         ]);
+
+        /*
+         * Closing the task is the point of saying "closed".
+         *
+         * Routed through the same rule the board uses: work that needs signing
+         * off goes to awaiting approval rather than straight to done, because
+         * the person doing it finishing is not the same as it being accepted.
+         * `reported_done_at` is stamped either way — it is the only record of
+         * when the doer actually delivered, and for approval-bound tasks
+         * `completed_at` ends up holding the approver's date instead.
+         */
+        if ($data['outcome'] === 'done' && ($data['disposition'] ?? null) === 'closed') {
+            $this->closeTask($commitment, $request->user());
+        }
 
         if ($data['outcome'] === 'not_done' && ! empty($data['carry_to'])) {
             $this->reporter->carry($commitment, $data['carry_to'], $request->user()->id);
@@ -145,6 +186,42 @@ class AttendanceCommitmentController extends Controller
         }
 
         return response()->json(['data' => $this->dayPayload($day)]);
+    }
+
+    /**
+     * Mark the task behind a commitment as delivered.
+     *
+     * Only the task the commitment points at, and only if the reporter is
+     * allowed to update it — reporting your own day must not become a way to
+     * close somebody else's work.
+     */
+    private function closeTask(AttendanceCommitment $commitment, $user): void
+    {
+        $task = $commitment->task;
+
+        if ($task === null || $task->status === Task::DONE) {
+            return;
+        }
+
+        if (! $user->can('update', $task)) {
+            return;
+        }
+
+        // These columns point at employees, not accounts — they record who did
+        // the work rather than who was signed in.
+        $employeeId = $user->employeeId();
+
+        $next = ($task->requires_approval && $task->approved_at === null)
+            ? 'awaiting_approval'
+            : Task::DONE;
+
+        $task->update(array_filter([
+            'status'           => $next,
+            'reported_done_at' => $task->reported_done_at ?? now(),
+            'reported_done_by' => $task->reported_done_by ?? $employeeId,
+            'completed_by'     => $next === Task::DONE ? ($task->completed_by ?? $employeeId) : null,
+            'completed_at'     => $next === Task::DONE ? ($task->completed_at ?? now()) : null,
+        ], fn ($v) => $v !== null));
     }
 
     public function update(Request $request, AttendanceCommitment $commitment): JsonResponse

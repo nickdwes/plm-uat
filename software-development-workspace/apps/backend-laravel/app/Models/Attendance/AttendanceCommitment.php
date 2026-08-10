@@ -30,7 +30,7 @@ class AttendanceCommitment extends Model
     protected $fillable = [
         'organization_id', 'attendance_day_id', 'task_id',
         'title', 'kind', 'position', 'starts_at', 'ends_at', 'note',
-        'outcome', 'reason', 'reported_at', 'reported_by', 'carried_to_id',
+        'outcome', 'disposition', 'reason', 'reported_at', 'reported_by', 'carried_to_id',
         'created_by',
     ];
 
@@ -42,6 +42,16 @@ class AttendanceCommitment extends Model
 
     /** Done, or not. Null is the absence of an answer, not a third one. */
     public const OUTCOMES = ['done', 'not_done'];
+
+    /**
+     * Whether being done with it for the day means being done with it.
+     *
+     * Only asked alongside `done`. "Ongoing" is not a softer kind of failure —
+     * it is the normal state of anything that takes more than an afternoon, and
+     * saying so is what stops a fortnight's work looking like a fortnight of
+     * misses.
+     */
+    public const DISPOSITIONS = ['closed', 'ongoing'];
 
     public function day(): BelongsTo
     {

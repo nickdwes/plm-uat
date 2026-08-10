@@ -32,7 +32,7 @@ class Task extends Model
     protected $fillable = [
         'organization_id', 'parent_task_id', 'reference',
         'title', 'description', 'status', 'priority', 'deadline',
-        'completed_at', 'position', 'created_by',
+        'completed_at', 'reported_done_at', 'reported_done_by', 'position', 'created_by',
 
         // What kind of work, and what raised it. All optional — most tasks
         // belong to nothing but the person doing them.
@@ -60,6 +60,7 @@ class Task extends Model
         'deadline'     => 'date',
         'started_on'   => 'date',
         'completed_at' => 'datetime',
+        'reported_done_at' => 'datetime',
         'approved_at'  => 'datetime',
         'position'     => 'integer',
         'requires_approval'    => 'boolean',
@@ -421,6 +422,58 @@ class Task extends Model
     public function scopeOpen(Builder $q): Builder
     {
         return $q->where('status', '!=', self::DONE);
+    }
+
+    /**
+     * Past its due date and nobody has said it is done.
+     *
+     * Derived, never stored. A stored flag would need a nightly job to stay
+     * true, and would be wrong between midnight and whenever that job ran — on
+     * exactly the morning somebody most needs to see it.
+     *
+     * Measured against `reported_done_at` rather than `completed_at`, because
+     * the question is whether the person delivered, not whether their approver
+     * has got round to agreeing. A task finished on Friday and signed off the
+     * following Wednesday was not late.
+     */
+    public function scopeOverdue(Builder $q, ?string $asOf = null): Builder
+    {
+        $date = $asOf ?: now()->toDateString();
+
+        return $q->whereNotNull('deadline')
+            ->whereDate('deadline', '<', $date)
+            ->whereNull('reported_done_at')
+            ->where('status', '!=', self::DONE);
+    }
+
+    /** The same question about one task. */
+    public function isOverdue(?string $asOf = null): bool
+    {
+        if ($this->deadline === null || $this->reported_done_at !== null || $this->status === self::DONE) {
+            return false;
+        }
+
+        return $this->deadline->toDateString() < ($asOf ?: now()->toDateString());
+    }
+
+    /**
+     * Delivered late, and by how much — null when it was never delivered, or
+     * had no date to be late against.
+     *
+     * Kept separate from `isOverdue()`: one is about work still outstanding,
+     * the other about work that arrived. Confusing them is how a team that
+     * eventually delivered everything reads as permanently behind.
+     */
+    public function daysLate(): ?int
+    {
+        if ($this->deadline === null || $this->reported_done_at === null) {
+            return null;
+        }
+
+        $due       = $this->deadline->startOfDay();
+        $delivered = $this->reported_done_at->startOfDay();
+
+        return $delivered->lessThanOrEqualTo($due) ? 0 : (int) $due->diffInDays($delivered);
     }
 
     /**

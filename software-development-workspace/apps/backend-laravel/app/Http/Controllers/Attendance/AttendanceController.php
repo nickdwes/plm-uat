@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Attendance;
 
+use App\Models\Task\Task;
 use App\Http\Controllers\Controller;
 use App\Models\Attendance\AttendanceDay;
 use App\Models\Attendance\AttendancePolicy;
@@ -445,6 +446,9 @@ class AttendanceController extends Controller
                 // How it went. Null means nobody has said yet, which on a
                 // finished day is itself the finding.
                 'outcome'  => $c->outcome,
+                // Done and finished, or done and it carries on. Only ever set
+                // beside a `done`.
+                'disposition'  => $c->disposition,
                 'reason'   => $c->reason,
                 'is_explained' => $c->is_explained,
                 'reported_at'  => $c->reported_at?->toIso8601String(),
@@ -469,10 +473,29 @@ class AttendanceController extends Controller
                         'status' => $c->task->status,
                         'priority' => $c->task->priority,
                         'is_done' => $c->task->is_done,
+                        'deadline' => $c->task->deadline?->toDateString(),
+                        // Answered by the server rather than left to the client
+                        // to work out from a date, so every screen agrees on
+                        // what late means.
+                        'is_overdue' => $c->task->isOverdue($d->work_date?->toDateString()),
                     ]
                     : null,
             ])->values()
             : [];
+
+        /*
+         * Overdue work they did not put on today's list.
+         *
+         * The list is theirs to choose, which is right — a day somebody else
+         * fills in is a form, not a plan. But a task nobody commits to is
+         * exactly the one that slips quietly, so anything already past its date
+         * is added here and cannot be taken off.
+         *
+         * Not written into the commitments table. These are not promises the
+         * person made, and recording them as such would put words in their
+         * mouth and count as misses against them for a day they never planned.
+         */
+        $payload['overdue'] = $this->overdueFor($d);
 
         /*
          * Promised, delivered, missed, and missed in silence.
@@ -488,6 +511,51 @@ class AttendanceController extends Controller
         $payload['reminded_at'] = $d->reminded_at?->toIso8601String();
 
         return $payload;
+    }
+
+    /**
+     * Their overdue tasks, minus anything already on the day's list.
+     *
+     * `open_issues` is what turns the prompt into something actionable: an
+     * overdue task with a risk already logged against it has been accounted
+     * for, and asking again is nagging.
+     */
+    private function overdueFor(AttendanceDay $d): array
+    {
+        if ($d->employee_id === null) {
+            return [];
+        }
+
+        $onTheList = $d->relationLoaded('commitments')
+            ? $d->commitments->pluck('task_id')->filter()->all()
+            : [];
+
+        return Task::query()
+            ->where('assigned_to', $d->employee_id)
+            ->overdue($d->work_date?->toDateString())
+            ->when($onTheList, fn ($q) => $q->whereNotIn('id', $onTheList))
+            ->withCount(['issues as open_issues' => fn ($q) => $q->where('status', 'open')])
+            ->orderBy('deadline')
+            ->limit(25)
+            ->get()
+            ->map(fn (Task $t) => [
+                'id'          => $t->id,
+                'reference'   => $t->reference,
+                'title'       => $t->title,
+                'status'      => $t->status,
+                'priority'    => $t->priority,
+                'deadline'    => $t->deadline?->toDateString(),
+                'days_late'   => $t->deadline
+                    ? (int) $t->deadline->startOfDay()->diffInDays(
+                        ($d->work_date ?? now())->startOfDay()
+                    )
+                    : null,
+                // Whether they have already said why. Drives whether the page
+                // asks for an issue or simply shows one.
+                'open_issues' => (int) ($t->open_issues ?? 0),
+            ])
+            ->values()
+            ->all();
     }
 
     private function row(AttendanceDay $d, bool $withAudit = false): array

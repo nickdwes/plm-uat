@@ -22,7 +22,7 @@ class TaskIssue extends Model
     use BelongsToOrganization;
 
     protected $fillable = [
-        'organization_id', 'task_id', 'name', 'details',
+        'organization_id', 'task_id', 'kind', 'name', 'details',
         'priority', 'status', 'resolved_at', 'resolved_by', 'raised_by',
     ];
 
@@ -34,6 +34,16 @@ class TaskIssue extends Model
 
     /** Still in the way, or not. The only two the legacy ever used. */
     public const STATUSES = ['open', 'resolved'];
+
+    /**
+     * Something that has happened, or something that might.
+     *
+     * Worth separating because they are acted on differently: an issue wants
+     * resolving now, a risk wants watching until the date it threatens. An
+     * overdue task usually raises the second — the deadline that has already
+     * gone is not the problem, the one after it is.
+     */
+    public const KINDS = ['issue', 'risk'];
 
     public function task(): BelongsTo
     {
