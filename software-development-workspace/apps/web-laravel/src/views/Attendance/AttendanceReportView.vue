@@ -34,6 +34,32 @@ interface Trends {
   weeks: { week: string; office: number; home: number; customer_site: number; total: number }[];
   plan_adherence: { stated: number; kept: number; rate: number | null };
 }
+/**
+ * One task, measured against the date it was due.
+ *
+ * Three dates, never collapsed into one. `reported_on` is when the person said
+ * they had finished; `approved_on` is when somebody agreed. A task delivered on
+ * Friday and signed off the following Wednesday was delivered on time, and
+ * folding the two together would charge those five days to whoever did the work
+ * rather than to the queue they were waiting in.
+ */
+interface DeliveryRow {
+  id: number; reference: string | null; title: string; status: string;
+  employee: string | null; employee_id: number | null;
+  due_on: string | null; reported_on: string | null; approved_on: string | null;
+  days_late: number | null;
+  outcome: "on_time" | "late" | "overdue" | "outstanding";
+  awaiting_approval: boolean;
+  open_issues: number;
+}
+interface Delivery {
+  summary: {
+    due: number; on_time: number; late: number;
+    overdue: number; outstanding: number; awaiting_approval: number;
+  };
+  data: DeliveryRow[];
+}
+
 interface Distribution {
   by_project: { label: string; count: number }[];
   by_account: { label: string; count: number }[];
@@ -43,6 +69,7 @@ interface Distribution {
 const people = ref<PersonRow[]>([]);
 const trends = ref<Trends | null>(null);
 const spread = ref<Distribution | null>(null);
+const delivery = ref<Delivery | null>(null);
 const loading = ref(true);
 
 const monthsBack = ref(1);
@@ -64,14 +91,16 @@ const range = computed(() => {
 async function load() {
   loading.value = true;
   try {
-    const [p, t, d] = await Promise.all([
+    const [p, t, d, del] = await Promise.all([
       api<{ data: PersonRow[] }>("GET", "/api/v1/attendance/analytics/people", { org: org(), params: range.value }),
       api<Trends>("GET", "/api/v1/attendance/analytics/trends", { org: org(), params: range.value }),
       api<Distribution>("GET", "/api/v1/attendance/analytics/distribution", { org: org(), params: range.value }),
+      api<Delivery>("GET", "/api/v1/attendance/analytics/delivery", { org: org(), params: range.value }),
     ]);
     people.value = p.data;
     trends.value = t;
     spread.value = d;
+    delivery.value = del;
   } catch (e) { fail(e, "Could not load the report."); }
   finally { loading.value = false; }
 }
@@ -92,6 +121,25 @@ const totals = computed(() => ({
   promised:    people.value.reduce((n, r) => n + r.work.promised, 0),
   done:        people.value.reduce((n, r) => n + r.work.done, 0),
 }));
+
+/*
+ * Delivery, arranged by what needs doing about it.
+ *
+ * Overdue first — past its date with nobody having said anything — then late,
+ * which is history rather than a task. Everything on time sorts last; a table
+ * that opens on its good news is a table people stop scrolling.
+ */
+const OUTCOME_ORDER = { overdue: 0, outstanding: 1, late: 2, on_time: 3 } as const;
+
+const deliveryRows = computed(() =>
+  [...(delivery.value?.data ?? [])].sort(
+    (a, b) => OUTCOME_ORDER[a.outcome] - OUTCOME_ORDER[b.outcome]
+      || (b.days_late ?? 0) - (a.days_late ?? 0),
+  ));
+
+const OUTCOME_LABEL: Record<DeliveryRow["outcome"], string> = {
+  overdue: "past due", outstanding: "not due yet", late: "late", on_time: "on time",
+};
 
 /** Nobody to compare against is not a reason to hide the shape of the week. */
 const hasTrends = computed(() => (trends.value?.weeks.length ?? 0) > 0);
@@ -171,6 +219,93 @@ onMounted(load);
                 <td>{{ r.enablement_days }}</td>
               </tr>
               <tr v-if="!people.length"><td colspan="12" class="rp-empty">Nothing recorded in this period.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Delivery against the due date ──────────────────────────────── -->
+      <section v-if="delivery" class="rp-card">
+        <h2 class="rp-card-title">Delivery against the due date</h2>
+        <p class="rp-quiet rp-card-note">
+          What replaced the timesheet. Not how long anything took — whether it
+          arrived when it was promised, and if not, whether anybody said so.
+        </p>
+
+        <!--
+          Ordered by what needs doing about it. Past due leads because it is the
+          only one of these anybody can still act on; on time is last because
+          nobody opens a report to read that.
+        -->
+        <div class="rp-counts">
+          <div :class="['rp-count', { bad: delivery.summary.overdue }]">
+            <span class="rp-count-value">{{ delivery.summary.overdue }}</span>
+            <span class="rp-count-label">past due</span>
+          </div>
+          <div class="rp-count">
+            <span class="rp-count-value">{{ delivery.summary.late }}</span>
+            <span class="rp-count-label">delivered late</span>
+          </div>
+          <div class="rp-count">
+            <span class="rp-count-value">{{ delivery.summary.on_time }}</span>
+            <span class="rp-count-label">on time</span>
+          </div>
+          <div class="rp-count">
+            <span class="rp-count-value">{{ delivery.summary.outstanding }}</span>
+            <span class="rp-count-label">not due yet</span>
+          </div>
+          <!--
+            Counted apart from the rest. This is the one figure here that is not
+            about the person being measured — work that was delivered and is
+            sitting in somebody else's queue.
+          -->
+          <div :class="['rp-count', { warn: delivery.summary.awaiting_approval }]">
+            <span class="rp-count-value">{{ delivery.summary.awaiting_approval }}</span>
+            <span class="rp-count-label">waiting on approval</span>
+          </div>
+        </div>
+
+        <p v-if="!deliveryRows.length" class="rp-quiet">
+          Nothing was due in this period.
+        </p>
+
+        <div v-else class="rp-table-wrap">
+          <table class="rp-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Who</th>
+                <th>Due</th>
+                <!-- The person said. -->
+                <th>Reported done</th>
+                <!-- Somebody agreed. Kept apart on purpose. -->
+                <th>Approved</th>
+                <th>Outcome</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in deliveryRows" :key="r.id"
+                  :class="{ flagged: r.outcome === 'overdue' }">
+                <td>
+                  <span class="rp-task">{{ r.title }}</span>
+                  <span v-if="r.open_issues" class="rp-chip">
+                    {{ r.open_issues }} raised
+                  </span>
+                </td>
+                <td>{{ r.employee ?? "—" }}</td>
+                <td>{{ r.due_on ?? "—" }}</td>
+                <td>{{ r.reported_on ?? "—" }}</td>
+                <td>
+                  {{ r.approved_on ?? "—" }}
+                  <span v-if="r.awaiting_approval" class="rp-chip rp-chip-warn">waiting</span>
+                </td>
+                <td>
+                  <span :class="['rp-outcome', `oc-${r.outcome}`]">
+                    {{ OUTCOME_LABEL[r.outcome] }}
+                    <template v-if="r.days_late"> · {{ r.days_late }}d</template>
+                  </span>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -292,6 +427,29 @@ onMounted(load);
   background: var(--color-surface-raised);
 }
 .rp-card-title { font-size: var(--text-base-size); font-weight: 600; color: var(--color-text); margin: 0 0 var(--space-4); }
+.rp-card-note { margin: calc(-1 * var(--space-3)) 0 var(--space-4); }
+
+/* The five counts across the top of the delivery table. */
+.rp-counts { display: flex; flex-wrap: wrap; gap: var(--space-5); margin-bottom: var(--space-4); }
+.rp-count { display: flex; flex-direction: column; }
+.rp-count-value { font-size: var(--text-xl-size); font-weight: 600; color: var(--color-text); line-height: 1.1; }
+.rp-count-label { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.rp-count.bad  .rp-count-value { color: var(--color-danger-text); }
+.rp-count.warn .rp-count-value { color: var(--color-warning-text, var(--color-text)); }
+
+.rp-task { overflow-wrap: anywhere; }
+.rp-chip {
+  display: inline-block; margin-left: var(--space-2); padding: 1px 8px;
+  border-radius: 999px; font-size: var(--text-xs-size);
+  background: var(--color-surface-sunken); color: var(--color-text-muted);
+}
+.rp-chip-warn { background: var(--color-warning-subtle, var(--color-surface-sunken)); }
+
+.rp-outcome { padding: 2px 10px; border-radius: 999px; font-size: var(--text-xs-size); white-space: nowrap; }
+.oc-overdue     { background: var(--color-danger-subtle);  color: var(--color-danger-text); }
+.oc-late        { background: var(--color-warning-subtle, var(--color-surface-sunken)); color: var(--color-text); }
+.oc-on_time     { background: var(--color-success-subtle); color: var(--color-success-text); }
+.oc-outstanding { background: var(--color-surface-sunken);  color: var(--color-text-muted); }
 .rp-sub-title { font-size: var(--text-xs-size); font-weight: 600; color: var(--color-text-muted); margin: var(--space-4) 0 var(--space-2); text-transform: uppercase; letter-spacing: 0.04em; }
 .rp-grid { @apply grid; grid-template-columns: repeat(auto-fit, minmax(22rem, 1fr)); gap: var(--space-4); }
 .rp-grid > .rp-card { margin-bottom: 0; }
