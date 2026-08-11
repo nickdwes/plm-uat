@@ -35,12 +35,38 @@ interface Punch {
 interface Commitment {
   id: number; title: string; kind: string; position: number; note: string | null;
   outcome: "done" | "not_done" | null;
+  /**
+   * Done, and finished — or done, and it carries on tomorrow.
+   *
+   * Only ever set beside a `done`. Without it a fortnight of steady progress on
+   * something large is a column of ticks indistinguishable from a fortnight of
+   * small things finished, and the person doing the hard work looks idle.
+   */
+  disposition: "closed" | "ongoing" | null;
   reason: string | null;
   is_explained: boolean;
   reported_at: string | null;
   carried_to: { id: number; work_date: string | null } | null;
   starts_at: string | null; ends_at: string | null;
-  task: { id: number; reference: string | null; status: string; priority: string; is_done: boolean } | null;
+  task: {
+    id: number; reference: string | null; status: string; priority: string;
+    is_done: boolean; deadline: string | null; is_overdue: boolean;
+  } | null;
+}
+
+/**
+ * Work already past its date that they did not put on today's list.
+ *
+ * The day is theirs to plan — a list somebody else fills in is a form, not a
+ * plan — but the task nobody volunteers for is the one that slips quietly, so
+ * anything overdue arrives anyway and cannot be dismissed.
+ */
+interface OverdueTask {
+  id: number; reference: string | null; title: string;
+  status: string; priority: string;
+  deadline: string | null; days_late: number | null;
+  /** Already accounted for. Asking again is nagging rather than prompting. */
+  open_issues: number;
 }
 interface Day {
   id: number; work_date: string; status: string | null;
@@ -57,6 +83,7 @@ interface Day {
   commitments: Commitment[];
   /** Promised, delivered, missed — and missed with nobody told. */
   tally: { promised: number; done: number; missed: number; unexplained: number; open: number };
+  overdue: OverdueTask[];
   is_reported: boolean;
   reminded_at: string | null;
   is_enablement_day: boolean;
@@ -310,14 +337,68 @@ async function removeCommitment(c: Commitment) {
 const explaining = ref<Commitment | null>(null);
 const explanation = ref({ reason: "", carry_to: "" });
 
-async function markDone(c: Commitment) {
+/**
+ * Done, with the question that follows it.
+ *
+ * A commitment carrying a task cannot just be ticked: finishing your day with
+ * it is not the same as finishing it, and the server refuses a `done` on a task
+ * without saying which. So the tick asks, and a free-text commitment — "team
+ * meeting" — still just ticks, because there is nothing behind it to close.
+ */
+async function markDone(c: Commitment, disposition?: "closed" | "ongoing") {
+  if (c.task && !disposition) {
+    closing.value = c;
+    return;
+  }
+
   saving.value = true;
   try {
     await api("POST", `/api/v1/attendance/commitments/${c.id}/report`, {
-      org: org(), body: { outcome: "done" },
+      org: org(),
+      body: { outcome: "done", ...(disposition ? { disposition } : {}) },
     });
+    closing.value = null;
     await load();
   } catch (e) { fail(e, "Could not record that."); }
+  finally { saving.value = false; }
+}
+
+/** The commitment being closed off, while we ask whether it is finished. */
+const closing = ref<Commitment | null>(null);
+
+// ── Overdue work, and saying why ────────────────────────────────────────────
+
+/**
+ * Raising a risk against work that has passed its date.
+ *
+ * Encouraged, never enforced. A prompt somebody cannot dismiss is a prompt
+ * people learn to route around — they will type "n/a" and mean it.
+ */
+const raising = ref<OverdueTask | null>(null);
+const risk = ref({ kind: "risk" as "risk" | "issue", name: "", details: "" });
+
+function openRaise(t: OverdueTask) {
+  raising.value = t;
+  risk.value = { kind: "risk", name: "", details: "" };
+}
+
+async function saveRisk() {
+  if (!raising.value || !risk.value.name.trim()) return;
+
+  saving.value = true;
+  try {
+    await api("POST", `/api/v1/tasks/${raising.value.id}/issues`, {
+      org: org(),
+      body: {
+        kind: risk.value.kind,
+        name: risk.value.name.trim(),
+        details: risk.value.details.trim() || null,
+      },
+    });
+    raising.value = null;
+    notifySaved("Raised. It is on the task for everyone who follows it.");
+    await load();
+  } catch (e) { fail(e, "Could not raise that."); }
   finally { saving.value = false; }
 }
 
@@ -535,6 +616,8 @@ const dayName = (d: string) =>
 
 const commitmentsOn = (d: string) => byDate.value[d]?.commitments ?? [];
 const tallyOn = (d: string) => byDate.value[d]?.tally ?? null;
+/** Work already past its date, which arrives whether or not it was planned. */
+const overdueOn = (d: string) => byDate.value[d]?.overdue ?? [];
 
 /**
  * How a commitment reads at a glance.
@@ -771,7 +854,14 @@ onMounted(load);
               </span>
 
               <span class="at-commit-body">
-                <span class="at-commit-title">{{ c.title }}</span>
+                <span class="at-commit-title">
+                  {{ c.title }}
+                  <!-- Progress, not failure. It is the normal state of anything
+                       that takes more than an afternoon. -->
+                  <span v-if="c.disposition === 'ongoing'" class="at-tag">ongoing</span>
+                  <span v-else-if="c.disposition === 'closed'" class="at-tag at-tag-ok">closed</span>
+                  <span v-if="c.task?.is_overdue" class="at-tag at-tag-late">past due</span>
+                </span>
                 <span v-if="c.starts_at" class="at-commit-time">{{ c.starts_at }}–{{ c.ends_at }}</span>
                 <!-- The explanation, shown beside the miss rather than buried
                      in a record nobody opens. -->
@@ -789,6 +879,36 @@ onMounted(load);
               </span>
             </li>
           </ul>
+
+          <!--
+            Work that is already late and was not planned for today.
+
+            Shown apart from the commitments deliberately: these are not
+            promises this person made, and listing them together would count
+            them as misses against a day they never planned.
+          -->
+          <div v-if="overdueOn(d).length" class="at-overdue">
+            <p class="at-overdue-head">
+              Past its date — {{ overdueOn(d).length }}
+              {{ overdueOn(d).length === 1 ? "task" : "tasks" }}
+            </p>
+
+            <div v-for="t in overdueOn(d)" :key="t.id" class="at-overdue-row">
+              <span class="at-overdue-body">
+                <span class="at-overdue-title">{{ t.title }}</span>
+                <span class="at-overdue-meta">
+                  due {{ t.deadline }}
+                  <template v-if="t.days_late"> · {{ t.days_late }} day{{ t.days_late === 1 ? "" : "s" }} ago</template>
+                </span>
+              </span>
+
+              <!-- Already accounted for. Asking again is nagging. -->
+              <span v-if="t.open_issues" class="at-tag at-tag-ok">
+                {{ t.open_issues }} raised
+              </span>
+              <button v-else class="link-btn" @click="openRaise(t)">Raise a risk</button>
+            </div>
+          </div>
         </section>
       </div>
 
@@ -1066,6 +1186,82 @@ onMounted(load);
       </aside>
     </div>
 
+    <!-- ── Does that finish it? ─────────────────────────────────────────── -->
+    <div v-if="closing" class="at-modal-backdrop" @click.self="closing = null">
+      <div class="at-modal" role="dialog" aria-modal="true" aria-label="Does that finish it">
+        <div class="at-sheet-head">
+          <h3 class="at-sheet-title">Does that finish it?</h3>
+          <button class="at-close" aria-label="Close" @click="closing = null">×</button>
+        </div>
+
+        <p class="at-hint">
+          <strong>{{ closing.title }}</strong> — you worked on it today. Saying
+          whether it is finished is what keeps steady progress on something big
+          from reading as a fortnight of nothing.
+        </p>
+
+        <!--
+          Two buttons rather than a default. Whichever way a default is set it
+          is wrong: assume closed and half-finished work vanishes from the
+          board, assume ongoing and nothing is ever finished without a second
+          visit.
+        -->
+        <button class="btn-primary btn-block" :disabled="saving"
+                @click="markDone(closing, 'closed')">
+          Finished — close it
+        </button>
+
+        <button class="btn-ghost btn-block" :disabled="saving"
+                @click="markDone(closing, 'ongoing')">
+          Still going — I worked on it
+        </button>
+
+        <p v-if="closing.task?.status === 'awaiting_approval' || closing.task?.is_overdue" class="at-hint">
+          <template v-if="closing.task?.is_overdue">
+            This was due {{ closing.task?.deadline }}. Closing it records today
+            as the day you delivered.
+          </template>
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Raising a risk on work that has slipped ──────────────────────── -->
+    <div v-if="raising" class="at-modal-backdrop" @click.self="raising = null">
+      <div class="at-modal" role="dialog" aria-modal="true" aria-label="Raise a risk">
+        <div class="at-sheet-head">
+          <h3 class="at-sheet-title">What is holding it up?</h3>
+          <button class="at-close" aria-label="Close" @click="raising = null">×</button>
+        </div>
+
+        <p class="at-hint">
+          <strong>{{ raising.title }}</strong> was due {{ raising.deadline }}.
+          Nobody is asking why you are late — they are asking what would help.
+        </p>
+
+        <label class="at-field"><span>Kind</span>
+          <select v-model="risk.kind" class="control">
+            <!-- A risk threatens a date still ahead; an issue is already in the
+                 way. They are acted on differently. -->
+            <option value="risk">Risk — something ahead could stop this</option>
+            <option value="issue">Issue — something is blocking it now</option>
+          </select>
+        </label>
+
+        <label class="at-field"><span>In a line</span>
+          <input v-model="risk.name" class="control"
+                 placeholder="OEM has not confirmed the migration window" /></label>
+
+        <label class="at-field"><span>Anything else</span>
+          <textarea v-model="risk.details" class="control" rows="3"
+                    placeholder="Optional."></textarea></label>
+
+        <button class="btn-primary btn-block"
+                :disabled="saving || !risk.name.trim()" @click="saveRisk">
+          Raise it
+        </button>
+      </div>
+    </div>
+
     <!-- ── Why it did not land ──────────────────────────────────────────── -->
     <div v-if="explaining" class="at-modal-backdrop" @click.self="explaining = null">
       <div class="at-modal" role="dialog" aria-modal="true" aria-label="What happened">
@@ -1314,6 +1510,28 @@ onMounted(load);
 }
 .btn-primary.danger { background: var(--color-danger-text); }
 .btn-block { width: 100%; }
+/* Two choices stacked, so neither reads as the default one. */
+.btn-block + .btn-block { margin-top: var(--space-2); }
+
+/* Small state words beside a commitment. */
+.at-tag {
+  display: inline-block; margin-left: var(--space-2);
+  padding: 1px 8px; border-radius: 999px;
+  font-size: var(--text-xs-size); line-height: 1.5;
+  background: var(--color-surface-sunken); color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+.at-tag-ok   { background: var(--color-success-subtle); color: var(--color-success-text); border-color: transparent; }
+.at-tag-late { background: var(--color-danger-subtle);  color: var(--color-danger-text);  border-color: transparent; }
+
+/* Overdue work, set apart from the day's own list because it is not a
+   promise this person made. */
+.at-overdue { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px dashed var(--color-border); }
+.at-overdue-head { margin: 0 0 var(--space-2); font-size: var(--text-xs-size); font-weight: 600; color: var(--color-danger-text); }
+.at-overdue-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 6px 0; }
+.at-overdue-body { display: flex; flex-direction: column; min-width: 0; }
+.at-overdue-title { font-size: var(--text-sm-size); color: var(--color-text); overflow-wrap: anywhere; }
+.at-overdue-meta { font-size: var(--text-xs-size); color: var(--color-text-muted); }
 .btn-primary:disabled { @apply cursor-not-allowed opacity-50; }
 
 .btn-sm { padding: 5px var(--space-3); font-size: var(--text-xs-size); }
