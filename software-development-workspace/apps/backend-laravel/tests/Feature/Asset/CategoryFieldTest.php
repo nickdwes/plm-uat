@@ -150,4 +150,94 @@ class CategoryFieldTest extends TestCase
             \App\Models\Asset\AssetCategoryField::keyFor('Battery replaced on'),
         );
     }
+
+    // ── Uniqueness ────────────────────────────────────────────────────────
+
+    /**
+     * An IMEI on two records means the same handset was registered twice, and
+     * every count from then on is wrong.
+     */
+    public function test_a_unique_field_refuses_a_duplicate(): void
+    {
+        $this->ups->fields()->create([
+            'organization_id' => $this->org->id, 'key' => 'serial_plate',
+            'label' => 'Serial plate', 'type' => 'text', 'is_unique' => true,
+        ]);
+
+        $service = app(AssetService::class);
+
+        $service->create($this->org->id, [
+            'name' => 'First UPS', 'category' => 'ups', 'asset_tag' => 'AST-U1',
+            'custom_fields' => ['capacity_va' => 3000, 'serial_plate' => 'SP-0001'],
+        ]);
+
+        $this->expectException(ValidationException::class);
+
+        $service->create($this->org->id, [
+            'name' => 'Second UPS', 'category' => 'ups', 'asset_tag' => 'AST-U2',
+            'custom_fields' => ['capacity_va' => 1500, 'serial_plate' => 'SP-0001'],
+        ]);
+    }
+
+    /** Case is not the difference between two serial numbers. */
+    public function test_uniqueness_ignores_case(): void
+    {
+        $this->ups->fields()->create([
+            'organization_id' => $this->org->id, 'key' => 'mac',
+            'label' => 'MAC address', 'type' => 'text', 'is_unique' => true,
+        ]);
+
+        $service = app(AssetService::class);
+        $service->create($this->org->id, [
+            'name' => 'A', 'category' => 'ups', 'asset_tag' => 'AST-M1',
+            'custom_fields' => ['capacity_va' => 1, 'mac' => 'AA:BB:CC:DD:EE:FF'],
+        ]);
+
+        $this->expectException(ValidationException::class);
+        $service->create($this->org->id, [
+            'name' => 'B', 'category' => 'ups', 'asset_tag' => 'AST-M2',
+            'custom_fields' => ['capacity_va' => 1, 'mac' => 'aa:bb:cc:dd:ee:ff'],
+        ]);
+    }
+
+    /** Editing an asset is not a clash with itself. */
+    public function test_an_asset_does_not_clash_with_its_own_value(): void
+    {
+        $this->ups->fields()->create([
+            'organization_id' => $this->org->id, 'key' => 'plate',
+            'label' => 'Plate', 'type' => 'text', 'is_unique' => true,
+        ]);
+
+        $service = app(AssetService::class);
+        $asset = $service->create($this->org->id, [
+            'name' => 'Only UPS', 'category' => 'ups', 'asset_tag' => 'AST-P1',
+            'custom_fields' => ['capacity_va' => 3000, 'plate' => 'P-1'],
+        ]);
+
+        $service->update($asset, ['custom_fields' => ['plate' => 'P-1']]);
+
+        $this->assertSame('P-1', $asset->fresh()->custom_fields['plate']);
+    }
+
+    /** Registering a category links the asset to it, not just the word. */
+    public function test_creating_links_the_asset_to_its_category(): void
+    {
+        $asset = app(AssetService::class)->create($this->org->id, [
+            'name' => 'Linked UPS', 'category' => 'ups', 'asset_tag' => 'AST-L1',
+            'custom_fields' => ['capacity_va' => 700],
+        ]);
+
+        $this->assertSame($this->ups->id, $asset->fresh()->asset_category_id);
+    }
+
+    /** Something typed freehand is allowed, and simply has no link. */
+    public function test_an_unconfigured_category_leaves_the_link_empty(): void
+    {
+        $asset = app(AssetService::class)->create($this->org->id, [
+            'name' => 'Odd thing', 'category' => 'signage screen', 'asset_tag' => 'AST-O1',
+        ]);
+
+        $this->assertNull($asset->fresh()->asset_category_id);
+        $this->assertSame('signage screen', $asset->fresh()->category);
+    }
 }

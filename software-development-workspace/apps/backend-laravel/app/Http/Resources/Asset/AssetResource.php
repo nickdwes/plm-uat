@@ -115,7 +115,15 @@ class AssetResource extends JsonResource
              * see the controller — rather than as a relation, because they are
              * matched on category name and class, not a foreign key.
              */
+            'asset_category_id' => $this->asset_category_id,
             'custom_fields' => (object) ($this->custom_fields ?? []),
+
+            'photos' => $this->whenLoaded('photos', fn () => $this->photos->map(fn ($p) => [
+                'id' => $p->id, 'caption' => $p->caption,
+                'is_primary' => $p->is_primary, 'at_handover' => $p->at_handover,
+                'original_name' => $p->original_name,
+                'uploaded_at' => $p->created_at?->toDateString(),
+            ])->values()),
 
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),

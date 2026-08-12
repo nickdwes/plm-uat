@@ -3,6 +3,7 @@
 namespace App\Services\Asset;
 
 use App\Models\Asset\Asset;
+use App\Models\Asset\AssetCategory;
 use App\Models\Employee;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -73,6 +74,8 @@ class AssetService
 
         // Checked against the questions this category actually asks, and
         // stripped of anything it does not.
+        $data = $this->linkCategory($data, $organizationId);
+
         $data['custom_fields'] = app(CustomFieldValidator::class)->check(
             $data['category'] ?? null,
             $data['asset_class'] ?? 'physical',
@@ -106,12 +109,18 @@ class AssetService
          * and a form that only renders the current category's questions would
          * do exactly that on an asset that has answers from a previous one.
          */
+        if (array_key_exists('category', $data)) {
+            $data = $this->linkCategory($data, $asset->organization_id);
+        }
+
         if (array_key_exists('custom_fields', $data)) {
             $data['custom_fields'] = app(CustomFieldValidator::class)->check(
                 $data['category'] ?? $asset->category,
                 $data['asset_class'] ?? $asset->asset_class,
                 $data['custom_fields'] ?? [],
                 $asset->custom_fields ?? [],
+                // Its own values are not a clash with itself.
+                $asset->getKey(),
             );
         }
 
@@ -157,5 +166,34 @@ class AssetService
 
             return $asset->fresh(['department']);
         });
+    }
+
+    /**
+     * Resolve the category name to its configured record.
+     *
+     * The link is the truth and the string is a copy kept beside it, because
+     * every list, filter, report and export reads the word — and routing all of
+     * them through a join to display it would be a poor trade for correctness
+     * nobody sees.
+     *
+     * A name that matches nothing configured leaves the link null rather than
+     * being refused. Free text under "other" is a legitimate way to register
+     * something the organisation has not got round to configuring.
+     */
+    private function linkCategory(array $data, int $organizationId): array
+    {
+        $name = $data['category'] ?? null;
+
+        if ($name === null) {
+            return $data;
+        }
+
+        $data['asset_category_id'] = AssetCategory::query()
+            ->where('organization_id', $organizationId)
+            ->where('asset_class', $data['asset_class'] ?? 'physical')
+            ->whereRaw('lower(name) = lower(?)', [$name])
+            ->value('id');
+
+        return $data;
     }
 }

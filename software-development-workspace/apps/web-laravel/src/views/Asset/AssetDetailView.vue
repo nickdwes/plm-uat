@@ -9,7 +9,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
-import { currentOrgSlug } from "../../stores/auth";
+import { currentOrgSlug, getToken } from "../../stores/auth";
 import type { Asset } from "../../lib/types";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 
@@ -145,6 +145,76 @@ async function acceptAsset() {
   } finally { busy.value = false; }
 }
 
+/**
+ * Photographs of the asset.
+ *
+ * The condition something was in when it was handed over is what gets argued
+ * about when it comes back. Images are fetched as blobs because they live on
+ * the encrypted disk behind an authorised route — a photograph of a rack shows
+ * the serial number of everything in it, so there is no public URL to point an
+ * <img> at.
+ */
+const photoSrc = ref<Record<number, string>>({});
+const photoBusy = ref(false);
+const photoError = ref("");
+const photoInput = ref<HTMLInputElement | null>(null);
+const atHandover = ref(false);
+
+async function loadPhotoImages() {
+  const list: any[] = (asset.value as any)?.photos ?? [];
+  const base = (import.meta.env.VITE_LARAVEL_API_URL ?? "").replace(/\/$/, "");
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const slug = org();
+  if (slug) headers["X-Organization"] = slug;
+
+  for (const p of list) {
+    if (photoSrc.value[p.id]) continue;
+    try {
+      const res = await fetch(`${base}/api/v1/assets/${props.id}/photos/${p.id}`, { headers });
+      if (res.ok) photoSrc.value[p.id] = URL.createObjectURL(await res.blob());
+    } catch { /* the tile shows its filename instead */ }
+  }
+}
+
+async function uploadPhoto(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  photoError.value = "";
+  if (file.size > 10 * 1024 * 1024) {
+    photoError.value = "That image is over 10 MB.";
+    input.value = "";
+    return;
+  }
+
+  photoBusy.value = true;
+  try {
+    const form = new FormData();
+    form.append("photo", file);
+    // Marked at the point custody changes, because a picture from today does
+    // not settle a dispute about last year.
+    if (atHandover.value) form.append("at_handover", "1");
+    await api("POST", `/api/v1/assets/${props.id}/photos`, { org: org(), formData: form });
+    await load();
+    await loadPhotoImages();
+  } catch (err) {
+    photoError.value = err instanceof ApiError ? (err.firstError ?? err.message) : "Could not upload that.";
+  } finally {
+    photoBusy.value = false;
+    input.value = "";
+  }
+}
+
+async function removePhoto(id: number) {
+  if (!confirm("Remove this photograph?")) return;
+  await api("DELETE", `/api/v1/assets/${props.id}/photos/${id}`, { org: org() });
+  delete photoSrc.value[id];
+  await load();
+}
+
 const showSeat   = ref(false);
 const seatForm   = ref<{ employee_id: number | null; note: string }>({ employee_id: null, note: "" });
 const seatError  = ref("");
@@ -216,6 +286,7 @@ async function load() {
     );
     asset.value = res.data;
     customFieldDefs.value = res.custom_field_defs ?? [];
+    void loadPhotoImages();
   } catch (e) {
     error.value = e instanceof ApiError && e.status === 404
       ? "That asset does not exist in this organisation."
@@ -483,6 +554,45 @@ onMounted(load);
           </dl>
         </section>
       </div>
+
+      <!-- ── Photographs ────────────────────────────────────────────────── -->
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Photographs</h2>
+          <div class="photo-actions">
+            <label class="check-inline">
+              <input v-model="atHandover" type="checkbox" />
+              <span>Taken at handover</span>
+            </label>
+            <input ref="photoInput" type="file" class="hidden-file"
+                   accept="image/jpeg,image/png,image/webp,image/heic" @change="uploadPhoto" />
+            <button class="btn-secondary" :disabled="photoBusy" @click="photoInput?.click()">
+              {{ photoBusy ? "Uploading…" : "Add photo" }}
+            </button>
+          </div>
+        </div>
+
+        <p v-if="photoError" class="alert" role="alert">{{ photoError }}</p>
+
+        <p v-if="!(asset as any).photos?.length" class="pad muted">
+          No photographs. One taken at handover is what settles an argument
+          about condition when the asset comes back.
+        </p>
+
+        <div v-else class="photo-grid">
+          <figure v-for="p in (asset as any).photos" :key="p.id" class="photo">
+            <img v-if="photoSrc[p.id]" :src="photoSrc[p.id]" :alt="p.caption ?? p.original_name" />
+            <span v-else class="photo-loading">{{ p.original_name }}</span>
+            <figcaption>
+              <span v-if="p.is_primary" class="tag">main</span>
+              <!-- The distinction that matters later: at handover, or since. -->
+              <span v-if="p.at_handover" class="tag tag-hand">at handover</span>
+              <span class="photo-date">{{ p.uploaded_at }}</span>
+              <button class="link-danger" @click="removePhoto(p.id)">Remove</button>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
 
       <!-- What this category asks for, and what was answered. -->
       <section v-if="capturedFields.length" class="panel">
@@ -884,4 +994,21 @@ code {
                 border-radius: 12px; padding: 14px 18px; margin-top: 16px; }
 .accept-strip p { margin: 4px 0 0; font-size: .82rem; color: var(--color-text-muted); }
 .accept-check { margin-bottom: 14px; }
+
+/* ── Photographs ───────────────────────────────────────────────────────── */
+.photo-actions { display: flex; align-items: center; gap: 14px; }
+.hidden-file { display: none; }
+.photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+              gap: 14px; padding: 4px 16px 16px; }
+.photo { margin: 0; border: 1px solid var(--color-border); border-radius: 10px; overflow: hidden;
+         background: var(--color-surface-sunken); }
+.photo img { display: block; width: 100%; height: 9rem; object-fit: cover; }
+.photo-loading { display: flex; align-items: center; justify-content: center; height: 9rem;
+                 font-size: .72rem; color: var(--color-text-muted); padding: 8px; text-align: center; }
+.photo figcaption { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+                    padding: 8px 10px; font-size: .72rem; color: var(--color-text-muted); }
+.tag { padding: 1px 8px; border-radius: 999px; background: var(--color-surface);
+       border: 1px solid var(--color-border); }
+.tag-hand { background: var(--color-brand-subtle); color: var(--color-brand-on-surface); border-color: transparent; }
+.photo-date { margin-left: auto; }
 </style>

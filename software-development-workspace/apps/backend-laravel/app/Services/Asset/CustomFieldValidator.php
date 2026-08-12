@@ -2,6 +2,7 @@
 
 namespace App\Services\Asset;
 
+use App\Models\Asset\Asset;
 use App\Models\Asset\AssetCategory;
 use App\Models\Asset\AssetCategoryField;
 use Illuminate\Support\Facades\Validator;
@@ -34,10 +35,12 @@ class CustomFieldValidator
         ?string $assetClass,
         array $answers,
         array $existing = [],
+        ?int $ignoreAssetId = null,
     ): array {
         if ($categoryName === null) {
             return [];
-        }
+        
+}
 
         $category = AssetCategory::where('name', $categoryName)
             ->where('asset_class', $assetClass ?? 'physical')
@@ -75,6 +78,8 @@ class CustomFieldValidator
             throw new ValidationException($validator);
         }
 
+        $this->assertUnique($category, $fields, $merged, $ignoreAssetId);
+
         // Only what was asked for. An answer to a question that no longer
         // exists is kept on assets that already have it, but nothing new is
         // written under a key the category does not define.
@@ -82,5 +87,59 @@ class CustomFieldValidator
             ->only($fields->pluck('key')->all())
             ->filter(fn ($v) => $v !== null && $v !== '')
             ->all();
+    }
+
+    /**
+     * No two assets share a value that is supposed to identify one thing.
+     *
+     * An IMEI, a VIN, a MAC address or a hostname on two records means the same
+     * item has been registered twice, and every count from then on is wrong.
+     *
+     * Scoped to the organisation and the category: two tenants may hold the
+     * same asset tag, and a serial number that collides between a laptop and a
+     * monitor is a coincidence rather than a duplicate.
+     *
+     * Checked here rather than by a database constraint. A unique index over a
+     * JSON key has to name that key, and these keys are configuration — the
+     * alternative is the application running DDL off the back of a form
+     * somebody filled in. At this size the trade is not worth it, and the error
+     * belongs where it can say which asset already has the value.
+     */
+    private function assertUnique($category, $fields, array $merged, ?int $ignoreAssetId): void
+    {
+        $unique = $fields->where('is_unique', true);
+
+        if ($unique->isEmpty()) {
+            return;
+        }
+
+        $errors = [];
+
+        foreach ($unique as $field) {
+            $value = $merged[$field->key] ?? null;
+
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $clash = Asset::query()
+                ->where('asset_class', $category->asset_class)
+                ->where('category', $category->name)
+                ->when($ignoreAssetId, fn ($q) => $q->whereKeyNot($ignoreAssetId))
+                // Compared as text and case-insensitively: a MAC typed in
+                // capitals is the same MAC.
+                ->whereRaw('lower(custom_fields->>?) = lower(?)', [$field->key, (string) $value])
+                ->first();
+
+            if ($clash) {
+                $errors["custom_fields.{$field->key}"] = [
+                    "{$field->label} {$value} is already recorded against {$clash->name} ({$clash->asset_tag}).",
+                ];
+            }
+        }
+
+        if ($errors) {
+            throw ValidationException::withMessages($errors);
+        }
     }
 }

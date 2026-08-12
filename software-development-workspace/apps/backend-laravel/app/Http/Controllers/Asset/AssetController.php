@@ -12,6 +12,7 @@ use App\Models\Asset\AssetRequest;
 use App\Models\Employee;
 use App\Services\Asset\AssetRequestChain;
 use App\Services\Asset\AssetService;
+use App\Support\Storage\DocumentVault;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -63,7 +64,7 @@ class AssetController extends Controller
          */
         return (new AssetResource($asset->load([
             'holder', 'department', 'events.employee', 'events.vendor',
-            'seats.employee',
+            'seats.employee', 'photos',
         ])))->additional([
             'custom_field_defs' => $asset->categoryFields()->get()->map(fn ($f) => [
                 'key' => $f->key, 'label' => $f->label, 'type' => $f->type,
@@ -94,6 +95,105 @@ class AssetController extends Controller
         $accepted = app(AssetRequestChain::class)->accept($asset, $employeeId, $data['note'] ?? null);
 
         return new AssetResource($accepted->load(['holder', 'department']));
+    }
+
+    // ── Photographs ───────────────────────────────────────────────────────
+
+    /**
+     * Add a photograph of the asset.
+     *
+     * Through the vault on the asset documents disk. A photograph of a server
+     * rack shows the serial numbers of everything in it, and a picture of a
+     * laptop shows an asset tag — neither belongs on a URL that needs no
+     * authentication.
+     */
+    public function storePhoto(Request $request, Asset $asset): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $data = $request->validate([
+            'photo'       => ['required', 'file', 'mimes:jpg,jpeg,png,webp,heic', 'max:10240'],
+            'caption'     => ['nullable', 'string', 'max:255'],
+            // Taken at the moment custody changed, as opposed to today. Only
+            // the first kind settles an argument about how it was handed over.
+            'at_handover' => ['nullable', 'boolean'],
+            'is_primary'  => ['nullable', 'boolean'],
+        ]);
+
+        $file = $request->file('photo');
+
+        $path = DocumentVault::store(
+            $file,
+            'asset_documents',
+            "{$asset->organization_id}/{$asset->id}/photos",
+        );
+
+        $primary = $request->boolean('is_primary')
+            // The first photograph becomes the one shown elsewhere, because a
+            // register with pictures and no thumbnail helps nobody.
+            || ! $asset->photos()->where('is_primary', true)->exists();
+
+        if ($primary) {
+            $asset->photos()->update(['is_primary' => false]);
+        }
+
+        $photo = $asset->photos()->create([
+            'organization_id' => $asset->organization_id,
+            'storage_path'    => $path,
+            'original_name'   => $file->getClientOriginalName(),
+            'mime_type'       => $file->getMimeType(),
+            'size_bytes'      => $file->getSize(),
+            'caption'         => $data['caption'] ?? null,
+            'at_handover'     => $request->boolean('at_handover'),
+            'is_primary'      => $primary,
+            'uploaded_by'     => $request->user()->id,
+        ]);
+
+        return response()->json(['data' => $this->photoPayload($asset->fresh('photos'))]);
+    }
+
+    /** The image itself, decrypted, for somebody allowed to see the asset. */
+    public function showPhoto(Asset $asset, int $photo)
+    {
+        $this->authorize('view', $asset);
+
+        $record = $asset->photos()->findOrFail($photo);
+
+        return DocumentVault::download(
+            'asset_documents',
+            $record->storage_path,
+            $record->original_name,
+            $record->mime_type,
+        );
+    }
+
+    public function destroyPhoto(Asset $asset, int $photo): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $record = $asset->photos()->findOrFail($photo);
+        DocumentVault::delete('asset_documents', $record->storage_path);
+        $wasPrimary = $record->is_primary;
+        $record->delete();
+
+        // Something has to be the one shown, so the next one becomes it.
+        if ($wasPrimary) {
+            $asset->photos()->first()?->update(['is_primary' => true]);
+        }
+
+        return response()->json(['data' => $this->photoPayload($asset->fresh('photos'))]);
+    }
+
+    private function photoPayload(Asset $asset): array
+    {
+        return $asset->photos->map(fn ($p) => [
+            'id'          => $p->id,
+            'caption'     => $p->caption,
+            'is_primary'  => $p->is_primary,
+            'at_handover' => $p->at_handover,
+            'original_name' => $p->original_name,
+            'uploaded_at' => $p->created_at?->toDateString(),
+        ])->values()->all();
     }
 
     /**

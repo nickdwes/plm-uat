@@ -699,6 +699,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Only the recipient can do this, which is why it is not an update.
         Route::post('/{asset}/accept',             [AssetController::class, 'accept']);
 
+        /*
+         * Photographs. The condition something was in at handover is what gets
+         * argued about when it comes back.
+         */
+        Route::post('/{asset}/photos',                [AssetController::class, 'storePhoto']);
+        Route::get('/{asset}/photos/{photo}',         [AssetController::class, 'showPhoto']);
+        Route::delete('/{asset}/photos/{photo}',      [AssetController::class, 'destroyPhoto']);
+
         Route::post('/{asset}/seats',              [AssetController::class, 'allocateSeat']);
         Route::delete('/{asset}/seats/{allocation}', [AssetController::class, 'releaseSeat']);
 

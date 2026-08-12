@@ -63,7 +63,7 @@ class Asset extends Model
 
     protected $fillable = [
         'organization_id', 'asset_class', 'parent_asset_id',
-        'name', 'asset_tag', 'category', 'brand', 'model',
+        'name', 'asset_tag', 'category', 'asset_category_id', 'brand', 'model',
         'serial_number', 'status', 'lifecycle_stage', 'condition',
         'procured_date', 'in_stock_date', 'next_maintenance',
         'assigned_to', 'assigned_date', 'department_id', 'location',
@@ -148,11 +148,31 @@ class Asset extends Model
      */
     public function categoryFields()
     {
-        return AssetCategoryField::query()
-            ->whereHas('category', fn ($q) => $q
+        $q = AssetCategoryField::query()->orderBy('sort_order')->orderBy('id');
+
+        /*
+         * The link where there is one, the name where there is not.
+         *
+         * Anything registered before categories were configurable — and
+         * anything typed freehand under "other" — has no link, and matching on
+         * the name keeps its fields working rather than making them vanish.
+         */
+        return $this->asset_category_id
+            ? $q->where('asset_category_id', $this->asset_category_id)
+            : $q->whereHas('category', fn ($c) => $c
                 ->where('name', $this->category)
-                ->where('asset_class', $this->asset_class))
-            ->orderBy('sort_order')->orderBy('id');
+                ->where('asset_class', $this->asset_class));
+    }
+
+    public function photos()
+    {
+        return $this->hasMany(AssetPhoto::class)->orderByDesc('is_primary')->orderBy('id');
+    }
+
+    /** The configured category, where the asset is filed under a real one. */
+    public function assetCategory(): BelongsTo
+    {
+        return $this->belongsTo(AssetCategory::class, 'asset_category_id');
     }
 
     /** Who hears when this comes up for renewal. */
