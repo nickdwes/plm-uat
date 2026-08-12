@@ -6,6 +6,7 @@ use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Organization;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -28,14 +29,40 @@ class Asset extends Model
         self::STATUS_RETIRED,
     ];
 
+    /**
+     * What kind of thing this is, as opposed to `category`, which is the label
+     * within a kind — "Laptop", "Monitor", "Design tool".
+     *
+     * A subscription is not a laptop with the hardware fields left blank. It is
+     * answerable to different questions: a laptop is asked where it is and who
+     * has it, a subscription is asked when it renews and how many seats are
+     * going unused. Mixing them in one report gets both wrong.
+     */
+    public const CLASS_PHYSICAL     = 'physical';
+    public const CLASS_SOFTWARE     = 'software';
+    public const CLASS_SUBSCRIPTION = 'subscription';
+
+    public const CLASSES = [
+        self::CLASS_PHYSICAL,
+        self::CLASS_SOFTWARE,
+        self::CLASS_SUBSCRIPTION,
+    ];
+
+    /** The classes bought in quantity and consumed by people. */
+    public const SEATED_CLASSES = [self::CLASS_SOFTWARE, self::CLASS_SUBSCRIPTION];
+
     protected $fillable = [
-        'organization_id', 'name', 'asset_tag', 'category', 'brand', 'model',
+        'organization_id', 'asset_class', 'parent_asset_id',
+        'name', 'asset_tag', 'category', 'brand', 'model',
         'serial_number', 'status', 'lifecycle_stage', 'condition',
         'procured_date', 'in_stock_date', 'next_maintenance',
         'assigned_to', 'assigned_date', 'department_id', 'location',
         'handover_required', 'handover_signed_at',
         'purchase_date', 'purchase_value', 'vendor', 'invoice_number',
         'warranty_period', 'warranty_expiry_date',
+        'expires_on', 'auto_renews', 'renewal_notice_days', 'renewal_cost',
+        'seats_total', 'seats_used',
+        'vendor_contact', 'support_contact', 'sla',
         'processor', 'ram', 'storage', 'operating_system',
         'notes',
     ];
@@ -50,6 +77,9 @@ class Asset extends Model
         'handover_signed_at'   => 'datetime',
         'handover_required'    => 'boolean',
         'purchase_value'       => 'decimal:2',
+        'expires_on'           => 'date',
+        'auto_renews'          => 'boolean',
+        'renewal_cost'         => 'decimal:2',
     ];
 
     /** See the note on AssetRequest — a column default does not reach the
@@ -57,6 +87,7 @@ class Asset extends Model
     protected $attributes = [
         'status'            => self::STATUS_AVAILABLE,
         'handover_required' => false,
+        'asset_class'       => self::CLASS_PHYSICAL,
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────
@@ -75,6 +106,80 @@ class Asset extends Model
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);
+    }
+
+    /** Where it has been. Oldest first, because a timeline reads forwards. */
+    public function events(): HasMany
+    {
+        return $this->hasMany(AssetEvent::class)->orderBy('occurred_on')->orderBy('id');
+    }
+
+    /** A dock belongs to a laptop; a seat belongs to a subscription. */
+    public function parent(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'parent_asset_id');
+    }
+
+    public function children(): HasMany
+    {
+        return $this->hasMany(self::class, 'parent_asset_id');
+    }
+
+    // ── Derived ───────────────────────────────────────────────────────────────
+
+    /** Bought in quantity and consumed by people. */
+    public function isSeated(): bool
+    {
+        return in_array($this->asset_class, self::SEATED_CLASSES, true);
+    }
+
+    /**
+     * Seats paid for and not handed out.
+     *
+     * Null when the question does not apply, which is not the same as nought —
+     * a laptop with no spare seats is a laptop, not a fully-subscribed licence.
+     */
+    public function seatsSpare(): ?int
+    {
+        if (! $this->isSeated() || $this->seats_total === null) {
+            return null;
+        }
+
+        return max(0, $this->seats_total - (int) $this->seats_used);
+    }
+
+    /**
+     * Days until this stops working — negative once it has.
+     *
+     * Derived on read rather than stored, because a stored "days left" is wrong
+     * from the moment it is written and needs a nightly job to stay honest.
+     */
+    public function daysToExpiry(?string $asOf = null): ?int
+    {
+        if ($this->expires_on === null) {
+            return null;
+        }
+
+        $today = \Carbon\CarbonImmutable::parse($asOf ?: now()->toDateString());
+
+        return (int) $today->diffInDays($this->expires_on->startOfDay(), false);
+    }
+
+    /**
+     * Coming up for renewal.
+     *
+     * `renewal_notice_days` is how much warning this particular thing needs — a
+     * domain wants a fortnight, an enterprise agreement wants a quarter — and
+     * falls back to thirty days rather than to never.
+     */
+    public function scopeExpiringSoon(Builder $q, ?int $withinDays = null): Builder
+    {
+        return $q->whereNotNull('expires_on')
+            ->where('status', '!=', self::STATUS_RETIRED)
+            ->whereRaw(
+                'expires_on <= CURRENT_DATE + make_interval(days => COALESCE(?, renewal_notice_days, 30))',
+                [$withinDays],
+            );
     }
 
     public function issues(): HasMany
