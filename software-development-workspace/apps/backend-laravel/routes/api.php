@@ -50,6 +50,7 @@ use App\Http\Controllers\Task\TaskBoardController;
 use App\Http\Controllers\Task\TaskController;
 use App\Http\Controllers\Task\TaskRecurrenceController;
 use App\Http\Controllers\Asset\AssetController;
+use App\Http\Controllers\Asset\AssetRegisterController;
 use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
 use App\Http\Controllers\Travel\TravelReconciliationController;
@@ -655,6 +656,21 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
     // ── Assets ────────────────────────────────────────────────────────────────
     Route::prefix('assets')->group(function () {
+        /*
+         * Before /{asset}, or the router reads "summary" as an id — the same
+         * trap the preboarding routes carry a note about.
+         */
+        Route::get('/summary',   [AssetController::class, 'summary']);
+
+        /*
+         * The tab lists. `asset_requests` and `asset_issues` have had models,
+         * messages and escalation for weeks with no route to reach them — a
+         * request could be written and never seen by anybody.
+         */
+        Route::get('/requests',  [AssetRegisterController::class, 'requests']);
+        Route::get('/issues',    [AssetRegisterController::class, 'issues']);
+        Route::get('/disposals', [AssetRegisterController::class, 'disposals']);
+
         Route::get('/',            [AssetController::class, 'index']);
         Route::post('/',           [AssetController::class, 'store']);
         Route::get('/{asset}',     [AssetController::class, 'show']);

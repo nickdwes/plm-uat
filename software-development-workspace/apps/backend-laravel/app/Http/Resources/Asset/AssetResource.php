@@ -65,6 +65,32 @@ class AssetResource extends JsonResource
             'warranty_has_expired'  => $this->warrantyHasExpired(),
             'maintenance_is_due'    => $this->maintenanceIsDue(),
 
+            // What kind of thing this is, and the questions that only apply to
+            // some kinds. Null seats on a laptop is not nought seats.
+            'asset_class'    => $this->asset_class,
+            'expires_on'     => $this->expires_on?->toDateString(),
+            'days_to_expiry' => $this->daysToExpiry(),
+            'auto_renews'    => (bool) $this->auto_renews,
+            'seats_total'    => $this->seats_total,
+            'seats_used'     => $this->seats_used,
+            'seats_spare'    => $this->seatsSpare(),
+
+            /*
+             * The lifecycle timeline.
+             *
+             * Only when loaded — the list endpoint returns hundreds of assets
+             * and none of them are drawing a timeline.
+             */
+            'events' => $this->whenLoaded('events', fn () => $this->events->map(fn ($e) => [
+                'id'          => $e->id,
+                'event'       => $e->event,
+                'occurred_on' => $e->occurred_on?->toDateString(),
+                'employee'    => $e->employee?->full_name,
+                'location'    => $e->location,
+                'vendor'      => $e->vendor?->name,
+                'note'        => $e->note,
+            ])),
+
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

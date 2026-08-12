@@ -95,8 +95,88 @@ const needsAttention = computed(
   () => assets.value.filter(a => a.warranty_has_expired || a.maintenance_is_due).length
 );
 
-watch(currentOrgSlug, () => { page.value = 1; void load(); });
-onMounted(load);
+// ── The tabs ────────────────────────────────────────────────────────────────
+
+/**
+ * Seven views over one register.
+ *
+ * Tabs rather than seven routes: they are the same records asked different
+ * questions, and a person moving between "what do we own" and "who has what"
+ * is not navigating anywhere. Each loads on first open and not before —
+ * opening Assets should not fetch six lists nobody looked at.
+ */
+type Tab = "overview" | "mine" | "requests" | "employee" | "inventory" | "maintenance" | "disposals";
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "overview",    label: "Overview" },
+  { key: "mine",        label: "My Assets" },
+  { key: "requests",    label: "Assets Requests" },
+  { key: "employee",    label: "Employee Assets" },
+  { key: "inventory",   label: "Assets Inventory" },
+  { key: "maintenance", label: "Maintenance" },
+  { key: "disposals",   label: "Disposals" },
+];
+
+const tab = ref<Tab>("overview");
+const loaded = ref<Set<Tab>>(new Set());
+
+interface Summary {
+  totals: { assigned: number; available: number; pending_requests: number; under_repair: number };
+  details: { licences_expiring: number; due_for_return: number; maintenance_due: number; purchase_value: number };
+  by_category: { label: string; count: number }[];
+  by_department: { label: string; count: number }[];
+  by_status: { label: string; count: number }[];
+}
+
+const summary   = ref<Summary | null>(null);
+const requests  = ref<any[]>([]);
+const disposals = ref<any[]>([]);
+const mine      = ref<Asset[]>([]);
+const held      = ref<Asset[]>([]);
+
+async function openTab(next: Tab) {
+  tab.value = next;
+  if (loaded.value.has(next)) return;
+
+  try {
+    if (next === "overview") {
+      summary.value = await api<Summary>("GET", "/api/v1/assets/summary", { org: org() });
+    } else if (next === "requests") {
+      requests.value = (await api<{ data: any }>("GET", "/api/v1/assets/requests", { org: org() })).data?.data ?? [];
+    } else if (next === "disposals") {
+      disposals.value = (await api<{ data: any }>("GET", "/api/v1/assets/disposals", { org: org() })).data?.data ?? [];
+    } else if (next === "mine") {
+      // The register filtered to the person asking, rather than its own
+      // endpoint — one query with one set of rules behind it.
+      mine.value = (await api<{ data: Asset[] }>("GET", "/api/v1/assets", {
+        org: org(), params: { mine: 1, per_page: 100 },
+      })).data ?? [];
+    } else if (next === "employee") {
+      held.value = (await api<{ data: Asset[] }>("GET", "/api/v1/assets", {
+        org: org(), params: { assigned: "true", per_page: 100 },
+      })).data ?? [];
+    }
+    loaded.value.add(next);
+  } catch (e) {
+    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not load that tab.";
+  }
+}
+
+/** KES, grouped, no decimals — an asset register is not a ledger. */
+const money = (n: number) =>
+  "KES " + new Intl.NumberFormat("en-KE", { maximumFractionDigits: 0 }).format(n ?? 0);
+
+/** Widest slice in a set, so bars are comparable inside their own chart. */
+const peak = (rows: { count: number }[]) => Math.max(1, ...rows.map(r => r.count));
+
+watch(currentOrgSlug, () => {
+  page.value = 1;
+  loaded.value = new Set();
+  void load();
+  void openTab(tab.value);
+});
+
+onMounted(() => { void load(); void openTab("overview"); });
 </script>
 
 <template>
@@ -111,6 +191,160 @@ onMounted(load);
 
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
 
+    <!-- ── Tabs ─────────────────────────────────────────────────────────── -->
+    <nav class="tabs" role="tablist">
+      <button v-for="t in TABS" :key="t.key" role="tab"
+              :class="['tab', { on: tab === t.key }]"
+              :aria-selected="tab === t.key"
+              @click="openTab(t.key)">{{ t.label }}</button>
+    </nav>
+
+    <!-- ── Overview ─────────────────────────────────────────────────────── -->
+    <section v-if="tab === 'overview'" class="pane">
+      <p v-if="!summary" class="quiet">Loading…</p>
+
+      <template v-else>
+        <div class="cards">
+          <article class="card">
+            <h2 class="card-title">Total Assets</h2>
+            <div class="stats">
+              <div class="stat"><span class="stat-n">{{ summary.totals.assigned }}</span><span class="stat-l">Assigned</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.totals.available }}</span><span class="stat-l">Available</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.totals.pending_requests }}</span><span class="stat-l">Pending requests</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.totals.under_repair }}</span><span class="stat-l">Under repair</span></div>
+            </div>
+          </article>
+
+          <article class="card">
+            <h2 class="card-title">Asset Details</h2>
+            <div class="stats">
+              <!-- Answerable only since subscriptions became a class of their
+                   own; a hardware-shaped register could not produce it. -->
+              <div class="stat"><span class="stat-n">{{ summary.details.licences_expiring }}</span><span class="stat-l">Licences expiring</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.details.due_for_return }}</span><span class="stat-l">Due for return</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.details.maintenance_due }}</span><span class="stat-l">Maintenance due</span></div>
+              <div class="stat">
+                <span class="stat-n">{{ money(summary.details.purchase_value) }}</span>
+                <!-- Said plainly: there is no depreciation in this system, and
+                     a purchase total presented as current worth is a number
+                     finance quotes back at you a year later. -->
+                <span class="stat-l">Purchase value</span>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="charts">
+          <article class="card">
+            <h2 class="card-title">Assets by Category</h2>
+            <p v-if="!summary.by_category.length" class="quiet">Nothing on the register yet.</p>
+            <ul v-else class="bars">
+              <li v-for="r in summary.by_category" :key="r.label" class="bar-row">
+                <span class="bar-label">{{ r.label }}</span>
+                <span class="bar-track"><span class="bar-fill" :style="{ width: (100 * r.count / peak(summary.by_category)) + '%' }" /></span>
+                <span class="bar-n">{{ r.count }}</span>
+              </li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <h2 class="card-title">Allocation by Department</h2>
+            <p v-if="!summary.by_department.length" class="quiet">Nothing allocated yet.</p>
+            <ul v-else class="bars">
+              <li v-for="r in summary.by_department" :key="r.label" class="bar-row">
+                <span class="bar-label">{{ r.label }}</span>
+                <span class="bar-track"><span class="bar-fill" :style="{ width: (100 * r.count / peak(summary.by_department)) + '%' }" /></span>
+                <span class="bar-n">{{ r.count }}</span>
+              </li>
+            </ul>
+          </article>
+        </div>
+      </template>
+    </section>
+
+    <!-- ── My assets / Employee assets ──────────────────────────────────── -->
+    <section v-else-if="tab === 'mine' || tab === 'employee'" class="pane">
+      <p v-if="!(tab === 'mine' ? mine : held).length" class="quiet">
+        {{ tab === 'mine' ? 'Nothing is assigned to you.' : 'Nothing is assigned to anybody yet.' }}
+      </p>
+      <table v-else class="grid">
+        <thead>
+          <tr>
+            <th>Asset</th><th>Serial</th><th v-if="tab === 'employee'">Holder</th>
+            <th>Status</th><th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="a in (tab === 'mine' ? mine : held)" :key="a.id">
+            <td>{{ a.name }}</td>
+            <td class="mono">{{ a.serial_number ?? '—' }}</td>
+            <td v-if="tab === 'employee'">{{ (a as any).holder?.full_name ?? '—' }}</td>
+            <td><span class="pill">{{ a.status }}</span></td>
+            <td><router-link :to="{ name: 'asset-detail', params: { id: a.id } }" class="link">View</router-link></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── Requests ─────────────────────────────────────────────────────── -->
+    <section v-else-if="tab === 'requests'" class="pane">
+      <p v-if="!requests.length" class="quiet">No requests have been raised.</p>
+      <table v-else class="grid">
+        <thead>
+          <tr><th>Request</th><th>Item</th><th>Employee</th><th>Urgency</th><th>Submitted</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in requests" :key="r.id">
+            <td class="mono">{{ r.reference }}</td>
+            <td>{{ r.item }}</td>
+            <td>{{ r.employee ?? '—' }}</td>
+            <td>{{ r.urgency ?? '—' }}</td>
+            <td>{{ r.submitted_on }}</td>
+            <td><span class="pill">{{ r.status }}</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── Disposals ────────────────────────────────────────────────────── -->
+    <section v-else-if="tab === 'disposals'" class="pane">
+      <p v-if="!disposals.length" class="quiet">Nothing has been disposed of.</p>
+      <table v-else class="grid">
+        <thead>
+          <tr><th>Asset</th><th>Serial</th><th>Category</th><th>Purchased</th><th>Disposed</th><th>Method</th><th>Certificate</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="d in disposals" :key="d.id">
+            <td>{{ d.asset }}</td>
+            <td class="mono">{{ d.serial_number ?? '—' }}</td>
+            <td>{{ d.category }}</td>
+            <td>{{ d.purchase_date ?? '—' }}</td>
+            <td>{{ d.disposed_on }}</td>
+            <td>{{ d.method }}</td>
+            <td>
+              <!-- E-waste with no certificate on file is the row an auditor
+                   asks about, so it is flagged rather than left blank. -->
+              <span v-if="d.requires_safe_disposal && !d.certificate_received_on" class="pill pill-bad">
+                needs certificate
+              </span>
+              <span v-else-if="d.certificate_received_on">{{ d.certificate_received_on }}</span>
+              <span v-else class="quiet">n/a</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── Maintenance ──────────────────────────────────────────────────── -->
+    <section v-else-if="tab === 'maintenance'" class="pane">
+      <p class="quiet">
+        Maintenance records are not built yet. Assets due a service show on the
+        Overview and can be filtered in the inventory.
+      </p>
+    </section>
+
+    <!-- ── Inventory: the register itself ───────────────────────────────── -->
+    <template v-else>
     <!-- Filters -->
     <div class="filters">
       <input
@@ -188,6 +422,8 @@ onMounted(load);
         <button class="btn-secondary" :disabled="page >= meta.last_page" @click="page++; load()">Next</button>
       </div>
     </div>
+
+    </template>
 
     <!-- Create -->
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false">
@@ -398,4 +634,51 @@ code {
 .row { @apply grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 
 .dialog-actions { @apply flex justify-end; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* ── Tabs ──────────────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--color-border); margin: 20px 0 0; overflow-x: auto; }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px;
+  padding: 10px 18px; font: inherit; font-size: 0.88rem; font-weight: 500;
+  color: var(--color-text-muted); cursor: pointer; white-space: nowrap;
+}
+.tab:hover { color: var(--color-text); }
+.tab.on { color: var(--color-brand-base); border-bottom-color: var(--color-brand-base); font-weight: 600; }
+
+.pane { margin-top: 20px; }
+.quiet { color: var(--color-text-muted); font-size: 0.88rem; }
+
+/* ── Overview ──────────────────────────────────────────────────────────── */
+.cards, .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.charts { margin-top: 16px; }
+@media (max-width: 60rem) { .cards, .charts { grid-template-columns: 1fr; } }
+
+.card { border: 1px solid var(--color-border); border-radius: 12px; padding: 18px; background: var(--color-surface-raised); }
+.card-title { font-size: 0.95rem; font-weight: 600; margin: 0 0 14px; color: var(--color-text); }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.stat { display: flex; flex-direction: column; }
+.stat-n { font-size: 1.5rem; font-weight: 600; color: var(--color-text); line-height: 1.1; }
+.stat-l { font-size: 0.75rem; color: var(--color-text-muted); }
+
+/* Bars rather than donuts: a donut of two categories is a pie chart, and a
+   pie chart of eight is unreadable. Length compares; angle does not. */
+.bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: 8rem 1fr 2.5rem; align-items: center; gap: 10px; }
+.bar-label { font-size: 0.8rem; color: var(--color-text-muted); overflow-wrap: anywhere; }
+.bar-track { height: 8px; border-radius: 999px; background: var(--color-surface-sunken); overflow: hidden; }
+.bar-fill  { display: block; height: 100%; background: var(--color-brand-base); }
+.bar-n { font-size: 0.8rem; color: var(--color-text); text-align: right; }
+
+/* ── Tab tables ────────────────────────────────────────────────────────── */
+.grid { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.grid th { text-align: left; padding: 10px 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+           letter-spacing: .04em; color: var(--color-text-muted); background: var(--color-surface-sunken); white-space: nowrap; }
+.grid td { padding: 12px; border-bottom: 1px solid var(--color-border); color: var(--color-text); }
+.grid tr:last-child td { border-bottom: none; }
+.mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
+.pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem;
+        background: var(--color-surface-sunken); color: var(--color-text-muted); }
+.pill-bad { background: var(--color-danger-subtle); color: var(--color-danger-text); }
+.link { color: var(--color-brand-on-surface); }
 </style>

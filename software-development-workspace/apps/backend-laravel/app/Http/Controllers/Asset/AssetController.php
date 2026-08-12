@@ -8,6 +8,7 @@ use App\Http\Requests\Asset\StoreAssetRequest;
 use App\Http\Requests\Asset\UpdateAssetRequest;
 use App\Http\Resources\Asset\AssetResource;
 use App\Models\Asset\Asset;
+use App\Models\Asset\AssetRequest;
 use App\Models\Employee;
 use App\Services\Asset\AssetService;
 use Illuminate\Http\JsonResponse;
@@ -22,11 +23,24 @@ class AssetController extends Controller
     {
         $this->authorize('viewAny', Asset::class);
 
+        $filters = $request->only([
+            'status', 'category', 'department_id', 'assigned', 'assigned_to',
+            'search', 'warranty_expired', 'maintenance_due',
+        ]);
+
+        /*
+         * "Mine" is the caller's own employee id, resolved here.
+         *
+         * The client cannot send it — it knows the signed-in user, not which
+         * employee record that maps to — so asking it to would mean an extra
+         * round trip and a second place that gets the mapping wrong.
+         */
+        if ($request->boolean('mine')) {
+            $filters['assigned_to'] = $request->user()->employeeId() ?? -1;
+        }
+
         $assets = $this->service->list(
-            filters: $request->only([
-                'status', 'category', 'department_id', 'assigned', 'assigned_to',
-                'search', 'warranty_expired', 'maintenance_due',
-            ]),
+            filters: $filters,
             perPage: (int) $request->input('per_page', 20),
         );
 
@@ -37,7 +51,63 @@ class AssetController extends Controller
     {
         $this->authorize('view', $asset);
 
-        return new AssetResource($asset->load(['holder', 'department']));
+        // Events come with the asset because the detail page draws the
+        // lifecycle timeline on arrival; a second round trip for something
+        // always shown is a round trip nobody needed.
+        return new AssetResource($asset->load([
+            'holder', 'department', 'events.employee', 'events.vendor',
+        ]));
+    }
+
+    /**
+     * The numbers across the top of the Assets page.
+     *
+     * Counted from the same rows the tabs list, so a card and the list beneath
+     * it can never tell different stories — the failure mode of every dashboard
+     * assembled from its own queries.
+     */
+    public function summary(): JsonResponse
+    {
+        $this->authorize('viewAny', Asset::class);
+
+        $base = fn () => Asset::query()->where('status', '!=', Asset::STATUS_RETIRED);
+
+        return response()->json([
+            'totals' => [
+                'assigned'  => (clone $base())->whereNotNull('assigned_to')->count(),
+                'available' => (clone $base())->where('status', Asset::STATUS_AVAILABLE)->count(),
+                'pending_requests' => AssetRequest::where('status', AssetRequest::STATUS_PENDING)->count(),
+                'under_repair' => (clone $base())->where('status', Asset::STATUS_MAINTENANCE)->count(),
+            ],
+
+            'details' => [
+                // The subscription work made this one answerable at all.
+                'licences_expiring' => Asset::expiringSoon()->count(),
+                'due_for_return'    => (clone $base())->whereNotNull('assigned_to')
+                    ->whereNotNull('expires_on')->count(),
+                'maintenance_due'   => (clone $base())->whereNotNull('next_maintenance')
+                    ->whereDate('next_maintenance', '<=', now()->toDateString())->count(),
+                /*
+                 * What the register is worth, retired items excluded.
+                 *
+                 * Purchase value, not book value — there is no depreciation in
+                 * this system, and presenting a purchase total as if it were
+                 * current worth is the kind of number finance quotes back at
+                 * you a year later.
+                 */
+                'purchase_value'    => (float) (clone $base())->sum('purchase_value'),
+            ],
+
+            // The three charts. Counted here rather than in the client so the
+            // donut and the table behind it cannot disagree.
+            'by_category'   => (clone $base())->selectRaw('category as label, count(*) as count')
+                ->groupBy('category')->orderByDesc('count')->get(),
+            'by_department' => (clone $base())->join('departments', 'departments.id', '=', 'assets.department_id')
+                ->selectRaw('departments.name as label, count(*) as count')
+                ->groupBy('departments.name')->orderByDesc('count')->get(),
+            'by_status'     => Asset::selectRaw('status as label, count(*) as count')
+                ->groupBy('status')->get(),
+        ]);
     }
 
     public function store(StoreAssetRequest $request): AssetResource
