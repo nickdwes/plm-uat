@@ -45,5 +45,15 @@ return [
         'employee_documents',
         'preboarding_docs',
         'training_evidence',
+
+        /*
+         * Added with the disk rather than after it.
+         *
+         * The three above were omitted when their disks were created and spent
+         * months holding employment contracts and passport scans as plain
+         * files. Nothing announced it — an unencrypted disk behaves exactly
+         * like an encrypted one until somebody reads the blob.
+         */
+        'asset_documents',
     ],
 ];

@@ -209,6 +209,37 @@ return [
             ],
 
         /*
+         * Asset paperwork — invoices, warranties, delivery notes, disposal
+         * certificates.
+         *
+         * Its own container rather than a prefix inside the employee one, which
+         * is what the five commercial classes above had to settle for. They
+         * share a container because nobody had provisioned theirs; this one
+         * exists, so it gets the separation the comment at the top of this file
+         * argues for — retention differs sharply. An employment contract has a
+         * statutory minimum measured in years past an exit; a delivery note for
+         * a monitor does not.
+         *
+         * The app can read and write inside it and cannot create containers.
+         * That is deliberate: the six grants on this account are scoped one per
+         * container, so a compromised application token cannot reach the
+         * database backups sitting in the same storage account.
+         */
+        'asset_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-asset-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/asset-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Project resources — scopes, drawings, sign-off packs, whatever a
          * task needs to be done. Encrypted like every other class.
          */

@@ -45,6 +45,7 @@ class DocumentEncryptionTest extends TestCase
         'account_documents',
         'travel_evidence',
         'project_documents',
+        'asset_documents',
     ];
 
     public function test_every_document_class_is_on_the_encrypted_list(): void
