@@ -54,10 +54,21 @@ class AssetController extends Controller
         // Events come with the asset because the detail page draws the
         // lifecycle timeline on arrival; a second round trip for something
         // always shown is a round trip nobody needed.
-        return new AssetResource($asset->load([
+        /*
+         * The category's field definitions travel beside the asset, so the
+         * detail page can label and order the answers without a second call —
+         * and so a value whose field has since been removed is simply not
+         * shown rather than rendered under a raw key.
+         */
+        return (new AssetResource($asset->load([
             'holder', 'department', 'events.employee', 'events.vendor',
             'seats.employee',
-        ]));
+        ])))->additional([
+            'custom_field_defs' => $asset->categoryFields()->get()->map(fn ($f) => [
+                'key' => $f->key, 'label' => $f->label, 'type' => $f->type,
+                'options' => $f->options, 'help' => $f->help, 'is_required' => $f->is_required,
+            ])->values(),
+        ]);
     }
 
     /**

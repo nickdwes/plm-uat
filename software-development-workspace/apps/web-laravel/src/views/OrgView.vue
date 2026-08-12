@@ -35,6 +35,74 @@ const ASSET_CLASSES = [
 
 const assetCategories = ref<AssetCategory[]>([]);
 const acForm  = ref({ asset_class: "physical", name: "", description: "" });
+
+/**
+ * What a particular kind of thing is worth capturing.
+ *
+ * A UPS wants capacity in VA and a battery replacement date; the register has
+ * columns for a laptop and nothing for either, so both used to end up in the
+ * notes field where nothing can be reported on or expire.
+ */
+interface CategoryField {
+  id: number; key: string; label: string; type: string;
+  options: string[] | null; help: string | null; is_required: boolean;
+}
+
+const FIELD_TYPES = [
+  { key: "text",     label: "Short text" },
+  { key: "textarea", label: "Long text" },
+  { key: "number",   label: "Number" },
+  { key: "date",     label: "Date" },
+  { key: "select",   label: "Pick from a list" },
+  { key: "boolean",  label: "Yes / no" },
+];
+
+const fieldsFor    = ref<CategoryField[]>([]);
+const fieldsOwner  = ref<AssetCategory | null>(null);
+const fieldForm    = ref({ label: "", type: "text", help: "", is_required: false, options: "" });
+const fieldError   = ref("");
+
+async function openFields(c: AssetCategory): Promise<void> {
+  fieldsOwner.value = c;
+  fieldError.value = "";
+  fieldForm.value = { label: "", type: "text", help: "", is_required: false, options: "" };
+  const res = await api<{ data: CategoryField[] }>(
+    "GET", `/api/v1/org/asset-categories/${c.id}/fields`, { org: org() },
+  );
+  fieldsFor.value = res.data ?? [];
+}
+
+async function addField(): Promise<void> {
+  if (!fieldsOwner.value || !fieldForm.value.label.trim()) return;
+  fieldError.value = "";
+  saving.value = true;
+  try {
+    await api("POST", `/api/v1/org/asset-categories/${fieldsOwner.value.id}/fields`, {
+      org: org(),
+      body: {
+        label: fieldForm.value.label.trim(),
+        type: fieldForm.value.type,
+        help: fieldForm.value.help.trim() || null,
+        is_required: fieldForm.value.is_required,
+        // One per line is easier to type than commas and survives values that
+        // contain a comma.
+        options: fieldForm.value.type === "select"
+          ? fieldForm.value.options.split("\n").map(o => o.trim()).filter(Boolean)
+          : null,
+      },
+    });
+    await openFields(fieldsOwner.value);
+  } catch (e) {
+    fieldError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add that field.";
+  } finally { saving.value = false; }
+}
+
+async function removeField(f: CategoryField): Promise<void> {
+  if (!fieldsOwner.value) return;
+  if (!confirm(`Remove "${f.label}"? Answers already recorded stay on the assets.`)) return;
+  await api("DELETE", `/api/v1/org/asset-categories/${fieldsOwner.value.id}/fields/${f.id}`, { org: org() });
+  await openFields(fieldsOwner.value);
+}
 const acError = ref("");
 
 const assetCategoriesIn = (cls: string) =>
@@ -979,7 +1047,65 @@ async function saveReminder(): Promise<void> {
                 </label>
               </td>
               <td class="ov-cat-actions">
+                <button class="btn btn-ghost btn-sm" @click="openFields(c)">
+                  Fields<template v-if="fieldsOwner?.id === c.id"> ▾</template>
+                </button>
                 <button class="btn btn-ghost btn-sm" @click="removeAssetCategory(c)">Remove</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
+    <!-- ── Fields for one category ───────────────────────────────────────── -->
+    <template v-if="tab === 'asset-categories' && fieldsOwner">
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="card-title">What to capture for "{{ fieldsOwner.name }}"</h3>
+        <p class="ov-hint">
+          Beyond the common fields every asset has. A UPS wants a capacity and a
+          battery date; a vehicle wants a registration. Anything added here is
+          asked for when registering something in this category.
+        </p>
+
+        <div class="form-row">
+          <input v-model="fieldForm.label" type="text" placeholder="Field name, e.g. Capacity (VA)" class="input" />
+          <select v-model="fieldForm.type" class="input">
+            <option v-for="t in FIELD_TYPES" :key="t.key" :value="t.key">{{ t.label }}</option>
+          </select>
+          <input v-model="fieldForm.help" type="text" placeholder="Hint for whoever fills it in (optional)" class="input" />
+          <label class="ov-hint" style="white-space:nowrap;cursor:pointer">
+            <input v-model="fieldForm.is_required" type="checkbox" /> required
+          </label>
+          <button class="btn btn-primary btn-sm" :disabled="saving || !fieldForm.label.trim()" @click="addField">Add field</button>
+        </div>
+
+        <!-- One per line, because an option can contain a comma. -->
+        <div v-if="fieldForm.type === 'select'" style="margin-top:10px">
+          <textarea v-model="fieldForm.options" class="input" rows="3"
+                    placeholder="One option per line&#10;tower&#10;rack"></textarea>
+        </div>
+
+        <p v-if="fieldError" class="ov-hint" style="color:var(--color-danger-text)">{{ fieldError }}</p>
+
+        <p v-if="!fieldsFor.length" class="ov-hint" style="margin-top:12px">
+          Nothing extra is captured for this category yet.
+        </p>
+        <table v-else class="ov-cat-table" style="margin-top:12px">
+          <thead><tr><th>Field</th><th>Type</th><th>Hint</th><th>Required</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="f in fieldsFor" :key="f.id">
+              <td>
+                {{ f.label }}
+                <!-- The answers are stored under this, which is why the label
+                     can be changed and it cannot. -->
+                <code class="ov-key">{{ f.key }}</code>
+              </td>
+              <td>{{ FIELD_TYPES.find(t => t.key === f.type)?.label ?? f.type }}</td>
+              <td class="ov-cat-desc">{{ f.help ?? '—' }}</td>
+              <td>{{ f.is_required ? 'yes' : 'no' }}</td>
+              <td class="ov-cat-actions">
+                <button class="btn btn-ghost btn-sm" @click="removeField(f)">Remove</button>
               </td>
             </tr>
           </tbody>
@@ -1824,4 +1950,7 @@ async function saveReminder(): Promise<void> {
 
 /* Explanatory line under a configuration heading. */
 .ov-hint { font-size: .78rem; color: var(--color-text-muted); margin: 0 0 10px; }
+
+.ov-key { font-family: ui-monospace, monospace; font-size: .7rem; color: var(--color-text-light);
+          background: var(--color-surface-sunken); padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
 </style>

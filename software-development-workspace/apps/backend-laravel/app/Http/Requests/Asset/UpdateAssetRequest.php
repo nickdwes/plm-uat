@@ -22,6 +22,10 @@ class UpdateAssetRequest extends FormRequest
         $asset = $this->route('asset');
 
         return [
+            // Checked against the category's own definitions in the service —
+            // the rules are data, so they cannot be declared here.
+            'custom_fields' => ['nullable', 'array'],
+
             'name'          => ['sometimes', 'string', 'max:255'],
             'asset_tag'     => [
                 'sometimes', 'string', 'max:255',

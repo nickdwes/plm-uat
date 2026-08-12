@@ -71,6 +71,14 @@ class AssetService
     {
         $data['organization_id'] = $organizationId;
 
+        // Checked against the questions this category actually asks, and
+        // stripped of anything it does not.
+        $data['custom_fields'] = app(CustomFieldValidator::class)->check(
+            $data['category'] ?? null,
+            $data['asset_class'] ?? 'physical',
+            $data['custom_fields'] ?? [],
+        );
+
         // An asset created already in someone's hands is assigned, not
         // available. Leaving the caller to set both invites the two disagreeing.
         if (! empty($data['assigned_to'])) {
@@ -90,6 +98,22 @@ class AssetService
         // holder consistent. Allowing it here would let an update quietly
         // reassign equipment.
         unset($data['assigned_to'], $data['assigned_date'], $data['organization_id']);
+
+        /*
+         * Answers are merged rather than replaced.
+         *
+         * An edit that touches one field should not silently wipe the rest,
+         * and a form that only renders the current category's questions would
+         * do exactly that on an asset that has answers from a previous one.
+         */
+        if (array_key_exists('custom_fields', $data)) {
+            $data['custom_fields'] = app(CustomFieldValidator::class)->check(
+                $data['category'] ?? $asset->category,
+                $data['asset_class'] ?? $asset->asset_class,
+                $data['custom_fields'] ?? [],
+                $asset->custom_fields ?? [],
+            );
+        }
 
         $asset->update($data);
 

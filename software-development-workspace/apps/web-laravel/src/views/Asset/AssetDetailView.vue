@@ -46,6 +46,73 @@ const STAGE_LABEL: Record<string, string> = {
  * "who is affected" was answerable and unanswered. This is the screen that
  * makes a licence something you can hand to somebody and take back.
  */
+/**
+ * Editing an asset.
+ *
+ * There was no way to correct anything after registering it — a serial number
+ * typed wrongly stayed wrong, and the only recourse was deleting the record and
+ * starting again, which loses its history.
+ *
+ * Custody is deliberately not here. Assigning equipment is a different
+ * permission from correcting a model number, and the API keeps them apart; a
+ * form that quietly reassigned a laptop while fixing a typo would be worse than
+ * no form.
+ */
+const showEdit  = ref(false);
+const editSaving = ref(false);
+const editError = ref("");
+const editForm  = ref<Record<string, any>>({});
+const editFields = ref<any[]>([]);
+
+function openEdit() {
+  const a: any = asset.value;
+  editError.value = "";
+  editFields.value = customFieldDefs.value;
+  editForm.value = {
+    name: a.name ?? "", asset_tag: a.asset_tag ?? "", category: a.category ?? "",
+    brand: a.brand ?? "", model: a.model ?? "", serial_number: a.serial_number ?? "",
+    vendor: a.vendor ?? "", location: a.location ?? "",
+    purchase_value: a.purchase_value ?? "", condition: a.condition ?? "",
+    notes: a.notes ?? "",
+    description: a.description ?? "",
+    custom_fields: { ...(a.custom_fields ?? {}) },
+  };
+  showEdit.value = true;
+}
+
+async function saveEdit() {
+  editSaving.value = true; editError.value = "";
+  try {
+    const body: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(editForm.value)) {
+      if (k === "custom_fields") continue;
+      // Empty means "clear it", not "leave it" — but an untouched empty field
+      // that was already empty should not be sent as a change either.
+      body[k] = v === "" ? null : v;
+    }
+    if (Object.keys(editForm.value.custom_fields ?? {}).length) {
+      body.custom_fields = editForm.value.custom_fields;
+    }
+
+    const res = await api<{ data: any }>("PUT", `/api/v1/assets/${props.id}`, { org: org(), body });
+    asset.value = res.data;
+    showEdit.value = false;
+    await load();
+  } catch (e) {
+    editError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save those changes.";
+  } finally { editSaving.value = false; }
+}
+
+/** The questions this asset's category asks, as returned beside the asset. */
+const customFieldDefs = ref<any[]>([]);
+
+const capturedFields = computed(() => {
+  const values: Record<string, any> = (asset.value as any)?.custom_fields ?? {};
+  return customFieldDefs.value
+    .map(d => ({ ...d, value: values[d.key] }))
+    .filter(d => d.value !== undefined && d.value !== null && d.value !== "");
+});
+
 const showSeat   = ref(false);
 const seatForm   = ref<{ employee_id: number | null; note: string }>({ employee_id: null, note: "" });
 const seatError  = ref("");
@@ -112,8 +179,11 @@ async function load() {
   if (!org()) return;
   loading.value = true; error.value = "";
   try {
-    const res = await api<{ data: Asset }>("GET", `/api/v1/assets/${props.id}`, { org: org() });
+    const res = await api<{ data: Asset; custom_field_defs?: any[] }>(
+      "GET", `/api/v1/assets/${props.id}`, { org: org() },
+    );
     asset.value = res.data;
+    customFieldDefs.value = res.custom_field_defs ?? [];
   } catch (e) {
     error.value = e instanceof ApiError && e.status === 404
       ? "That asset does not exist in this organisation."
@@ -183,7 +253,10 @@ onMounted(load);
             <span v-if="asset.brand"><span class="dot">·</span>{{ asset.brand }} {{ asset.model }}</span>
           </p>
         </div>
-        <span :class="['pill', `pill-${asset.status}`]">{{ asset.status }}</span>
+        <div class="head-actions">
+          <button class="btn-secondary" @click="openEdit">Edit</button>
+          <span :class="['pill', `pill-${asset.status}`]">{{ asset.status }}</span>
+        </div>
       </header>
 
       <nav class="tabs" role="tablist">
@@ -361,12 +434,90 @@ onMounted(load);
         </section>
       </div>
 
+      <!-- What this category asks for, and what was answered. -->
+      <section v-if="capturedFields.length" class="panel">
+        <div class="panel-head"><h2>{{ asset.category }} details</h2></div>
+        <div class="kv">
+          <div v-for="f in capturedFields" :key="f.key" class="kv-row">
+            <span class="kv-k">{{ f.label }}</span>
+            <span class="kv-v">
+              <template v-if="f.type === 'boolean'">{{ f.value ? 'Yes' : 'No' }}</template>
+              <template v-else>{{ f.value }}</template>
+            </span>
+          </div>
+        </div>
+      </section>
+
       <section v-if="asset.notes" class="panel">
         <div class="panel-head"><h2>Notes</h2></div>
         <p class="pad">{{ asset.notes }}</p>
       </section>
       </template>
     </template>
+
+    <!-- Edit -->
+    <div v-if="showEdit" class="overlay" @click.self="showEdit = false">
+      <div class="dialog dialog-wide" role="dialog" aria-modal="true" aria-label="Edit asset">
+        <h2>Edit asset</h2>
+        <p class="muted seat-lead">
+          Custody is changed from the Custody panel, not here — assigning
+          equipment is a different decision from correcting a typo.
+        </p>
+
+        <div class="edit-grid">
+          <label class="field"><span>Name</span><input v-model="editForm.name" class="control" /></label>
+          <label class="field"><span>Asset tag</span><input v-model="editForm.asset_tag" class="control" /></label>
+          <label class="field"><span>Category</span><input v-model="editForm.category" class="control" /></label>
+          <label class="field"><span>Vendor</span><input v-model="editForm.vendor" class="control" /></label>
+
+          <template v-if="!isLicence">
+            <label class="field"><span>Brand</span><input v-model="editForm.brand" class="control" /></label>
+            <label class="field"><span>Model</span><input v-model="editForm.model" class="control" /></label>
+            <label class="field"><span>Serial number</span><input v-model="editForm.serial_number" class="control" /></label>
+            <label class="field"><span>Condition</span><input v-model="editForm.condition" class="control" /></label>
+            <label class="field"><span>Location</span><input v-model="editForm.location" class="control" /></label>
+            <label class="field"><span>Purchase value</span><input v-model="editForm.purchase_value" class="control" type="number" /></label>
+          </template>
+
+          <label v-else class="field field-span"><span>What this covers</span>
+            <textarea v-model="editForm.description" class="control" rows="3"></textarea>
+          </label>
+
+          <!-- Whatever this category asks for. -->
+          <template v-if="editFields.length">
+            <p class="field-span cf-lead">{{ editForm.category }} details</p>
+            <label v-for="cf in editFields" :key="cf.key"
+                   :class="['field', cf.type === 'textarea' ? 'field-span' : '']">
+              <span>{{ cf.label }}<template v-if="cf.is_required"> *</template></span>
+              <textarea v-if="cf.type === 'textarea'" v-model="editForm.custom_fields[cf.key]" class="control" rows="3"></textarea>
+              <select v-else-if="cf.type === 'select'" v-model="editForm.custom_fields[cf.key]" class="control">
+                <option value="">—</option>
+                <option v-for="o in (cf.options ?? [])" :key="o" :value="o">{{ o }}</option>
+              </select>
+              <label v-else-if="cf.type === 'boolean'" class="check-inline">
+                <input v-model="editForm.custom_fields[cf.key]" type="checkbox" /><span>Yes</span>
+              </label>
+              <input v-else v-model="editForm.custom_fields[cf.key]" class="control"
+                     :type="cf.type === 'number' ? 'number' : cf.type === 'date' ? 'date' : 'text'" />
+              <span v-if="cf.help" class="hint-sm">{{ cf.help }}</span>
+            </label>
+          </template>
+
+          <label class="field field-span"><span>Notes</span>
+            <textarea v-model="editForm.notes" class="control" rows="3"></textarea>
+          </label>
+        </div>
+
+        <p v-if="editError" class="alert" role="alert">{{ editError }}</p>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showEdit = false">Cancel</button>
+          <button class="btn-primary" :disabled="editSaving || !editForm.name" @click="saveEdit">
+            {{ editSaving ? "Saving…" : "Save changes" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Allocate a seat -->
     <div v-if="showSeat" class="overlay" @click.self="showSeat = false">
@@ -622,4 +773,23 @@ code {
 .link-danger { background: none; border: none; padding: 0; font: inherit; font-size: .82rem;
                color: var(--color-danger-text); cursor: pointer; }
 .link-danger:hover { text-decoration: underline; }
+
+.head-actions { display: flex; align-items: center; gap: 12px; }
+
+/* Edit: wide enough for two columns, and never taller than the window. */
+.dialog-wide { max-width: 46rem; max-height: min(90vh, 52rem); display: flex; flex-direction: column; }
+.edit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; overflow-y: auto; padding-right: 6px; }
+@media (max-width: 44rem) { .edit-grid { grid-template-columns: 1fr; } }
+.field-span { grid-column: 1 / -1; }
+.cf-lead { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+           color: var(--color-text-muted); border-top: 1px solid var(--color-border);
+           padding-top: 12px; margin: 6px 0 10px; }
+.hint-sm { font-size: .72rem; color: var(--color-text-light); }
+.check-inline { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+
+/* Captured fields on the detail page. */
+.kv { padding: 4px 16px 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 10px 24px; }
+.kv-row { display: flex; flex-direction: column; }
+.kv-k { font-size: .72rem; color: var(--color-text-muted); }
+.kv-v { font-size: .88rem; color: var(--color-text); }
 </style>

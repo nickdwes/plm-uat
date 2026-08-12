@@ -108,6 +108,15 @@ class AssetResource extends JsonResource
                 'note'        => $e->note,
             ])),
 
+            /*
+             * The answers, and the questions they belong to.
+             *
+             * The definitions come back beside the asset on a single fetch —
+             * see the controller — rather than as a relation, because they are
+             * matched on category name and class, not a foreign key.
+             */
+            'custom_fields' => (object) ($this->custom_fields ?? []),
+
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];

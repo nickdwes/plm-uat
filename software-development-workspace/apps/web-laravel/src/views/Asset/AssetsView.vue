@@ -80,6 +80,31 @@ const chosenCategory = computed(() =>
 const needsOwnName = computed(
   () => (form.value.category ?? "").toLowerCase() === "other");
 
+/**
+ * The extra questions the chosen category asks.
+ *
+ * Fetched when the category changes rather than shipped with the whole list —
+ * most categories have none, and loading every definition to render one form is
+ * work nobody asked for.
+ */
+const categoryFields = ref<any[]>([]);
+
+async function loadCategoryFields() {
+  categoryFields.value = [];
+  const c = chosenCategory.value;
+  if (!c) return;
+  try {
+    const res = await api<{ data: any[] }>("GET", `/api/v1/org/asset-categories/${c.id}/fields`, { org: org() });
+    categoryFields.value = res.data ?? [];
+    // Start each answer empty so v-model has something to bind to.
+    for (const f of categoryFields.value) {
+      if (!(f.key in form.value.custom_fields)) {
+        form.value.custom_fields[f.key] = f.type === "boolean" ? false : "";
+      }
+    }
+  } catch { categoryFields.value = []; }
+}
+
 async function loadCategories() {
   try {
     const res = await api<{ data: AssetCategory[] }>("GET", "/api/v1/org/asset-categories", {
@@ -102,6 +127,8 @@ const blankForm = () => ({
    * and only sent then.
    */
   other_name: "", other_description: "",
+  /** Answers to whatever the chosen category asks. */
+  custom_fields: {} as Record<string, any>,
   // Physical only.
   brand: "", model: "", serial_number: "",
   // A batch runs from a date to a date.
@@ -120,6 +147,13 @@ function onClassChange() {
   form.value.category = categoriesFor.value[0]?.name ?? "";
   form.value.other_name = "";
   form.value.other_description = "";
+  onCategoryChange();
+}
+
+/** A different category asks different questions, so the old answers go. */
+function onCategoryChange() {
+  form.value.custom_fields = {};
+  void loadCategoryFields();
 }
 
 const STATUSES   = ["available", "assigned", "maintenance", "retired"];
@@ -179,6 +213,10 @@ async function create() {
       vendor: f.vendor || undefined,
     };
 
+    if (Object.keys(f.custom_fields).length) {
+      body.custom_fields = f.custom_fields;
+    }
+
     if (needsOwnName.value && f.other_description.trim()) {
       body.description = f.other_description.trim();
     }
@@ -216,6 +254,7 @@ async function create() {
 
 function openCreate() {
   form.value = blankForm();
+  void loadCategoryFields();
   createError.value = "";
   showCreate.value = true;
 }
@@ -784,7 +823,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           <input v-model="form.asset_tag" class="control" placeholder="AST-0001" />
         </label>
         <label class="field"><span>Category</span>
-          <select v-model="form.category" class="control">
+          <select v-model="form.category" class="control" @change="onCategoryChange">
             <option value="">Choose one…</option>
             <option v-for="c in categoriesFor" :key="c.id" :value="c.name">{{ c.name }}</option>
           </select>
@@ -891,6 +930,29 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           </label>
         </template>
 
+        <!-- ── What this category asks for ────────────────────────────────── -->
+        <template v-if="categoryFields.length">
+          <p class="field-wide cf-lead">For a {{ form.category }}</p>
+
+          <label v-for="cf in categoryFields" :key="cf.key"
+                 :class="['field', cf.type === 'textarea' ? 'field-wide' : '']">
+            <span>{{ cf.label }}<template v-if="cf.is_required"> *</template></span>
+
+            <textarea v-if="cf.type === 'textarea'" v-model="form.custom_fields[cf.key]"
+                      class="control" rows="3"></textarea>
+            <select v-else-if="cf.type === 'select'" v-model="form.custom_fields[cf.key]" class="control">
+              <option value="">—</option>
+              <option v-for="o in (cf.options ?? [])" :key="o" :value="o">{{ o }}</option>
+            </select>
+            <label v-else-if="cf.type === 'boolean'" class="check">
+              <input v-model="form.custom_fields[cf.key]" type="checkbox" /><span>Yes</span>
+            </label>
+            <input v-else v-model="form.custom_fields[cf.key]" class="control"
+                   :type="cf.type === 'number' ? 'number' : cf.type === 'date' ? 'date' : 'text'" />
+
+            <span v-if="cf.help" class="hint">{{ cf.help }}</span>
+          </label>
+        </template>
         </div>
         </div>
 
@@ -1205,4 +1267,8 @@ code {
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
         background: var(--color-brand-subtle); color: var(--color-brand-on-surface); font-size: .78rem; }
 .chip-x { background: none; border: none; padding: 0; cursor: pointer; color: inherit; font-size: 1rem; line-height: 1; }
+
+.cf-lead { font-size: .78rem; font-weight: 600; color: var(--color-text-muted);
+           text-transform: uppercase; letter-spacing: .04em;
+           border-top: 1px solid var(--color-border); padding-top: 12px; margin: 6px 0 10px; }
 </style>

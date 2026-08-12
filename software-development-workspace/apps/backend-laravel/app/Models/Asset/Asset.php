@@ -65,7 +65,7 @@ class Asset extends Model
         'description', 'seats_total',
         'vendor_contact', 'support_contact', 'sla',
         'processor', 'ram', 'storage', 'operating_system',
-        'notes',
+        'custom_fields', 'notes',
     ];
 
     protected $casts = [
@@ -82,6 +82,7 @@ class Asset extends Model
         'expires_on'           => 'date',
         'auto_renews'          => 'boolean',
         'renewal_cost'         => 'decimal:2',
+        'custom_fields'        => 'array',
     ];
 
     /** See the note on AssetRequest — a column default does not reach the
@@ -125,6 +126,23 @@ class Asset extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_asset_id');
+    }
+
+    /**
+     * The extra fields this asset's category asks for.
+     *
+     * Matched on name and class rather than a foreign key, because `category`
+     * is still free text on the asset — anything registered before categories
+     * were configurable, or through another route, simply has no definitions
+     * and shows none.
+     */
+    public function categoryFields()
+    {
+        return AssetCategoryField::query()
+            ->whereHas('category', fn ($q) => $q
+                ->where('name', $this->category)
+                ->where('asset_class', $this->asset_class))
+            ->orderBy('sort_order')->orderBy('id');
     }
 
     /** Who hears when this comes up for renewal. */

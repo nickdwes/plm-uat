@@ -35,6 +35,10 @@ class StoreAssetRequest extends FormRequest
              */
             'asset_class'   => ['nullable', Rule::in(Asset::CLASSES)],
 
+            // Checked against the category's own definitions in the service —
+            // the rules are data, so they cannot be declared here.
+            'custom_fields' => ['nullable', 'array'],
+
             'name'          => ['required', 'string', 'max:255'],
             // Unique within the tenant, not globally — see the assets migration.
             'asset_tag'     => [

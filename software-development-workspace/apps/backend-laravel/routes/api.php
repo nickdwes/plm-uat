@@ -836,6 +836,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::put('/asset-categories/{assetCategory}',  [OrgManagementController::class, 'updateAssetCategory']);
         Route::delete('/asset-categories/{assetCategory}',[OrgManagementController::class, 'destroyAssetCategory']);
 
+        // What each kind of thing is worth capturing beyond the common fields.
+        Route::get('/asset-categories/{assetCategory}/fields',           [OrgManagementController::class, 'categoryFields']);
+        Route::post('/asset-categories/{assetCategory}/fields',          [OrgManagementController::class, 'storeCategoryField']);
+        Route::put('/asset-categories/{assetCategory}/fields/{field}',   [OrgManagementController::class, 'updateCategoryField']);
+        Route::delete('/asset-categories/{assetCategory}/fields/{field}',[OrgManagementController::class, 'destroyCategoryField']);
+
         Route::get('/job-categories',                    [OrgManagementController::class, 'jobCategories']);
         Route::post('/job-categories',                   [OrgManagementController::class, 'storeJobCategory']);
         Route::put('/job-categories/{jobCategory}',      [OrgManagementController::class, 'updateJobCategory']);

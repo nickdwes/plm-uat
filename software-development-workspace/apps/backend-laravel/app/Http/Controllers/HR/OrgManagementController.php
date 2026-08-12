@@ -15,6 +15,7 @@ use App\Models\OrgPractice;
 use Illuminate\Http\JsonResponse;
 use App\Models\Asset\Asset;
 use App\Models\Asset\AssetCategory;
+use App\Models\Asset\AssetCategoryField;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -213,6 +214,99 @@ class OrgManagementController extends Controller
         $assetCategory->delete();
 
         return response()->json(['message' => 'Category removed.', 'retired' => false]);
+    }
+
+    // ── Fields captured per category ──────────────────────────────────────
+
+    public function categoryFields(AssetCategory $assetCategory): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_VIEW), 403);
+
+        return response()->json([
+            'data' => $assetCategory->fields()->orderBy('sort_order')->orderBy('id')->get(),
+        ]);
+    }
+
+    /**
+     * Add a field to a category.
+     *
+     * The key is generated from the label and never taken from the caller.
+     * Answers are stored under it, so letting somebody choose or change it
+     * would eventually orphan every value already captured.
+     */
+    public function storeCategoryField(Request $request, AssetCategory $assetCategory): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_CREATE), 403);
+
+        $data = $request->validate([
+            'label'       => ['required', 'string', 'max:120'],
+            'type'        => ['required', Rule::in(AssetCategoryField::TYPES)],
+            'options'     => ['nullable', 'array'],
+            'options.*'   => ['string', 'max:120'],
+            'help'        => ['nullable', 'string', 'max:255'],
+            'is_required' => ['nullable', 'boolean'],
+            'sort_order'  => ['nullable', 'integer', 'min:0', 'max:999'],
+        ]);
+
+        $key = AssetCategoryField::keyFor($data['label']);
+        abort_if($key === '', 422, 'That label does not make a usable field name.');
+
+        abort_if(
+            $assetCategory->fields()->where('key', $key)->exists(),
+            422,
+            'A field with that name already exists on this category.',
+        );
+
+        // A select with nothing to select from is a text box that refuses
+        // everything.
+        abort_if(
+            $data['type'] === 'select' && empty($data['options']),
+            422,
+            'A list field needs at least one option.',
+        );
+
+        $field = $assetCategory->fields()->create($data + [
+            'organization_id' => app('current.organization_id'),
+            'key'             => $key,
+        ]);
+
+        return response()->json(['data' => $field], 201);
+    }
+
+    /** The label, help and ordering can change. The key cannot. */
+    public function updateCategoryField(Request $request, AssetCategory $assetCategory, int $field): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_UPDATE), 403);
+
+        $record = $assetCategory->fields()->findOrFail($field);
+
+        $record->update($request->validate([
+            'label'       => ['sometimes', 'string', 'max:120'],
+            'help'        => ['nullable', 'string', 'max:255'],
+            'options'     => ['nullable', 'array'],
+            'options.*'   => ['string', 'max:120'],
+            'is_required' => ['sometimes', 'boolean'],
+            'sort_order'  => ['sometimes', 'integer', 'min:0', 'max:999'],
+        ]));
+
+        return response()->json(['data' => $record->fresh()]);
+    }
+
+    /**
+     * Remove a field.
+     *
+     * Values already captured under its key are left on the assets rather than
+     * scrubbed. Removing the question does not make the answers untrue, and a
+     * field deleted by mistake can be added back with the same label and find
+     * its data waiting.
+     */
+    public function destroyCategoryField(AssetCategory $assetCategory, int $field): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_DELETE), 403);
+
+        $assetCategory->fields()->findOrFail($field)->delete();
+
+        return response()->json(['message' => 'Field removed. Answers already recorded are kept on the assets.']);
     }
 
     public function jobCategories(): JsonResponse

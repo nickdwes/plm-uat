@@ -32,6 +32,12 @@ class AssetCategory extends Model
 
     protected $attributes = ['is_active' => true, 'sort_order' => 0];
 
+    /** What this kind of thing is worth capturing beyond the common fields. */
+    public function fields()
+    {
+        return $this->hasMany(AssetCategoryField::class, 'asset_category_id');
+    }
+
     /** What a picker should offer. */
     public function scopeUsable(Builder $q): Builder
     {
