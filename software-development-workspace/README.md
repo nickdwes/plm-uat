@@ -61,6 +61,14 @@ See `docs/naming-conventions.md` for details.
 - Logging and troubleshooting guide: `docs/logging-and-troubleshooting.md`
 - Session prompt archive process: `docs/session-prompt-archive.md`
 
+### What is outstanding
+
+Anything found and consciously not fixed is written down on the day it is found,
+rather than left in a commit body where no list can be got out of it.
+
+- Everything deferred, across modules: `docs/deferred-work.md`
+- Assets against the EAM brief: `docs/assets-eam-coverage.md`
+
 ## New Integration Scaffolds
 
 - Backend API app: `apps/backend-frappe/apps/bitwyse_hrms_backend/`
