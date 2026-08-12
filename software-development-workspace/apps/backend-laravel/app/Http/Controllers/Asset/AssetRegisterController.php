@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Asset\Asset;
 use App\Models\Asset\AssetDisposal;
 use App\Models\Asset\AssetIssue;
+use App\Models\Asset\AssetMaintenance;
 use App\Models\Asset\AssetRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -95,6 +96,49 @@ class AssetRegisterController extends Controller
                 'status'      => $i->status,
                 'reported_on' => $i->created_at?->toDateString(),
                 'resolved_on' => $i->resolved_at?->toDateString(),
+            ]),
+        ]);
+    }
+
+    /**
+     * Servicing — what is waiting, what is being done, what it cost.
+     *
+     * Open work first. A maintenance list sorted by date puts last year's
+     * completed services above the repair blocking somebody today.
+     */
+    public function maintenance(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Asset::class);
+
+        $q = AssetMaintenance::query()
+            ->with(['asset:id,name,asset_tag', 'vendor:id,name', 'technician:id,first_name,last_name'])
+            ->orderByRaw("CASE WHEN status IN ('completed','cancelled') THEN 1 ELSE 0 END")
+            ->orderByRaw('COALESCE(scheduled_for, performed_on) DESC NULLS LAST');
+
+        if ($request->boolean('open')) {
+            $q->open();
+        }
+
+        if ($assetId = $request->integer('asset_id')) {
+            $q->where('asset_id', $assetId);
+        }
+
+        return response()->json([
+            'data' => $q->paginate((int) $request->input('per_page', 25))->through(fn (AssetMaintenance $m) => [
+                'id'         => $m->id,
+                'reference'  => 'MT-' . str_pad((string) $m->id, 4, '0', STR_PAD_LEFT),
+                'asset'      => $m->asset?->name,
+                'asset_tag'  => $m->asset?->asset_tag,
+                'type'       => $m->type,
+                'reason'     => $m->reason,
+                'status'     => $m->status,
+                'scheduled_for' => $m->scheduled_for?->toDateString(),
+                'performed_on'  => $m->performed_on?->toDateString(),
+                'cost'       => $m->cost,
+                'vendor'     => $m->vendor?->name,
+                'technician' => $m->technician?->full_name,
+                // Where a repair began as a fault report, the two are one story.
+                'issue_id'   => $m->asset_issue_id,
             ]),
         ]);
     }

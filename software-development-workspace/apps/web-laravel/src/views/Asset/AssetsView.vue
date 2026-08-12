@@ -132,6 +132,7 @@ const summary   = ref<Summary | null>(null);
 const requests  = ref<any[]>([]);
 const disposals = ref<any[]>([]);
 const mine      = ref<Asset[]>([]);
+const servicing = ref<any[]>([]);
 const held      = ref<Asset[]>([]);
 
 async function openTab(next: Tab) {
@@ -143,6 +144,8 @@ async function openTab(next: Tab) {
       summary.value = await api<Summary>("GET", "/api/v1/assets/summary", { org: org() });
     } else if (next === "requests") {
       requests.value = (await api<{ data: any }>("GET", "/api/v1/assets/requests", { org: org() })).data?.data ?? [];
+    } else if (next === "maintenance") {
+      servicing.value = (await api<{ data: any }>("GET", "/api/v1/assets/maintenance", { org: org() })).data?.data ?? [];
     } else if (next === "disposals") {
       disposals.value = (await api<{ data: any }>("GET", "/api/v1/assets/disposals", { org: org() })).data?.data ?? [];
     } else if (next === "mine") {
@@ -337,10 +340,29 @@ onMounted(() => { void load(); void openTab("overview"); });
 
     <!-- ── Maintenance ──────────────────────────────────────────────────── -->
     <section v-else-if="tab === 'maintenance'" class="pane">
-      <p class="quiet">
-        Maintenance records are not built yet. Assets due a service show on the
-        Overview and can be filtered in the inventory.
-      </p>
+      <p v-if="!servicing.length" class="quiet">No servicing has been recorded.</p>
+      <table v-else class="grid">
+        <thead>
+          <tr><th>ID</th><th>Asset</th><th>Type</th><th>Reason</th><th>Date</th><th>Cost</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="m in servicing" :key="m.id">
+            <td class="mono">{{ m.reference }}</td>
+            <td>{{ m.asset }}</td>
+            <td>{{ m.type }}</td>
+            <td>{{ m.reason }}</td>
+            <td>{{ m.performed_on ?? m.scheduled_for ?? '—' }}</td>
+            <td>{{ m.cost ? money(Number(m.cost)) : '—' }}</td>
+            <td>
+              <!-- The two waiting states read alike on a board and need
+                   different people to clear them, so they are named apart. -->
+              <span :class="['pill', m.status === 'completed' ? 'pill-ok' : m.status.startsWith('awaiting') ? 'pill-wait' : '']">
+                {{ m.status.replace(/_/g, ' ') }}
+              </span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <!-- ── Inventory: the register itself ───────────────────────────────── -->
@@ -680,5 +702,7 @@ code {
 .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem;
         background: var(--color-surface-sunken); color: var(--color-text-muted); }
 .pill-bad { background: var(--color-danger-subtle); color: var(--color-danger-text); }
+.pill-ok   { background: var(--color-success-subtle); color: var(--color-success-text); }
+.pill-wait { background: var(--color-warning-subtle, var(--color-surface-sunken)); color: var(--color-text); }
 .link { color: var(--color-brand-on-surface); }
 </style>

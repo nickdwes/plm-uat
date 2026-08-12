@@ -670,6 +670,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/requests',  [AssetRegisterController::class, 'requests']);
         Route::get('/issues',    [AssetRegisterController::class, 'issues']);
         Route::get('/disposals', [AssetRegisterController::class, 'disposals']);
+        Route::get('/maintenance', [AssetRegisterController::class, 'maintenance']);
 
         Route::get('/',            [AssetController::class, 'index']);
         Route::post('/',           [AssetController::class, 'store']);
