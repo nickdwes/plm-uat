@@ -48,11 +48,45 @@ const CLASSES = [
   { key: "subscription", label: "Subscription", hint: "Anything that expires and must be renewed — SSL certificates, domains, SaaS" },
 ] as const;
 
-const CATEGORIES_BY_CLASS: Record<string, string[]> = {
-  physical:     ["laptop", "desktop", "monitor", "phone", "tablet", "peripheral", "furniture", "other"],
-  software:     ["licence", "design tool", "developer tool", "security", "other"],
-  subscription: ["ssl certificate", "domain", "saas", "cloud service", "support contract", "other"],
-};
+/**
+ * Categories come from the organisation, not from this file.
+ *
+ * They were a hardcoded array here, which made adding "UPS" a developer task
+ * with a build and a deploy behind it. They are configured per tenant now — a
+ * training company and a healthcare integrator do not own the same things.
+ */
+interface AssetCategory {
+  id: number; asset_class: string; name: string;
+  description: string | null; is_active: boolean;
+}
+
+const categories = ref<AssetCategory[]>([]);
+
+const categoriesFor = computed(() =>
+  categories.value.filter(c => c.asset_class === form.value.asset_class));
+
+/** Whichever category was chosen, if it is still on the list. */
+const chosenCategory = computed(() =>
+  categoriesFor.value.find(c => c.name === form.value.category) ?? null);
+
+/**
+ * "Other" is the one that asks a follow-up.
+ *
+ * A register full of things filed under "other" is a register that cannot be
+ * reported on, so choosing it has to cost one sentence saying what the thing
+ * actually is.
+ */
+const needsOwnName = computed(
+  () => (form.value.category ?? "").toLowerCase() === "other");
+
+async function loadCategories() {
+  try {
+    const res = await api<{ data: AssetCategory[] }>("GET", "/api/v1/org/asset-categories", {
+      org: org(), params: { usable: 1 },
+    });
+    categories.value = res.data ?? [];
+  } catch { categories.value = []; }
+}
 
 const blankForm = () => ({
   asset_class: "physical",
@@ -62,6 +96,11 @@ const blankForm = () => ({
    * This is what the person deciding whether to buy another seat reads.
    */
   description: "",
+  /*
+   * What the thing is, when the category cannot say. Only asked for "other",
+   * and only sent then.
+   */
+  other_name: "", other_description: "",
   // Physical only.
   brand: "", model: "", serial_number: "",
   // A batch runs from a date to a date.
@@ -76,7 +115,10 @@ const form = ref(blankForm());
 
 /** Changing the kind changes what a category means, so the old one cannot stand. */
 function onClassChange() {
-  form.value.category = CATEGORIES_BY_CLASS[form.value.asset_class][0];
+  // The old category cannot stand — it meant something in the class we left.
+  form.value.category = categoriesFor.value[0]?.name ?? "";
+  form.value.other_name = "";
+  form.value.other_description = "";
 }
 
 const STATUSES   = ["available", "assigned", "maintenance", "retired"];
@@ -128,9 +170,17 @@ async function create() {
       asset_class: f.asset_class,
       name: f.name,
       asset_tag: f.asset_tag,
-      category: f.category,
+      /*
+       * "Other" is not a category anybody can report on, so what the person
+       * typed becomes the category and their sentence becomes the description.
+       */
+      category: needsOwnName.value && f.other_name.trim() ? f.other_name.trim() : f.category,
       vendor: f.vendor || undefined,
     };
+
+    if (needsOwnName.value && f.other_description.trim()) {
+      body.description = f.other_description.trim();
+    }
 
     if (f.asset_class === "physical") {
       Object.assign(body, {
@@ -257,7 +307,7 @@ watch(currentOrgSlug, () => {
   void openTab(tab.value);
 });
 
-onMounted(() => { void load(); void openTab("overview"); });
+onMounted(() => { void load(); void openTab("overview"); void loadCategories(); });
 </script>
 
 <template>
@@ -557,9 +607,34 @@ onMounted(() => { void load(); void openTab("overview"); });
         </label>
         <label class="field"><span>Category</span>
           <select v-model="form.category" class="control">
-            <option v-for="c in CATEGORIES_BY_CLASS[form.asset_class]" :key="c" :value="c">{{ c }}</option>
+            <option value="">Choose one…</option>
+            <option v-for="c in categoriesFor" :key="c.id" :value="c.name">{{ c.name }}</option>
           </select>
+          <!-- The difference between "peripheral" and "other" is obvious to
+               whoever wrote the list and to nobody else. -->
+          <span v-if="chosenCategory?.description" class="hint">{{ chosenCategory.description }}</span>
         </label>
+
+        <!--
+          Choosing "other" costs one sentence.
+
+          A register full of things filed under "other" is a register nobody can
+          report on, so the catch-all asks what the thing actually is — and that
+          answer becomes the category rather than the word "other".
+        -->
+        <div v-if="needsOwnName" class="field-wide other-box">
+          <p class="other-lead">
+            "Other" cannot be reported on. Say what this is and it will be filed
+            under that instead.
+          </p>
+          <label class="field"><span>What is it?</span>
+            <input v-model="form.other_name" class="control" placeholder="UPS, projector, signage screen…" />
+          </label>
+          <label class="field"><span>Description</span>
+            <textarea v-model="form.other_description" class="control" rows="2"
+                      placeholder="What it is for, and anything the next person should know."></textarea>
+          </label>
+        </div>
 
         <!-- Kept out of the way: it means the same thing for every kind. -->
         <label class="field"><span>Vendor</span>
@@ -916,5 +991,12 @@ code {
 .kind-hint  { font-size: .75rem; color: var(--color-text-muted); }
 .hint { font-size: .72rem; color: var(--color-text-light); }
 .check { display: flex; align-items: center; gap: 8px; font-size: .85rem; margin-bottom: 12px; }
+
+/* The follow-up when somebody picks the catch-all. Set apart so it reads as a
+   question being asked rather than two more fields. */
+.other-box { border: 1px solid var(--color-border); border-left: 3px solid var(--color-brand-base);
+             border-radius: 8px; padding: 12px 14px 2px; margin-bottom: var(--space-3);
+             background: var(--color-surface-sunken); }
+.other-lead { font-size: .78rem; color: var(--color-text-muted); margin: 0 0 10px; }
 .link { color: var(--color-brand-on-surface); }
 </style>

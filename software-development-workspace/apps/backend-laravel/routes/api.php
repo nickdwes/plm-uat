@@ -823,6 +823,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::put('/job-grades/{jobGrade}',        [OrgManagementController::class, 'updateJobGrade']);
         Route::delete('/job-grades/{jobGrade}',    [OrgManagementController::class, 'destroyJobGrade']);
 
+        /*
+         * Asset categories. Configured per organisation rather than compiled
+         * into the frontend, which is what they were.
+         */
+        Route::get('/asset-categories',                  [OrgManagementController::class, 'assetCategories']);
+        Route::post('/asset-categories',                 [OrgManagementController::class, 'storeAssetCategory']);
+        Route::put('/asset-categories/{assetCategory}',  [OrgManagementController::class, 'updateAssetCategory']);
+        Route::delete('/asset-categories/{assetCategory}',[OrgManagementController::class, 'destroyAssetCategory']);
+
         Route::get('/job-categories',                    [OrgManagementController::class, 'jobCategories']);
         Route::post('/job-categories',                   [OrgManagementController::class, 'storeJobCategory']);
         Route::put('/job-categories/{jobCategory}',      [OrgManagementController::class, 'updateJobCategory']);

@@ -13,6 +13,8 @@ use App\Models\OrgFunctionalUnit;
 use App\Models\OrgBusinessUnit;
 use App\Models\OrgPractice;
 use Illuminate\Http\JsonResponse;
+use App\Models\Asset\Asset;
+use App\Models\Asset\AssetCategory;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -117,6 +119,101 @@ class OrgManagementController extends Controller
     }
 
     // ── Job Categories ───────────────────────────────────────────────────────
+
+    // ── Asset categories ──────────────────────────────────────────────────
+
+    /**
+     * The kinds of thing this organisation owns.
+     *
+     * Gated on the asset permissions rather than the department ones: deciding
+     * that the company tracks UPS units is an asset decision, and the person
+     * who does it is not necessarily allowed near the org chart.
+     */
+    public function assetCategories(Request $request): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_VIEW), 403);
+
+        $q = AssetCategory::query()->orderBy('asset_class')->orderBy('sort_order')->orderBy('name');
+
+        // The picker asks for one class and only what it can offer; the
+        // configuration screen wants everything, including what is switched off.
+        if ($class = $request->string('asset_class')->toString()) {
+            $q->where('asset_class', $class);
+        }
+
+        if ($request->boolean('usable')) {
+            $q->where('is_active', true);
+        }
+
+        return response()->json(['data' => $q->get()]);
+    }
+
+    public function storeAssetCategory(Request $request): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_CREATE), 403);
+
+        $orgId = app('current.organization_id');
+
+        $data = $request->validate([
+            'asset_class' => ['required', Rule::in(Asset::CLASSES)],
+            'name'        => [
+                'required', 'string', 'max:120',
+                // Twice in one class is a typo, not a decision.
+                Rule::unique('asset_categories', 'name')
+                    ->where(fn ($q) => $q->where('organization_id', $orgId)
+                        ->where('asset_class', $request->input('asset_class'))),
+            ],
+            'description' => ['nullable', 'string', 'max:255'],
+            'sort_order'  => ['nullable', 'integer', 'min:0', 'max:999'],
+        ]);
+
+        $category = AssetCategory::create($data + ['organization_id' => $orgId]);
+
+        return response()->json(['data' => $category], 201);
+    }
+
+    public function updateAssetCategory(Request $request, AssetCategory $assetCategory): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_UPDATE), 403);
+
+        $assetCategory->update($request->validate([
+            'name'        => ['sometimes', 'string', 'max:120'],
+            'description' => ['nullable', 'string', 'max:255'],
+            'is_active'   => ['sometimes', 'boolean'],
+            'sort_order'  => ['sometimes', 'integer', 'min:0', 'max:999'],
+        ]));
+
+        return response()->json(['data' => $assetCategory->fresh()]);
+    }
+
+    /**
+     * Switched off, or removed if nothing was ever filed under it.
+     *
+     * Assets record a category by name. Deleting one that is in use would
+     * leave those rows pointing at something that no longer means anything, so
+     * the delete quietly becomes a retirement — and says so.
+     */
+    public function destroyAssetCategory(AssetCategory $assetCategory): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_DELETE), 403);
+
+        $inUse = Asset::where('category', $assetCategory->name)
+            ->where('asset_class', $assetCategory->asset_class)
+            ->exists();
+
+        if ($inUse) {
+            $assetCategory->update(['is_active' => false]);
+
+            return response()->json([
+                'message' => 'Assets are filed under this category, so it has been switched off rather than deleted. It will stop appearing when registering something new.',
+                'retired' => true,
+            ]);
+        }
+
+        $assetCategory->delete();
+
+        return response()->json(['message' => 'Category removed.', 'retired' => false]);
+    }
 
     public function jobCategories(): JsonResponse
     {

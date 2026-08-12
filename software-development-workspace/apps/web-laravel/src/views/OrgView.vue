@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from "vue";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, authStore, updateOrgBranding, getToken } from "../stores/auth";
 import type { ComplianceDocumentRecord, ComplianceDocumentListData, ComplianceSummary, OrgStructureData, OrgFunctionalUnit, OrgDepartment, OrgBusinessUnit, OrgPractice } from "../lib/types";
 
@@ -9,11 +9,76 @@ interface JobGrade      { id: number; name: string; level: number; min_salary: n
 interface JobCategory   { id: number; name: string; description: string | null }
 interface OrgProfile    { id: number; name: string; slug: string; legal_name: string | null; industry: string | null; country: string; currency: string; primary_email: string | null; primary_phone: string | null; address: string | null; is_active: boolean; logo_url?: string | null; primary_color?: string | null }
 
-const tab         = ref<"profile" | "departments" | "designations" | "grades" | "categories">("profile");
+const tab         = ref<"profile" | "departments" | "designations" | "grades" | "categories" | "asset-categories">("profile");
 const profileTab  = ref<"overview" | "compliance">("overview");
 const designations  = ref<Designation[]>([]);
 const jobGrades     = ref<JobGrade[]>([]);
 const jobCategories = ref<JobCategory[]>([]);
+
+/**
+ * The kinds of thing the organisation owns.
+ *
+ * These were a hardcoded list in the assets screen, so adding "UPS" meant a
+ * developer and a deploy. Configured here instead, per organisation, because
+ * the tenants own genuinely different equipment.
+ */
+interface AssetCategory {
+  id: number; asset_class: string; name: string;
+  description: string | null; is_active: boolean;
+}
+
+const ASSET_CLASSES = [
+  { key: "physical",     label: "Physical" },
+  { key: "software",     label: "Software" },
+  { key: "subscription", label: "Subscription" },
+];
+
+const assetCategories = ref<AssetCategory[]>([]);
+const acForm  = ref({ asset_class: "physical", name: "", description: "" });
+const acError = ref("");
+
+const assetCategoriesIn = (cls: string) =>
+  assetCategories.value.filter(c => c.asset_class === cls);
+
+async function loadAssetCategories(): Promise<void> {
+  const res = await api<{ data: AssetCategory[] }>("GET", "/api/v1/org/asset-categories", { org: org() });
+  assetCategories.value = res.data ?? [];
+}
+
+async function addAssetCategory(): Promise<void> {
+  acError.value = "";
+  if (!acForm.value.name.trim()) return;
+  saving.value = true;
+  try {
+    await api("POST", "/api/v1/org/asset-categories", { org: org(), body: acForm.value });
+    acForm.value.name = ""; acForm.value.description = "";
+    await loadAssetCategories();
+  } catch (e) {
+    acError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add that category.";
+  } finally { saving.value = false; }
+}
+
+/** Switching one off leaves history readable and takes it out of the picker. */
+async function toggleAssetCategory(c: AssetCategory): Promise<void> {
+  await api("PUT", `/api/v1/org/asset-categories/${c.id}`, {
+    org: org(), body: { is_active: !c.is_active },
+  });
+  await loadAssetCategories();
+}
+
+/**
+ * Deleting one that is in use retires it instead, and the server says so.
+ *
+ * Assets record a category by name, so removing it outright would leave those
+ * rows pointing at nothing.
+ */
+async function removeAssetCategory(c: AssetCategory): Promise<void> {
+  const res = await api<{ message: string; retired: boolean }>(
+    "DELETE", `/api/v1/org/asset-categories/${c.id}`, { org: org() },
+  );
+  if (res.retired) acError.value = res.message;
+  await loadAssetCategories();
+}
 const allOrgs     = ref<OrgProfile[]>([]);
 const loading     = ref(false);
 const error       = ref("");
@@ -715,6 +780,7 @@ async function saveReminder(): Promise<void> {
       <button :class="['tab', { active: tab === 'designations' }]"  @click="tab = 'designations'">Designations</button>
       <button :class="['tab', { active: tab === 'grades' }]"        @click="tab = 'grades'">Job Grades</button>
       <button :class="['tab', { active: tab === 'categories' }]"    @click="tab = 'categories'">Job Categories</button>
+      <button :class="['tab', { active: tab === 'asset-categories' }]" @click="tab = 'asset-categories'; loadAssetCategories()">Asset Categories</button>
 
       <button class="tab" @click="$router.push('/org/benefit-plans')">Benefit Plans</button>
       <button class="tab" @click="$router.push('/leave/admin')">Leave Admin</button>
@@ -868,6 +934,54 @@ async function saveReminder(): Promise<void> {
               <td><span :class="o.is_active ? 'badge badge-green' : 'badge badge-gray'">{{ o.is_active ? 'Active' : 'Inactive' }}</span></td>
             </tr>
             <tr v-if="!allOrgs.length"><td colspan="5" class="status">No organisations found.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
+    <!-- ── ASSET CATEGORIES ──────────────────────────────────────────────────── -->
+    <template v-if="tab === 'asset-categories'">
+      <div class="card" style="margin-bottom:16px">
+        <h3 class="card-title">Add Asset Category</h3>
+        <p class="ov-hint">
+          What this organisation owns. A category belongs to one class — "SSL
+          certificate" is not a kind of laptop, and offering it when somebody
+          registers a monitor is how a register gets filled in wrongly.
+        </p>
+        <div class="form-row">
+          <select v-model="acForm.asset_class" class="input">
+            <option v-for="c in ASSET_CLASSES" :key="c.key" :value="c.key">{{ c.label }}</option>
+          </select>
+          <input v-model="acForm.name" type="text" placeholder="Category name" class="input" />
+          <input v-model="acForm.description" type="text" placeholder="What belongs here (optional)" class="input" />
+          <button class="btn btn-primary btn-sm" :disabled="saving || !acForm.name.trim()" @click="addAssetCategory">Add</button>
+        </div>
+        <p v-if="acError" class="ov-hint" style="color:var(--color-danger-text)">{{ acError }}</p>
+      </div>
+
+      <div v-for="cls in ASSET_CLASSES" :key="cls.key" class="card" style="margin-bottom:16px">
+        <h3 class="card-title">{{ cls.label }}</h3>
+        <p v-if="!assetCategoriesIn(cls.key).length" class="ov-hint">Nothing configured for this class.</p>
+        <table v-else class="ov-cat-table">
+          <thead>
+            <tr><th>Category</th><th>What belongs here</th><th>In the picker</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in assetCategoriesIn(cls.key)" :key="c.id" :style="c.is_active ? '' : 'opacity:.55'">
+              <td>{{ c.name }}</td>
+              <td class="ov-cat-desc">{{ c.description ?? '—' }}</td>
+              <td>
+                <!-- Switched off rather than deleted, so assets already filed
+                     under it still read correctly. -->
+                <label class="ov-hint" style="cursor:pointer">
+                  <input type="checkbox" :checked="c.is_active" @change="toggleAssetCategory(c)" />
+                  {{ c.is_active ? 'shown' : 'hidden' }}
+                </label>
+              </td>
+              <td class="ov-cat-actions">
+                <button class="btn btn-ghost btn-sm" @click="removeAssetCategory(c)">Remove</button>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -1707,4 +1821,7 @@ async function saveReminder(): Promise<void> {
 .comp-drawer-actions { display: flex; gap: 8px; margin-top: 6px; }
 
 
+
+/* Explanatory line under a configuration heading. */
+.ov-hint { font-size: .78rem; color: var(--color-text-muted); margin: 0 0 10px; }
 </style>
