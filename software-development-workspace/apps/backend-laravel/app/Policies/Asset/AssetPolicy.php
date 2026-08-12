@@ -69,6 +69,20 @@ class AssetPolicy extends BasePolicy
         return $this->canTouch($user, Permission::ASSETS_ASSIGN, $asset);
     }
 
+    /**
+     * Deciding on a request for equipment.
+     *
+     * Takes no asset, because a request is for something the organisation may
+     * not own yet — that is often the point of it. `assets.approve` has existed
+     * in the catalogue since the module was scaffolded and nothing ever
+     * consulted it, so every stage of the chain returned "unauthorized"
+     * regardless of who was asking.
+     */
+    public function approve(User $user): bool
+    {
+        return $this->can($user, Permission::ASSETS_APPROVE);
+    }
+
     /** Anyone holding the asset may raise a fault against it. */
     public function reportIssue(User $user, Asset $asset): bool
     {

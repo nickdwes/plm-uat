@@ -10,6 +10,7 @@ use App\Http\Resources\Asset\AssetResource;
 use App\Models\Asset\Asset;
 use App\Models\Asset\AssetRequest;
 use App\Models\Employee;
+use App\Services\Asset\AssetRequestChain;
 use App\Services\Asset\AssetService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -69,6 +70,30 @@ class AssetController extends Controller
                 'options' => $f->options, 'help' => $f->help, 'is_required' => $f->is_required,
             ])->values(),
         ]);
+    }
+
+    /**
+     * "I have it, and here is the state it arrived in."
+     *
+     * Authorised against the person, not a permission: accepting equipment is
+     * something only the recipient can do, and an administrator signing on
+     * somebody's behalf would defeat the point of a signature.
+     */
+    public function accept(Request $request, Asset $asset): AssetResource
+    {
+        $employeeId = $request->user()->employeeId();
+        abort_if($employeeId === null, 422, 'You have no employee record.');
+
+        $data = $request->validate([
+            'note'    => ['nullable', 'string', 'max:500'],
+            // The tick on the designs' form. Refused rather than assumed:
+            // an acknowledgement nobody made is not an acknowledgement.
+            'agreed'  => ['accepted'],
+        ]);
+
+        $accepted = app(AssetRequestChain::class)->accept($asset, $employeeId, $data['note'] ?? null);
+
+        return new AssetResource($accepted->load(['holder', 'department']));
     }
 
     /**

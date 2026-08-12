@@ -8,6 +8,7 @@ use App\Models\Asset\AssetDisposal;
 use App\Models\Asset\AssetIssue;
 use App\Models\Asset\AssetMaintenance;
 use App\Models\Asset\AssetRequest;
+use App\Services\Asset\AssetRequestChain;
 use App\Services\Asset\RenewalSchedule;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -39,7 +40,7 @@ class AssetRegisterController extends Controller
         $this->authorize('viewAny', Asset::class);
 
         $q = AssetRequest::query()
-            ->with(['employee:id,first_name,last_name', 'asset:id,name,asset_tag'])
+            ->with(['requester:id,first_name,last_name', 'asset:id,name,asset_tag'])
             ->latest('id');
 
         if ($request->boolean('mine')) {
@@ -54,7 +55,7 @@ class AssetRegisterController extends Controller
             'data' => $q->paginate((int) $request->input('per_page', 25))->through(fn (AssetRequest $r) => [
                 'id'           => $r->id,
                 'reference'    => $r->request_number,
-                'employee'     => $r->employee?->full_name,
+                'employee'     => $r->requester?->full_name,
                 'item'         => $r->item,
                 'category'     => $r->category,
                 'quantity'     => $r->quantity,
@@ -181,6 +182,64 @@ class AssetRegisterController extends Controller
                 'total'       => $rows->count(),
                 'estimated'   => (float) $rows->sum(fn ($r) => (float) ($r['estimated_cost'] ?? 0)),
             ],
+        ]);
+    }
+
+    // ── Acting on a request ───────────────────────────────────────────────
+
+    /** Move it to the next stage. */
+    public function advanceRequest(Request $request, AssetRequest $assetRequest): JsonResponse
+    {
+        $this->authorize('approve', Asset::class);
+
+        return response()->json([
+            'data' => app(AssetRequestChain::class)
+                ->advance($assetRequest, $request->user(), $request->input('note')),
+        ]);
+    }
+
+    public function declineRequest(Request $request, AssetRequest $assetRequest): JsonResponse
+    {
+        $this->authorize('approve', Asset::class);
+
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        return response()->json([
+            'data' => app(AssetRequestChain::class)
+                ->decline($assetRequest, $request->user(), $data['reason']),
+        ]);
+    }
+
+    public function forwardRequest(Request $request, AssetRequest $assetRequest): JsonResponse
+    {
+        $this->authorize('approve', Asset::class);
+
+        return response()->json([
+            'data' => app(AssetRequestChain::class)
+                ->forwardToProcurement($assetRequest, $request->user(), $request->input('note')),
+        ]);
+    }
+
+    /** Give them a specific asset off the shelf. */
+    public function fulfilRequest(Request $request, AssetRequest $assetRequest): JsonResponse
+    {
+        $data = $request->validate([
+            'asset_id'    => ['required', 'integer', 'exists:assets,id'],
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'note'        => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $asset = Asset::findOrFail($data['asset_id']);
+
+        // Against the asset itself, not the class — `assign` asks whether this
+        // person may move *this* equipment, and it cannot answer without one.
+        $this->authorize('assign', $asset);
+
+        return response()->json([
+            'data' => app(AssetRequestChain::class)->fulfil(
+                $assetRequest, $asset, $request->user(),
+                (int) $data['employee_id'], $data['note'] ?? null,
+            ),
         ]);
     }
 

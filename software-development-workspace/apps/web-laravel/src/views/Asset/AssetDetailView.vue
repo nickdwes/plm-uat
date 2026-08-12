@@ -113,6 +113,38 @@ const capturedFields = computed(() => {
     .filter(d => d.value !== undefined && d.value !== null && d.value !== "");
 });
 
+/**
+ * Signing for equipment.
+ *
+ * Shown only to the person it is waiting on. Custody starts here — everything
+ * before this is an allocation, and the gap between the two is where a laptop
+ * goes missing from somebody's record.
+ */
+const showAccept  = ref(false);
+const acceptForm  = ref({ note: "", agreed: false });
+const acceptError = ref("");
+
+const awaitingMe = computed(() => {
+  const a: any = asset.value;
+  return a?.status === "pending_acceptance";
+});
+
+async function acceptAsset() {
+  acceptError.value = "";
+  busy.value = true;
+  try {
+    const res = await api<{ data: any }>("POST", `/api/v1/assets/${props.id}/accept`, {
+      org: org(),
+      body: { note: acceptForm.value.note || null, agreed: acceptForm.value.agreed },
+    });
+    asset.value = res.data;
+    showAccept.value = false;
+    await load();
+  } catch (e) {
+    acceptError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not record that.";
+  } finally { busy.value = false; }
+}
+
 const showSeat   = ref(false);
 const seatForm   = ref<{ employee_id: number | null; note: string }>({ employee_id: null, note: "" });
 const seatError  = ref("");
@@ -318,6 +350,24 @@ onMounted(load);
       </section>
 
       <template v-else>
+      <!--
+        Waiting to be signed for.
+
+        Placed above everything because it is the only thing on this page that
+        needs somebody to do something today.
+      -->
+      <div v-if="awaitingMe" class="accept-strip">
+        <div>
+          <strong>This is waiting for you to accept it.</strong>
+          <p>
+            Allocated to {{ (asset as any).holder?.full_name ?? 'you' }} on
+            {{ (asset as any).assigned_date }}. It stays allocated rather than
+            held until you confirm you have it.
+          </p>
+        </div>
+        <button class="btn-primary" @click="showAccept = true">Sign acceptance</button>
+      </div>
+
       <!-- Attention strip: the two things a register is asked about. -->
       <p v-if="asset.warranty_has_expired || asset.maintenance_is_due" class="note">
         <span v-if="asset.warranty_has_expired">Warranty expired {{ asset.warranty_expiry_date }}.</span>
@@ -454,6 +504,42 @@ onMounted(load);
       </section>
       </template>
     </template>
+
+    <!-- Acceptance -->
+    <div v-if="showAccept" class="overlay" @click.self="showAccept = false">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Acceptance form">
+        <h2>Acceptance form</h2>
+        <p class="muted seat-lead">
+          By signing, you acknowledge receipt of <strong>{{ asset?.name }}</strong>
+          in good working condition and agree to the company asset policy.
+        </p>
+
+        <!--
+          Anything already wrong belongs on the record now rather than being
+          discovered at an exit interview and argued about.
+        -->
+        <label class="field"><span>Anything to note about its condition?</span>
+          <textarea v-model="acceptForm.note" class="control" rows="3"
+                    placeholder="Optional — e.g. screen already has a scratch on the lower left."></textarea>
+        </label>
+
+        <label class="check-inline accept-check">
+          <input v-model="acceptForm.agreed" type="checkbox" />
+          <span>I have read and agree to the Company Asset Policy.</span>
+        </label>
+
+        <p v-if="acceptError" class="alert" role="alert">{{ acceptError }}</p>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showAccept = false">Cancel</button>
+          <!-- Refused rather than assumed: an acknowledgement nobody made is
+               not an acknowledgement. -->
+          <button class="btn-primary" :disabled="busy || !acceptForm.agreed" @click="acceptAsset">
+            Confirm &amp; accept asset
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Edit -->
     <div v-if="showEdit" class="overlay" @click.self="showEdit = false">
@@ -792,4 +878,10 @@ code {
 .kv-row { display: flex; flex-direction: column; }
 .kv-k { font-size: .72rem; color: var(--color-text-muted); }
 .kv-v { font-size: .88rem; color: var(--color-text); }
+
+.accept-strip { display: flex; align-items: center; justify-content: space-between; gap: 18px;
+                border: 1px solid var(--color-brand-base); background: var(--color-brand-subtle);
+                border-radius: 12px; padding: 14px 18px; margin-top: 16px; }
+.accept-strip p { margin: 4px 0 0; font-size: .82rem; color: var(--color-text-muted); }
+.accept-check { margin-bottom: 14px; }
 </style>

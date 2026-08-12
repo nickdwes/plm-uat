@@ -303,6 +303,68 @@ const disposals = ref<any[]>([]);
 const mine      = ref<Asset[]>([]);
 const servicing = ref<any[]>([]);
 const renewals  = ref<any[]>([]);
+
+// ── Acting on a request ─────────────────────────────────────────────────────
+
+/**
+ * One request, open for a decision.
+ *
+ * The stages are the point: HR asks whether this person should have one,
+ * finance whether we can afford it, procurement who we buy it from. The panel
+ * shows only the action that belongs to the stage it is at.
+ */
+const openRequest = ref<any | null>(null);
+const requestBusy = ref(false);
+const declineReason = ref("");
+const showDecline = ref(false);
+
+const STAGE_LABEL: Record<string, string> = {
+  pending: "Pending", hr_review: "HR review", awaiting_finance: "Awaiting finance",
+  procurement: "With procurement", approved: "Approved",
+  rejected: "Declined", fulfilled: "Fulfilled",
+};
+
+/** What advancing would do next, in words. */
+const NEXT_LABEL: Record<string, string> = {
+  pending: "Send to HR review",
+  hr_review: "Send to finance",
+  awaiting_finance: "Approve",
+  procurement: "Mark as bought",
+};
+
+async function actOnRequest(action: "advance" | "forward", note?: string) {
+  if (!openRequest.value) return;
+  requestBusy.value = true;
+  try {
+    await api("POST", `/api/v1/assets/requests/${openRequest.value.id}/${action}`, {
+      org: org(), body: { note: note ?? null },
+    });
+    openRequest.value = null;
+    await loadRequestsTab();
+  } catch (e) {
+    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not do that.";
+  } finally { requestBusy.value = false; }
+}
+
+async function declineRequest() {
+  if (!openRequest.value || !declineReason.value.trim()) return;
+  requestBusy.value = true;
+  try {
+    await api("POST", `/api/v1/assets/requests/${openRequest.value.id}/decline`, {
+      org: org(), body: { reason: declineReason.value.trim() },
+    });
+    showDecline.value = false;
+    openRequest.value = null;
+    declineReason.value = "";
+    await loadRequestsTab();
+  } catch (e) {
+    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not decline that.";
+  } finally { requestBusy.value = false; }
+}
+
+async function loadRequestsTab() {
+  requests.value = (await api<{ data: any }>("GET", "/api/v1/assets/requests", { org: org() })).data?.data ?? [];
+}
 const renewalSummary = ref<any>(null);
 
 /** Who to tell, being edited for one asset at a time. */
@@ -372,7 +434,7 @@ async function openTab(next: Tab) {
     if (next === "overview") {
       summary.value = await api<Summary>("GET", "/api/v1/assets/summary", { org: org() });
     } else if (next === "requests") {
-      requests.value = (await api<{ data: any }>("GET", "/api/v1/assets/requests", { org: org() })).data?.data ?? [];
+      await loadRequestsTab();
     } else if (next === "maintenance") {
       servicing.value = (await api<{ data: any }>("GET", "/api/v1/assets/maintenance", { org: org() })).data?.data ?? [];
     } else if (next === "renewals") {
@@ -525,7 +587,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
       <p v-if="!requests.length" class="quiet">No requests have been raised.</p>
       <table v-else class="grid">
         <thead>
-          <tr><th>Request</th><th>Item</th><th>Employee</th><th>Urgency</th><th>Submitted</th><th>Status</th></tr>
+          <tr><th>Request</th><th>Item</th><th>Employee</th><th>Urgency</th><th>Submitted</th><th>Status</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="r in requests" :key="r.id">
@@ -534,7 +596,12 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
             <td>{{ r.employee ?? '—' }}</td>
             <td>{{ r.urgency ?? '—' }}</td>
             <td>{{ r.submitted_on }}</td>
-            <td><span class="pill">{{ r.status }}</span></td>
+            <td>
+              <span :class="['pill', r.status === 'rejected' ? 'pill-bad' : r.status === 'fulfilled' ? 'pill-ok' : '']">
+                {{ STAGE_LABEL[r.status] ?? r.status }}
+              </span>
+            </td>
+            <td><button class="link" @click="openRequest = r">View</button></td>
           </tr>
         </tbody>
       </table>
@@ -787,6 +854,65 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           <button class="btn-secondary" :disabled="watcherSaving" @click="saveWatchers(false)">Turn off</button>
           <button class="btn-primary" :disabled="watcherSaving || !watcherIds.length" @click="saveWatchers(true)">
             {{ watcherSaving ? "Saving…" : "Remind these people" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── One request ──────────────────────────────────────────────────── -->
+    <div v-if="openRequest" class="overlay" @click.self="openRequest = null">
+      <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-label="Request">
+        <h2>{{ openRequest.item }}</h2>
+        <p class="quiet reminder-lead">
+          <code>{{ openRequest.reference }}</code> · {{ openRequest.employee }} ·
+          requested {{ openRequest.submitted_on }}
+        </p>
+
+        <!-- Why it was declined, shown to the person who asked rather than
+             buried in an internal note. -->
+        <p v-if="openRequest.status === 'rejected'" class="alert">
+          Declined — {{ openRequest.decision_note ?? openRequest.rejection_reason ?? 'no reason recorded' }}
+        </p>
+
+        <div class="kv-list">
+          <div><span>Stage</span><strong>{{ STAGE_LABEL[openRequest.status] ?? openRequest.status }}</strong></div>
+          <div><span>Category</span><strong>{{ openRequest.category ?? '—' }}</strong></div>
+          <div><span>Quantity</span><strong>{{ openRequest.quantity ?? 1 }}</strong></div>
+          <div><span>Urgency</span><strong>{{ openRequest.urgency ?? '—' }}</strong></div>
+        </div>
+
+        <p v-if="openRequest.reason" class="req-reason">"{{ openRequest.reason }}"</p>
+
+        <div v-if="!['rejected','fulfilled'].includes(openRequest.status)" class="dialog-actions req-actions">
+          <button class="btn-danger" :disabled="requestBusy" @click="showDecline = true">Decline</button>
+          <!-- Nothing suitable on the shelf is a different situation from
+               awaiting a decision, so it is its own action. -->
+          <button class="btn-secondary" :disabled="requestBusy" @click="actOnRequest('forward')">
+            Forward to procurement
+          </button>
+          <button class="btn-primary" :disabled="requestBusy" @click="actOnRequest('advance')">
+            {{ NEXT_LABEL[openRequest.status] ?? 'Advance' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Declining, with a reason ─────────────────────────────────────── -->
+    <div v-if="showDecline" class="overlay" @click.self="showDecline = false">
+      <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-label="Decline request">
+        <h2>Decline request</h2>
+        <p class="quiet reminder-lead">
+          The reason goes back to whoever asked. Not being told why is the part
+          people actually mind.
+        </p>
+        <label class="field field-wide"><span>Reason</span>
+          <textarea v-model="declineReason" class="control" rows="3"
+                    placeholder="Budget frozen this quarter — revisit in October."></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showDecline = false">Cancel</button>
+          <button class="btn-danger" :disabled="requestBusy || !declineReason.trim()" @click="declineRequest">
+            Decline request
           </button>
         </div>
       </div>
@@ -1271,4 +1397,15 @@ code {
 .cf-lead { font-size: .78rem; font-weight: 600; color: var(--color-text-muted);
            text-transform: uppercase; letter-spacing: .04em;
            border-top: 1px solid var(--color-border); padding-top: 12px; margin: 6px 0 10px; }
+
+.kv-list { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 18px; margin-bottom: 14px; }
+.kv-list > div { display: flex; flex-direction: column; }
+.kv-list span { font-size: .72rem; color: var(--color-text-muted); }
+.kv-list strong { font-size: .88rem; font-weight: 500; color: var(--color-text); }
+.req-reason { font-size: .85rem; color: var(--color-text-muted); border-left: 3px solid var(--color-border);
+              padding-left: 12px; margin: 0 0 16px; }
+.req-actions { flex-wrap: wrap; }
+.btn-danger { padding: 8px 16px; border-radius: var(--radius-md); border: 1px solid var(--color-danger-text);
+              background: transparent; color: var(--color-danger-text); font: inherit; font-size: .85rem; cursor: pointer; }
+.btn-danger:disabled { opacity: .5; cursor: default; }
 </style>

@@ -673,6 +673,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/maintenance', [AssetRegisterController::class, 'maintenance']);
         Route::get('/renewals',    [AssetRegisterController::class, 'renewals']);
 
+        /*
+         * The chain. Each stage is a different person answering a different
+         * question, so each is its own act rather than a status field somebody
+         * sets.
+         */
+        Route::post('/requests/{assetRequest}/advance', [AssetRegisterController::class, 'advanceRequest']);
+        Route::post('/requests/{assetRequest}/decline', [AssetRegisterController::class, 'declineRequest']);
+        Route::post('/requests/{assetRequest}/forward', [AssetRegisterController::class, 'forwardRequest']);
+        Route::post('/requests/{assetRequest}/fulfil',  [AssetRegisterController::class, 'fulfilRequest']);
+
         Route::get('/',            [AssetController::class, 'index']);
         Route::post('/',           [AssetController::class, 'store']);
         Route::get('/{asset}',     [AssetController::class, 'show']);
@@ -686,6 +696,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Seats on a licence batch. Consuming one is a different act from
         // correcting a renewal date, so it is a different endpoint.
+        // Only the recipient can do this, which is why it is not an update.
+        Route::post('/{asset}/accept',             [AssetController::class, 'accept']);
+
         Route::post('/{asset}/seats',              [AssetController::class, 'allocateSeat']);
         Route::delete('/{asset}/seats/{allocation}', [AssetController::class, 'releaseSeat']);
 

@@ -22,11 +22,21 @@ class Asset extends Model
     public const STATUS_MAINTENANCE = 'maintenance';
     public const STATUS_RETIRED     = 'retired';
 
+    /*
+     * Allocated to somebody who has not yet said they have it.
+     *
+     * Assigning used to set `assigned_to` immediately, so the register claimed
+     * somebody held equipment that was still on a shelf — and if it went
+     * missing in between, it went missing from their record.
+     */
+    public const STATUS_PENDING_ACCEPTANCE = 'pending_acceptance';
+
     public const STATUSES = [
         self::STATUS_AVAILABLE,
         self::STATUS_ASSIGNED,
         self::STATUS_MAINTENANCE,
         self::STATUS_RETIRED,
+        self::STATUS_PENDING_ACCEPTANCE,
     ];
 
     /**
@@ -57,7 +67,7 @@ class Asset extends Model
         'serial_number', 'status', 'lifecycle_stage', 'condition',
         'procured_date', 'in_stock_date', 'next_maintenance',
         'assigned_to', 'assigned_date', 'department_id', 'location',
-        'handover_required', 'handover_signed_at',
+        'handover_required', 'handover_signed_at', 'accepted_by', 'acceptance_note',
         'purchase_date', 'purchase_value', 'vendor', 'invoice_number',
         'warranty_period', 'warranty_expiry_date',
         'starts_on', 'expires_on', 'auto_renews', 'renewal_notice_days', 'renewal_cost',
