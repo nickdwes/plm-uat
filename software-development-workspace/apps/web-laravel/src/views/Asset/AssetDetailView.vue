@@ -21,11 +21,44 @@ const loading = ref(false);
 const error   = ref("");
 const busy    = ref(false);
 
+/**
+ * Three views of one asset, as the designs have them.
+ *
+ * The timeline is the reason this is tabbed rather than one long page: an
+ * asset's history is the answer to a different question from its
+ * specification, and stacking them means the person asking "who had this in
+ * March" scrolls past a MAC address to find out.
+ */
+type Tab = "details" | "lifecycle" | "issues";
+const tab = ref<Tab>("details");
+
+/** Where a stage sits on the timeline, and what to call it. */
+const STAGE_LABEL: Record<string, string> = {
+  procured: "Procured", in_stock: "In Stock", assigned: "Assigned",
+  reassigned: "Reassigned", returned: "Returned", under_repair: "Under Repair",
+  repaired: "Repaired", lost: "Lost", retired: "Retired", disposed: "Disposed",
+};
+
 const showAssign  = ref(false);
 const assignError = ref("");
 const assignForm  = ref<{ employee_id: number | null; assigned_date: string }>({ employee_id: null, assigned_date: "" });
 
 function org() { return currentOrgSlug.value; }
+
+const issues = ref<any[]>([]);
+const issuesLoaded = ref(false);
+
+/** Fetched on first open. Most visits to an asset never ask about faults. */
+async function loadIssues() {
+  if (issuesLoaded.value) return;
+  try {
+    const res = await api<{ data: any }>("GET", "/api/v1/assets/issues", {
+      org: org(), params: { asset_id: props.id },
+    });
+    issues.value = res.data?.data ?? [];
+    issuesLoaded.value = true;
+  } catch { /* the tab shows its empty state */ }
+}
 
 async function load() {
   if (!org()) return;
@@ -105,6 +138,65 @@ onMounted(load);
         <span :class="['pill', `pill-${asset.status}`]">{{ asset.status }}</span>
       </header>
 
+      <nav class="tabs" role="tablist">
+        <button role="tab" :class="['tab', { on: tab === 'details' }]"
+                :aria-selected="tab === 'details'" @click="tab = 'details'">Asset details</button>
+        <button role="tab" :class="['tab', { on: tab === 'lifecycle' }]"
+                :aria-selected="tab === 'lifecycle'" @click="tab = 'lifecycle'">Lifecycle Tracking</button>
+        <button role="tab" :class="['tab', { on: tab === 'issues' }]"
+                :aria-selected="tab === 'issues'" @click="tab = 'issues'; loadIssues()">Issues History</button>
+      </nav>
+
+      <!-- ── Lifecycle ──────────────────────────────────────────────────── -->
+      <section v-if="tab === 'lifecycle'" class="panel">
+        <div class="panel-head"><h2>Lifecycle Timeline</h2></div>
+        <p class="muted tl-lead">Track an asset's journey from procurement to its current state.</p>
+
+        <p v-if="!(asset as any).events?.length" class="muted">
+          Nothing has been recorded against this asset yet.
+        </p>
+
+        <!--
+          Read forwards, one marker per thing that happened. Reassignment gets
+          its own marker rather than a second "assigned" — a handover between
+          two people is where the signature gets skipped, and two identical
+          markers would hide exactly that.
+        -->
+        <ol v-else class="timeline">
+          <li v-for="e in (asset as any).events" :key="e.id" class="tl-item">
+            <span class="tl-dot" />
+            <span class="tl-body">
+              <span class="tl-stage">{{ STAGE_LABEL[e.event] ?? e.event }}</span>
+              <span class="tl-date">{{ e.occurred_on }}</span>
+              <span v-if="e.employee || e.vendor || e.location" class="tl-who">
+                {{ e.employee ?? e.vendor ?? e.location }}
+              </span>
+              <span v-if="e.note" class="tl-note">{{ e.note }}</span>
+            </span>
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Issues ─────────────────────────────────────────────────────── -->
+      <section v-else-if="tab === 'issues'" class="panel">
+        <div class="panel-head"><h2>Issues History</h2></div>
+        <p v-if="!issues.length" class="muted">No faults have been reported against this asset.</p>
+        <table v-else class="tl-table">
+          <thead>
+            <tr><th>Ticket</th><th>Reported</th><th>Type</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="i in issues" :key="i.id">
+              <td><code>{{ i.reference }}</code></td>
+              <td>{{ i.reported_on }}</td>
+              <td>{{ i.issue_type ?? '—' }}</td>
+              <td><span class="pill">{{ i.status }}</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <template v-else>
       <!-- Attention strip: the two things a register is asked about. -->
       <p v-if="asset.warranty_has_expired || asset.maintenance_is_due" class="note">
         <span v-if="asset.warranty_has_expired">Warranty expired {{ asset.warranty_expiry_date }}.</span>
@@ -174,6 +266,7 @@ onMounted(load);
         <div class="panel-head"><h2>Notes</h2></div>
         <p class="pad">{{ asset.notes }}</p>
       </section>
+      </template>
     </template>
 
     <!-- Assign -->
@@ -354,4 +447,38 @@ code {
 }
 
 .dialog-actions { @apply flex justify-end; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* ── Tabs ──────────────────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--color-border); margin: 18px 0 0; overflow-x: auto; }
+.tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px;
+       padding: 10px 18px; font: inherit; font-size: .88rem; font-weight: 500;
+       color: var(--color-text-muted); cursor: pointer; white-space: nowrap; }
+.tab:hover { color: var(--color-text); }
+.tab.on { color: var(--color-brand-base); border-bottom-color: var(--color-brand-base); font-weight: 600; }
+
+/* ── Lifecycle timeline ────────────────────────────────────────────────── */
+.tl-lead { padding: 0 16px; margin: -4px 0 14px; }
+.timeline { list-style: none; margin: 0; padding: 0 16px 16px; display: flex; flex-direction: column; }
+.tl-item { display: grid; grid-template-columns: 20px 1fr; gap: 12px; position: relative; padding-bottom: 20px; }
+.tl-item:last-child { padding-bottom: 0; }
+/* The connecting line, drawn behind the markers and stopped at the last one
+   so the timeline does not trail off into nothing. */
+.tl-item:not(:last-child)::before {
+  content: ""; position: absolute; left: 9px; top: 16px; bottom: 0;
+  width: 2px; background: var(--color-border);
+}
+.tl-dot { width: 12px; height: 12px; margin-top: 3px; border-radius: 50%;
+          background: var(--color-brand-base); box-shadow: 0 0 0 3px var(--color-surface-raised); z-index: 1; }
+.tl-body { display: flex; flex-direction: column; }
+.tl-stage { font-size: .88rem; font-weight: 600; color: var(--color-text); }
+.tl-date  { font-size: .78rem; color: var(--color-text-muted); }
+.tl-who   { font-size: .78rem; color: var(--color-text-muted); }
+.tl-note  { font-size: .78rem; color: var(--color-text-light); margin-top: 2px; }
+
+.tl-table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.tl-table th { text-align: left; padding: 10px 16px; font-size: .72rem; font-weight: 600;
+               text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted);
+               background: var(--color-surface-sunken); }
+.tl-table td { padding: 12px 16px; border-bottom: 1px solid var(--color-border); }
+.tl-table tr:last-child td { border-bottom: none; }
 </style>
