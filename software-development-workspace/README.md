@@ -68,6 +68,7 @@ rather than left in a commit body where no list can be got out of it.
 
 - Everything deferred, across modules: `docs/deferred-work.md`
 - Assets against the EAM brief: `docs/assets-eam-coverage.md`
+- Assets build order and open decisions: `docs/assets-implementation-plan.md`
 
 ## New Integration Scaffolds
 
