@@ -80,6 +80,12 @@ class StoreAssetRequest extends FormRequest
              * are the whole point of the other two.
              */
             'starts_on'           => ['nullable', 'date'],
+            /*
+             * When the vendor stops supporting it. A date rather than a status,
+             * because unsupported software becomes a security finding on a
+             * particular day whether or not anybody changed a dropdown.
+             */
+            'end_of_support_on'   => ['nullable', 'date'],
             'expires_on'          => ['nullable', 'date', 'after_or_equal:starts_on'],
             'description'         => ['nullable', 'string', 'max:5000'],
             'auto_renews'         => ['nullable', 'boolean'],

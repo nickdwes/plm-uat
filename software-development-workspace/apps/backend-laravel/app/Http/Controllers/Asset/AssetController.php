@@ -9,6 +9,9 @@ use App\Http\Requests\Asset\UpdateAssetRequest;
 use App\Http\Resources\Asset\AssetResource;
 use App\Models\Asset\Asset;
 use App\Models\Asset\AssetRequest;
+use Illuminate\Validation\Rule;
+use App\Models\Asset\AssetRelationship;
+use App\Models\Asset\AssetDocument;
 use App\Models\Employee;
 use App\Services\Asset\AssetRequestChain;
 use App\Services\Asset\AssetService;
@@ -64,12 +67,14 @@ class AssetController extends Controller
          */
         return (new AssetResource($asset->load([
             'holder', 'department', 'events.employee', 'events.vendor',
-            'seats.employee', 'photos',
+            'seats.employee', 'photos', 'documents',
         ])))->additional([
             'custom_field_defs' => $asset->categoryFields()->get()->map(fn ($f) => [
                 'key' => $f->key, 'label' => $f->label, 'type' => $f->type,
-                'options' => $f->options, 'help' => $f->help, 'is_required' => $f->is_required,
+                'options' => $f->options, 'help' => $f->help,
+                'is_required' => $f->is_required, 'section' => $f->section,
             ])->values(),
+            'relationships' => $this->relationshipPayload($asset),
         ]);
     }
 
@@ -95,6 +100,141 @@ class AssetController extends Controller
         $accepted = app(AssetRequestChain::class)->accept($asset, $employeeId, $data['note'] ?? null);
 
         return new AssetResource($accepted->load(['holder', 'department']));
+    }
+
+    // ── Documents ─────────────────────────────────────────────────────────
+
+    public function storeDocument(Request $request, Asset $asset): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $data = $request->validate([
+            'file'     => ['required', 'file', 'mimes:pdf,doc,docx,xls,xlsx,png,jpg,jpeg', 'max:20480'],
+            'category' => ['required', Rule::in(AssetDocument::CATEGORIES)],
+            'note'     => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $file = $request->file('file');
+
+        // Encrypted, like every other document class. A signed vendor contract
+        // carries commercial terms and signatures.
+        $path = DocumentVault::store(
+            $file, 'asset_documents', "{$asset->organization_id}/{$asset->id}/documents",
+        );
+
+        $asset->documents()->create([
+            'organization_id' => $asset->organization_id,
+            'category'      => $data['category'],
+            'storage_path'  => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type'     => $file->getMimeType(),
+            'size_bytes'    => $file->getSize(),
+            'note'          => $data['note'] ?? null,
+            'uploaded_by'   => $request->user()->id,
+        ]);
+
+        return response()->json(['data' => $this->documentPayload($asset->fresh('documents'))]);
+    }
+
+    public function downloadDocument(Asset $asset, int $document)
+    {
+        $this->authorize('view', $asset);
+
+        $record = $asset->documents()->findOrFail($document);
+
+        return DocumentVault::download(
+            'asset_documents', $record->storage_path, $record->original_name, $record->mime_type,
+        );
+    }
+
+    public function destroyDocument(Asset $asset, int $document): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $record = $asset->documents()->findOrFail($document);
+        DocumentVault::delete('asset_documents', $record->storage_path);
+        $record->delete();
+
+        return response()->json(['data' => $this->documentPayload($asset->fresh('documents'))]);
+    }
+
+    private function documentPayload(Asset $asset): array
+    {
+        return $asset->documents->map(fn ($d) => [
+            'id' => $d->id, 'category' => $d->category, 'note' => $d->note,
+            'original_name' => $d->original_name, 'size_bytes' => $d->size_bytes,
+            'uploaded_at' => $d->created_at?->toDateString(),
+        ])->values()->all();
+    }
+
+    // ── Relationships ─────────────────────────────────────────────────────
+
+    /**
+     * Record that one asset depends on another.
+     *
+     * Directional. "The CRM runs on SRV-01" and the reverse are different
+     * claims, and only one of them tells you what breaks when the server is
+     * rebooted.
+     */
+    public function storeRelationship(Request $request, Asset $asset): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $data = $request->validate([
+            'related_asset_id' => ['required', 'integer', 'exists:assets,id', 'different:__self'],
+            'relationship'     => ['required', Rule::in(AssetRelationship::TYPES)],
+            'note'             => ['nullable', 'string', 'max:255'],
+        ]);
+
+        // Nothing depends on itself, and a register that allows it will grow a
+        // cycle somebody has to debug.
+        abort_if((int) $data['related_asset_id'] === $asset->id, 422, 'An asset cannot depend on itself.');
+
+        $asset->dependencies()->firstOrCreate(
+            ['related_asset_id' => $data['related_asset_id'], 'relationship' => $data['relationship']],
+            ['organization_id' => $asset->organization_id, 'note' => $data['note'] ?? null,
+             'created_by' => $request->user()->id],
+        );
+
+        return response()->json(['data' => $this->relationshipPayload($asset->fresh())]);
+    }
+
+    public function destroyRelationship(Asset $asset, int $relationship): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $asset->dependencies()->findOrFail($relationship)->delete();
+
+        return response()->json(['data' => $this->relationshipPayload($asset->fresh())]);
+    }
+
+    /**
+     * Both directions, from one asset's point of view.
+     *
+     * What it depends on, and what depends on it. The second is the list read
+     * before a reboot, and it is stored on the other rows rather than
+     * duplicated here — two rows for one fact is two rows to keep in step.
+     */
+    private function relationshipPayload(Asset $asset): array
+    {
+        $out = ['depends_on' => [], 'depended_on_by' => []];
+
+        foreach ($asset->dependencies()->with('related:id,name,asset_tag,asset_class')->get() as $r) {
+            $out['depends_on'][] = [
+                'id' => $r->id, 'relationship' => $r->relationship, 'note' => $r->note,
+                'asset' => $r->related?->only(['id', 'name', 'asset_tag', 'asset_class']),
+            ];
+        }
+
+        foreach ($asset->dependents()->with('asset:id,name,asset_tag,asset_class')->get() as $r) {
+            $out['depended_on_by'][] = [
+                'id' => $r->id,
+                'relationship' => AssetRelationship::INVERSE_LABEL[$r->relationship] ?? $r->relationship,
+                'asset' => $r->asset?->only(['id', 'name', 'asset_tag', 'asset_class']),
+            ];
+        }
+
+        return $out;
     }
 
     // ── Photographs ───────────────────────────────────────────────────────

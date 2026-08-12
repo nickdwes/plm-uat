@@ -104,6 +104,101 @@ class AssetRegisterController extends Controller
     }
 
     /**
+     * The software estate, counted.
+     *
+     * Utilisation is the number this exists for: seats paid for against seats
+     * actually handed to somebody. It only became answerable when subscriptions
+     * were separated from products — a product has no seats, its agreements do,
+     * and totalling them requires knowing which belong together.
+     *
+     * Two figures from the brief are deliberately absent rather than guessed.
+     * "Unlicensed software" needs discovery data from Intune or SCCM to compare
+     * what is installed against what is entitled; without that integration the
+     * number cannot be computed, only claimed. And a risk score would be a
+     * weighting somebody invented, presented as arithmetic.
+     */
+    public function softwareDashboard(): JsonResponse
+    {
+        $this->authorize('viewAny', Asset::class);
+
+        $products = Asset::query()
+            ->where('asset_class', Asset::CLASS_SOFTWARE)
+            ->where('status', '!=', Asset::STATUS_RETIRED)
+            ->with(['children' => fn ($q) => $q->withCount(['seats as seats_used' => fn ($s) => $s->whereNull('released_on')])])
+            ->get();
+
+        $agreements = Asset::query()
+            ->where('asset_class', Asset::CLASS_SUBSCRIPTION)
+            ->where('status', '!=', Asset::STATUS_RETIRED)
+            ->withCount(['seats as seats_used' => fn ($s) => $s->whereNull('released_on')])
+            ->get();
+
+        $seatsBought = (int) $agreements->sum('seats_total');
+        $seatsUsed   = (int) $agreements->sum('seats_used');
+
+        return response()->json([
+            'totals' => [
+                'products'   => $products->count(),
+                'agreements' => $agreements->count(),
+                // Software nobody is paying for through a tracked agreement.
+                // Not the same as unlicensed — it may be perpetual, or free.
+                'without_agreement' => $products->filter(fn ($p) => $p->children->isEmpty())->count(),
+                'unsupported' => $products->filter(fn ($p) => $p->isUnsupported())->count(),
+            ],
+
+            'seats' => [
+                'purchased'   => $seatsBought,
+                'assigned'    => $seatsUsed,
+                // Seats paid for and not handed out. The number that hands
+                // money back at a renewal.
+                'spare'       => max(0, $seatsBought - $seatsUsed),
+                'utilisation' => $seatsBought > 0 ? (int) round(100 * $seatsUsed / $seatsBought) : null,
+            ],
+
+            'renewals' => [
+                'expiring_90_days' => $agreements->filter(
+                    fn ($a) => $a->expires_on && $a->daysToExpiry() !== null
+                        && $a->daysToExpiry() >= 0 && $a->daysToExpiry() <= 90,
+                )->count(),
+                'expired' => $agreements->filter(
+                    fn ($a) => $a->daysToExpiry() !== null && $a->daysToExpiry() < 0,
+                )->count(),
+                // A guess, and labelled one everywhere it is shown.
+                'forecast_12_months' => (float) $agreements->sum(
+                    fn ($a) => (float) ($a->estimated_renewal_cost ?? $a->renewal_cost ?? 0),
+                ),
+            ],
+
+            /*
+             * Where the money and the risk sit. Products with no agreements
+             * still appear, at nought — a product nobody is paying for is
+             * itself worth seeing.
+             */
+            'by_product' => $products->map(fn ($p) => [
+                'id'         => $p->id,
+                'name'       => $p->name,
+                'category'   => $p->category,
+                'agreements' => $p->children->count(),
+                'seats'      => (int) $p->children->sum('seats_total'),
+                'assigned'   => (int) $p->children->sum('seats_used'),
+                'annual'     => (float) $p->children->sum(
+                    fn ($c) => (float) ($c->estimated_renewal_cost ?? $c->renewal_cost ?? 0),
+                ),
+                'criticality'  => $p->custom_fields['business_criticality'] ?? null,
+                'unsupported'  => $p->isUnsupported(),
+            ])->sortByDesc('annual')->values(),
+
+            'by_vendor' => $products->groupBy(fn ($p) => $p->vendor ?: 'Unrecorded')
+                ->map(fn ($g, $vendor) => ['vendor' => $vendor, 'count' => $g->count()])
+                ->sortByDesc('count')->values(),
+
+            'by_criticality' => $products->groupBy(fn ($p) => $p->custom_fields['business_criticality'] ?? 'unrecorded')
+                ->map(fn ($g, $level) => ['level' => $level, 'count' => $g->count()])
+                ->values(),
+        ]);
+    }
+
+    /**
      * What is coming up for renewal, and what it cost last time.
      *
      * The page a licence manager opens. Everything with a date, soonest first,

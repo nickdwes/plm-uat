@@ -408,6 +408,20 @@ async function loadRequestsTab() {
 }
 const renewalSummary = ref<any>(null);
 
+/**
+ * The software estate, counted.
+ *
+ * On the Overview rather than a ninth tab: it answers the same question the
+ * cards above it do, for the half of the register that is not equipment.
+ */
+const software = ref<any>(null);
+
+async function loadSoftware() {
+  try {
+    software.value = await api<any>("GET", "/api/v1/assets/software", { org: org() });
+  } catch { software.value = null; }
+}
+
 /** Who to tell, being edited for one asset at a time. */
 const editingWatchers = ref<any | null>(null);
 const watcherIds = ref<number[]>([]);
@@ -474,6 +488,7 @@ async function openTab(next: Tab) {
   try {
     if (next === "overview") {
       summary.value = await api<Summary>("GET", "/api/v1/assets/summary", { org: org() });
+      await loadSoftware();
     } else if (next === "requests") {
       await loadRequestsTab();
     } else if (next === "maintenance") {
@@ -570,6 +585,66 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
             </div>
           </article>
         </div>
+
+        <!-- ── Software ─────────────────────────────────────────────────── -->
+        <article v-if="software && software.totals.products" class="card software-card">
+          <h2 class="card-title">Software</h2>
+          <div class="counts">
+            <div class="count">
+              <span class="count-n">{{ software.totals.products }}</span>
+              <span class="count-l">products</span>
+            </div>
+            <div class="count">
+              <span class="count-n">{{ software.totals.agreements }}</span>
+              <span class="count-l">agreements</span>
+            </div>
+            <!-- Seats paid for against seats actually handed out. Answerable
+                 only because agreements hang off products. -->
+            <div :class="['count', { bad: software.seats.utilisation !== null && software.seats.utilisation < 60 }]">
+              <span class="count-n">
+                {{ software.seats.utilisation === null ? "—" : software.seats.utilisation + "%" }}
+              </span>
+              <span class="count-l">seats in use</span>
+            </div>
+            <div :class="['count', { bad: software.seats.spare }]">
+              <span class="count-n">{{ software.seats.spare }}</span>
+              <span class="count-l">seats spare</span>
+            </div>
+            <div :class="['count', { bad: software.totals.unsupported }]">
+              <span class="count-n">{{ software.totals.unsupported }}</span>
+              <span class="count-l">unsupported</span>
+            </div>
+            <div class="count">
+              <span class="count-n">{{ money(software.renewals.forecast_12_months) }}</span>
+              <span class="count-l">renewal forecast</span>
+            </div>
+          </div>
+
+          <table class="grid">
+            <thead>
+              <tr><th>Product</th><th>Agreements</th><th>Seats</th><th>Annual</th><th>Criticality</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in software.by_product" :key="p.id">
+                <td>
+                  <router-link :to="{ name: 'asset-detail', params: { id: p.id } }" class="link">{{ p.name }}</router-link>
+                  <!-- A security finding, not a label somebody forgot to update. -->
+                  <span v-if="p.unsupported" class="pill pill-bad">unsupported</span>
+                  <div class="sub">{{ p.category }}</div>
+                </td>
+                <td>
+                  {{ p.agreements }}
+                  <!-- A product nobody is paying for is worth seeing. It may be
+                       perpetual, or free, or forgotten. -->
+                  <span v-if="!p.agreements" class="sub">nothing tracked</span>
+                </td>
+                <td>{{ p.assigned }}/{{ p.seats }}</td>
+                <td>{{ p.annual ? money(p.annual) : "—" }}</td>
+                <td>{{ p.criticality ?? "—" }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </article>
 
         <div class="charts">
           <article class="card">
@@ -1476,4 +1551,7 @@ code {
 .btn-danger { padding: 8px 16px; border-radius: var(--radius-md); border: 1px solid var(--color-danger-text);
               background: transparent; color: var(--color-danger-text); font: inherit; font-size: .85rem; cursor: pointer; }
 .btn-danger:disabled { opacity: .5; cursor: default; }
+
+.software-card { margin-top: 16px; }
+.software-card .counts { margin-bottom: 16px; }
 </style>

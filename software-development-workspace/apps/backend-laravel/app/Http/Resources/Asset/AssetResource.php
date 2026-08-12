@@ -119,6 +119,15 @@ class AssetResource extends JsonResource
             'parent_asset_id'   => $this->parent_asset_id,
             'custom_fields' => (object) ($this->custom_fields ?? []),
 
+            'end_of_support_on' => $this->end_of_support_on?->toDateString(),
+            'is_unsupported'    => $this->isUnsupported(),
+
+            'documents' => $this->whenLoaded('documents', fn () => $this->documents->map(fn ($d) => [
+                'id' => $d->id, 'category' => $d->category, 'note' => $d->note,
+                'original_name' => $d->original_name, 'size_bytes' => $d->size_bytes,
+                'uploaded_at' => $d->created_at?->toDateString(),
+            ])->values()),
+
             'photos' => $this->whenLoaded('photos', fn () => $this->photos->map(fn ($p) => [
                 'id' => $p->id, 'caption' => $p->caption,
                 'is_primary' => $p->is_primary, 'at_handover' => $p->at_handover,

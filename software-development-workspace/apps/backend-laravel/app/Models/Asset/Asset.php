@@ -70,7 +70,8 @@ class Asset extends Model
         'handover_required', 'handover_signed_at', 'accepted_by', 'acceptance_note',
         'purchase_date', 'purchase_value', 'vendor', 'invoice_number',
         'warranty_period', 'warranty_expiry_date',
-        'starts_on', 'expires_on', 'auto_renews', 'renewal_notice_days', 'renewal_cost',
+        'starts_on', 'expires_on', 'end_of_support_on',
+        'auto_renews', 'renewal_notice_days', 'renewal_cost',
         'estimated_renewal_cost', 'renewal_reminders_on',
         'description', 'seats_total',
         'vendor_contact', 'support_contact', 'sla',
@@ -90,6 +91,7 @@ class Asset extends Model
         'purchase_value'       => 'decimal:2',
         'starts_on'            => 'date',
         'expires_on'           => 'date',
+        'end_of_support_on'    => 'date',
         'auto_renews'          => 'boolean',
         'renewal_cost'         => 'decimal:2',
         'custom_fields'        => 'array',
@@ -182,6 +184,23 @@ class Asset extends Model
             ->orderBy('section_order')
             ->orderBy('sort_order')
             ->orderBy('id');
+    }
+
+    public function documents()
+    {
+        return $this->hasMany(AssetDocument::class)->orderBy('category')->orderBy('id');
+    }
+
+    /** What this depends on. */
+    public function dependencies()
+    {
+        return $this->hasMany(AssetRelationship::class, 'asset_id');
+    }
+
+    /** What depends on this — the side that matters before a reboot. */
+    public function dependents()
+    {
+        return $this->hasMany(AssetRelationship::class, 'related_asset_id');
     }
 
     public function photos()
@@ -280,6 +299,18 @@ class Asset extends Model
             'note'            => $note,
             'allocated_by'    => $by,
         ]);
+    }
+
+    /**
+     * Past the date the vendor stopped supporting it.
+     *
+     * Derived rather than a status somebody sets, because unsupported software
+     * becomes a security finding on a particular day whether or not anybody
+     * remembered to change a dropdown.
+     */
+    public function isUnsupported(): bool
+    {
+        return $this->end_of_support_on !== null && $this->end_of_support_on->isPast();
     }
 
     /**

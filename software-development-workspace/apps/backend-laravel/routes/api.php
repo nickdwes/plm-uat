@@ -672,6 +672,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/disposals', [AssetRegisterController::class, 'disposals']);
         Route::get('/maintenance', [AssetRegisterController::class, 'maintenance']);
         Route::get('/renewals',    [AssetRegisterController::class, 'renewals']);
+        Route::get('/software',    [AssetRegisterController::class, 'softwareDashboard']);
 
         /*
          * The chain. Each stage is a different person answering a different
@@ -703,6 +704,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
          * Photographs. The condition something was in at handover is what gets
          * argued about when it comes back.
          */
+        Route::post('/{asset}/documents',             [AssetController::class, 'storeDocument']);
+        Route::get('/{asset}/documents/{document}',   [AssetController::class, 'downloadDocument']);
+        Route::delete('/{asset}/documents/{document}',[AssetController::class, 'destroyDocument']);
+
+        // What runs on what. Directional, because that is the whole point.
+        Route::post('/{asset}/relationships',                  [AssetController::class, 'storeRelationship']);
+        Route::delete('/{asset}/relationships/{relationship}', [AssetController::class, 'destroyRelationship']);
+
         Route::post('/{asset}/photos',                [AssetController::class, 'storePhoto']);
         Route::get('/{asset}/photos/{photo}',         [AssetController::class, 'showPhoto']);
         Route::delete('/{asset}/photos/{photo}',      [AssetController::class, 'destroyPhoto']);
