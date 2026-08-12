@@ -34,7 +34,44 @@ const page = ref(1);
 const showCreate  = ref(false);
 const saving      = ref(false);
 const createError = ref("");
-const form = ref({ name: "", asset_tag: "", category: "laptop", brand: "", model: "", serial_number: "" });
+/**
+ * What kind of thing is being registered, and the fields that follow from it.
+ *
+ * The form used to ask a laptop's questions of everything: brand, model, serial
+ * number. An SSL certificate has none of those and one that hardware does not —
+ * a date after which a public site stops working. Asking for a serial number
+ * teaches people the register is not for their licence.
+ */
+const CLASSES = [
+  { key: "physical",     label: "Physical",     hint: "Laptops, monitors, phones, furniture — something you can hand to somebody" },
+  { key: "software",     label: "Software",     hint: "Licences bought by the seat — Microsoft 365, Adobe, CAD tools" },
+  { key: "subscription", label: "Subscription", hint: "Anything that expires and must be renewed — SSL certificates, domains, SaaS" },
+] as const;
+
+const CATEGORIES_BY_CLASS: Record<string, string[]> = {
+  physical:     ["laptop", "desktop", "monitor", "phone", "tablet", "peripheral", "furniture", "other"],
+  software:     ["licence", "design tool", "developer tool", "security", "other"],
+  subscription: ["ssl certificate", "domain", "saas", "cloud service", "support contract", "other"],
+};
+
+const blankForm = () => ({
+  asset_class: "physical",
+  name: "", asset_tag: "", category: "laptop",
+  // Physical only.
+  brand: "", model: "", serial_number: "",
+  // The other two.
+  expires_on: "", seats_total: "" as string | number, seats_used: "" as string | number,
+  renewal_cost: "" as string | number, auto_renews: false,
+  renewal_notice_days: "" as string | number,
+  vendor: "", vendor_contact: "",
+});
+
+const form = ref(blankForm());
+
+/** Changing the kind changes what a category means, so the old one cannot stand. */
+function onClassChange() {
+  form.value.category = CATEGORIES_BY_CLASS[form.value.asset_class][0];
+}
 
 const STATUSES   = ["available", "assigned", "maintenance", "retired"];
 const CATEGORIES = ["laptop", "desktop", "monitor", "phone", "tablet", "software", "peripheral", "other"];
@@ -75,7 +112,39 @@ function applyFilters() { page.value = 1; void load(); }
 async function create() {
   saving.value = true; createError.value = "";
   try {
-    const res = await api<{ data: Asset }>("POST", "/api/v1/assets", { org: org(), body: form.value });
+    /*
+     * Only the fields that apply. Sending an empty serial number on a
+     * certificate would write a blank where the register should hold nothing —
+     * and "" and null read differently in every report downstream.
+     */
+    const f = form.value;
+    const body: Record<string, unknown> = {
+      asset_class: f.asset_class,
+      name: f.name,
+      asset_tag: f.asset_tag,
+      category: f.category,
+      vendor: f.vendor || undefined,
+    };
+
+    if (f.asset_class === "physical") {
+      Object.assign(body, {
+        brand: f.brand || undefined,
+        model: f.model || undefined,
+        serial_number: f.serial_number || undefined,
+      });
+    } else {
+      Object.assign(body, {
+        expires_on: f.expires_on || undefined,
+        seats_total: f.seats_total === "" ? undefined : Number(f.seats_total),
+        seats_used:  f.seats_used  === "" ? undefined : Number(f.seats_used),
+        renewal_cost: f.renewal_cost === "" ? undefined : Number(f.renewal_cost),
+        renewal_notice_days: f.renewal_notice_days === "" ? undefined : Number(f.renewal_notice_days),
+        auto_renews: f.auto_renews,
+        vendor_contact: f.vendor_contact || undefined,
+      });
+    }
+
+    const res = await api<{ data: Asset }>("POST", "/api/v1/assets", { org: org(), body });
     showCreate.value = false;
     void router.push({ name: "asset-detail", params: { id: res.data.id } });
   } catch (e) {
@@ -86,7 +155,7 @@ async function create() {
 }
 
 function openCreate() {
-  form.value = { name: "", asset_tag: "", category: "laptop", brand: "", model: "", serial_number: "" };
+  form.value = blankForm();
   createError.value = "";
   showCreate.value = true;
 }
@@ -452,24 +521,91 @@ onMounted(() => { void load(); void openTab("overview"); });
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Add asset">
         <h2>Add asset</h2>
 
+        <!--
+          Asked first, because it decides which of the rest are even sensible
+          questions. Three cards rather than a dropdown: the difference between
+          them is not obvious from a word, and the hint is doing the work.
+        -->
+        <fieldset class="kinds">
+          <legend class="field-legend">What are you registering?</legend>
+          <label v-for="c in CLASSES" :key="c.key" :class="['kind', { on: form.asset_class === c.key }]">
+            <input v-model="form.asset_class" type="radio" :value="c.key" @change="onClassChange" />
+            <span class="kind-label">{{ c.label }}</span>
+            <span class="kind-hint">{{ c.hint }}</span>
+          </label>
+        </fieldset>
+
         <label class="field"><span>Name</span>
-          <input v-model="form.name" class="control" placeholder="ThinkPad X1 Carbon" />
+          <input v-model="form.name" class="control"
+                 :placeholder="form.asset_class === 'physical' ? 'ThinkPad X1 Carbon'
+                   : form.asset_class === 'software' ? 'Adobe Creative Cloud'
+                   : 'wildcard SSL — konvergenz.co.ke'" />
         </label>
         <label class="field"><span>Asset tag</span>
           <input v-model="form.asset_tag" class="control" placeholder="AST-0001" />
         </label>
         <label class="field"><span>Category</span>
           <select v-model="form.category" class="control">
-            <option v-for="c in CATEGORIES" :key="c" :value="c">{{ c }}</option>
+            <option v-for="c in CATEGORIES_BY_CLASS[form.asset_class]" :key="c" :value="c">{{ c }}</option>
           </select>
         </label>
-        <div class="row">
-          <label class="field"><span>Brand</span><input v-model="form.brand" class="control" /></label>
-          <label class="field"><span>Model</span><input v-model="form.model" class="control" /></label>
-        </div>
-        <label class="field"><span>Serial number</span>
-          <input v-model="form.serial_number" class="control" />
+
+        <!-- Kept out of the way: it means the same thing for every kind. -->
+        <label class="field"><span>Vendor</span>
+          <input v-model="form.vendor" class="control" placeholder="Who it was bought from" />
         </label>
+
+        <!-- ── Physical only ──────────────────────────────────────────────── -->
+        <template v-if="form.asset_class === 'physical'">
+          <div class="row">
+            <label class="field"><span>Brand</span><input v-model="form.brand" class="control" /></label>
+            <label class="field"><span>Model</span><input v-model="form.model" class="control" /></label>
+          </div>
+          <label class="field"><span>Serial number</span>
+            <input v-model="form.serial_number" class="control" />
+          </label>
+        </template>
+
+        <!-- ── Licences and subscriptions ─────────────────────────────────── -->
+        <template v-else>
+          <label class="field"><span>Expires on</span>
+            <input v-model="form.expires_on" class="control" type="date" />
+            <span class="hint">
+              The date it stops working. A certificate nobody renewed is a public
+              site down; a licence nobody renewed is a team locked out on a Monday.
+            </span>
+          </label>
+
+          <div class="row">
+            <label class="field"><span>Seats purchased</span>
+              <input v-model="form.seats_total" class="control" type="number" min="1" />
+            </label>
+            <label class="field"><span>Seats in use</span>
+              <input v-model="form.seats_used" class="control" type="number" min="0" />
+              <span class="hint">Seats paid for and unused is the one number here that hands money back.</span>
+            </label>
+          </div>
+
+          <div class="row">
+            <label class="field"><span>Renewal cost</span>
+              <input v-model="form.renewal_cost" class="control" type="number" min="0" />
+            </label>
+            <label class="field"><span>Warn me this many days ahead</span>
+              <input v-model="form.renewal_notice_days" class="control" type="number" min="1" max="365"
+                     placeholder="30" />
+              <span class="hint">A domain wants a fortnight; an enterprise agreement wants a quarter.</span>
+            </label>
+          </div>
+
+          <label class="check">
+            <input v-model="form.auto_renews" type="checkbox" />
+            <span>Renews automatically</span>
+          </label>
+
+          <label class="field"><span>Vendor contact</span>
+            <input v-model="form.vendor_contact" class="control" placeholder="Who to chase when it is due" />
+          </label>
+        </template>
 
         <p v-if="createError" class="alert" role="alert">{{ createError }}</p>
 
@@ -704,5 +840,19 @@ code {
 .pill-bad { background: var(--color-danger-subtle); color: var(--color-danger-text); }
 .pill-ok   { background: var(--color-success-subtle); color: var(--color-success-text); }
 .pill-wait { background: var(--color-warning-subtle, var(--color-surface-sunken)); color: var(--color-text); }
+
+/* ── What kind of thing is this ────────────────────────────────────────── */
+.kinds { border: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.field-legend { font-size: .78rem; color: var(--color-text-muted); padding: 0; margin-bottom: 8px; }
+.kind {
+  display: grid; grid-template-columns: 18px 1fr; gap: 4px 10px; align-items: start;
+  padding: 10px 12px; border: 1px solid var(--color-border); border-radius: 8px; cursor: pointer;
+}
+.kind.on { border-color: var(--color-brand-base); background: var(--color-brand-subtle); }
+.kind input { grid-row: 1 / span 2; margin-top: 3px; }
+.kind-label { font-size: .88rem; font-weight: 600; color: var(--color-text); }
+.kind-hint  { font-size: .75rem; color: var(--color-text-muted); }
+.hint { font-size: .72rem; color: var(--color-text-light); }
+.check { display: flex; align-items: center; gap: 8px; font-size: .85rem; margin-bottom: 12px; }
 .link { color: var(--color-brand-on-surface); }
 </style>

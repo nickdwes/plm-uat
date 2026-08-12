@@ -25,6 +25,16 @@ class StoreAssetRequest extends FormRequest
         $orgId = app('current.organization_id');
 
         return [
+            /*
+             * What kind of thing this is, asked first because it decides which
+             * of the rest apply.
+             *
+             * Defaults to physical for anything that does not say — every
+             * caller that predates classes was registering hardware, and
+             * refusing them would break the register to gain nothing.
+             */
+            'asset_class'   => ['nullable', Rule::in(Asset::CLASSES)],
+
             'name'          => ['required', 'string', 'max:255'],
             // Unique within the tenant, not globally — see the assets migration.
             'asset_tag'     => [
@@ -46,6 +56,35 @@ class StoreAssetRequest extends FormRequest
             'location'      => ['nullable', 'string', 'max:255'],
 
             'handover_required' => ['nullable', 'boolean'],
+
+            /*
+             * ── Things that expire ──
+             *
+             * A certificate, a domain, a licence term. Accepted for any class
+             * because a laptop can have a support contract that ends, but they
+             * are the whole point of the other two.
+             */
+            'expires_on'          => ['nullable', 'date'],
+            'auto_renews'         => ['nullable', 'boolean'],
+            'renewal_notice_days' => ['nullable', 'integer', 'min:1', 'max:365'],
+            'renewal_cost'        => ['nullable', 'numeric', 'min:0'],
+            'estimated_renewal_cost' => ['nullable', 'numeric', 'min:0'],
+            'renewal_reminders_on'   => ['nullable', 'boolean'],
+
+            /*
+             * ── Things bought by the seat ──
+             *
+             * Used cannot exceed total: a licence with more people on it than
+             * seats paid for is the compliance finding the whole register
+             * exists to prevent, and it should be refused at the door rather
+             * than discovered in an audit.
+             */
+            'seats_total' => ['nullable', 'integer', 'min:1'],
+            'seats_used'  => ['nullable', 'integer', 'min:0', 'lte:seats_total'],
+
+            'vendor_contact'  => ['nullable', 'string', 'max:255'],
+            'support_contact' => ['nullable', 'string', 'max:255'],
+            'sla'             => ['nullable', 'string', 'max:120'],
 
             'purchase_date'        => ['nullable', 'date'],
             'purchase_value'       => ['nullable', 'numeric', 'min:0'],
