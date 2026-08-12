@@ -25,6 +25,7 @@ class UpdateAssetRequest extends FormRequest
             // Checked against the category's own definitions in the service —
             // the rules are data, so they cannot be declared here.
             'custom_fields' => ['nullable', 'array'],
+            'parent_asset_id' => ['nullable', 'integer', 'exists:assets,id'],
 
             'name'          => ['sometimes', 'string', 'max:255'],
             'asset_tag'     => [

@@ -149,6 +149,39 @@ class OrgManagementController extends Controller
         return response()->json(['data' => $q->get()]);
     }
 
+    /**
+     * Everything an asset of this class and category is asked.
+     *
+     * The class first, then the category — the registration form needs both and
+     * should not have to know that they come from two places or how they are
+     * ordered against each other.
+     */
+    public function assetFormFields(Request $request): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_VIEW), 403);
+
+        $class = $request->string('asset_class')->toString() ?: 'physical';
+        $name  = $request->string('category')->toString();
+
+        $category = $name === '' ? null : AssetCategory::where('asset_class', $class)
+            ->whereRaw('lower(name) = lower(?)', [$name])
+            ->first();
+
+        $fields = AssetCategoryField::query()
+            ->where(function ($q) use ($class, $category) {
+                $q->where(fn ($c) => $c->whereNull('asset_category_id')->where('asset_class', $class));
+
+                if ($category) {
+                    $q->orWhere('asset_category_id', $category->id);
+                }
+            })
+            ->orderByRaw('CASE WHEN asset_category_id IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('section_order')->orderBy('sort_order')->orderBy('id')
+            ->get();
+
+        return response()->json(['data' => $fields]);
+    }
+
     public function storeAssetCategory(Request $request): JsonResponse
     {
         abort_unless(auth()->user()?->hasPermission(Permission::ASSETS_CREATE), 403);

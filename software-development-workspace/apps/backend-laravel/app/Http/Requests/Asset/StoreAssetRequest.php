@@ -35,6 +35,17 @@ class StoreAssetRequest extends FormRequest
              */
             'asset_class'   => ['nullable', Rule::in(Asset::CLASSES)],
 
+            /*
+             * What this belongs to.
+             *
+             * A subscription names the software product it pays for, so one
+             * product carries several agreements — an enterprise agreement, an
+             * executive tier, a monthly CSP — each with its own term, seats and
+             * cost. Asking the product when it renews is asking the wrong
+             * question of the wrong record.
+             */
+            'parent_asset_id' => ['nullable', 'integer', 'exists:assets,id'],
+
             // Checked against the category's own definitions in the service —
             // the rules are data, so they cannot be declared here.
             'custom_fields' => ['nullable', 'array'],

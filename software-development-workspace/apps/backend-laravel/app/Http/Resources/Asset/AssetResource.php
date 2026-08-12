@@ -116,6 +116,7 @@ class AssetResource extends JsonResource
              * matched on category name and class, not a foreign key.
              */
             'asset_category_id' => $this->asset_category_id,
+            'parent_asset_id'   => $this->parent_asset_id,
             'custom_fields' => (object) ($this->custom_fields ?? []),
 
             'photos' => $this->whenLoaded('photos', fn () => $this->photos->map(fn ($p) => [

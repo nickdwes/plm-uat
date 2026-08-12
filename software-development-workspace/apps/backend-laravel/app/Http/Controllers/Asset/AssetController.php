@@ -27,7 +27,7 @@ class AssetController extends Controller
 
         $filters = $request->only([
             'status', 'category', 'department_id', 'assigned', 'assigned_to',
-            'search', 'warranty_expired', 'maintenance_due',
+            'search', 'warranty_expired', 'maintenance_due', 'asset_class',
         ]);
 
         /*

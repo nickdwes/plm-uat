@@ -23,7 +23,8 @@ class AssetCategoryField extends Model
 
     protected $fillable = [
         'organization_id', 'asset_category_id', 'key', 'label',
-        'type', 'options', 'help', 'is_required', 'is_unique', 'sort_order',
+        'asset_class', 'type', 'options', 'help', 'section', 'section_order',
+        'is_required', 'is_unique', 'sort_order',
     ];
 
     protected $casts = [

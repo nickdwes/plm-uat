@@ -37,6 +37,12 @@ class AssetService
                 : $query->whereNull('assigned_to');
         }
 
+        // Software, subscription or physical — the register asks each kind
+        // different questions, so it is often listed one kind at a time.
+        if ($class = $filters['asset_class'] ?? null) {
+            $query->where('asset_class', $class);
+        }
+
         if ($holder = $filters['assigned_to'] ?? null) {
             $query->where('assigned_to', $holder);
         }

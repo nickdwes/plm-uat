@@ -37,26 +37,26 @@ class CustomFieldValidator
         array $existing = [],
         ?int $ignoreAssetId = null,
     ): array {
-        if ($categoryName === null) {
-            return [];
-        
-}
+        $class = $assetClass ?: 'physical';
 
-        $category = AssetCategory::where('name', $categoryName)
-            ->where('asset_class', $assetClass ?? 'physical')
+        $category = $categoryName === null ? null : AssetCategory::where('name', $categoryName)
+            ->where('asset_class', $class)
             ->first();
 
-        if ($category === null) {
-            /*
-             * A category nobody configured — including anything typed under
-             * "other". There are no questions, so there are no answers, and
-             * silently keeping arbitrary keys would let the column become a
-             * second notes field.
-             */
-            return [];
-        }
+        /*
+         * Class-level questions apply whether or not the category is one
+         * anybody configured. Something filed under "other" is still a piece
+         * of software, and a licence key is still worth asking for.
+         */
+        $fields = AssetCategoryField::query()
+            ->where(function ($q) use ($class, $category) {
+                $q->where(fn ($c) => $c->whereNull('asset_category_id')->where('asset_class', $class));
 
-        $fields = $category->fields()->get();
+                if ($category) {
+                    $q->orWhere('asset_category_id', $category->id);
+                }
+            })
+            ->get();
 
         if ($fields->isEmpty()) {
             return [];
@@ -78,7 +78,7 @@ class CustomFieldValidator
             throw new ValidationException($validator);
         }
 
-        $this->assertUnique($category, $fields, $merged, $ignoreAssetId);
+        $this->assertUnique($class, $category, $fields, $merged, $ignoreAssetId);
 
         // Only what was asked for. An answer to a question that no longer
         // exists is kept on assets that already have it, but nothing new is
@@ -105,7 +105,7 @@ class CustomFieldValidator
      * somebody filled in. At this size the trade is not worth it, and the error
      * belongs where it can say which asset already has the value.
      */
-    private function assertUnique($category, $fields, array $merged, ?int $ignoreAssetId): void
+    private function assertUnique(string $class, $category, $fields, array $merged, ?int $ignoreAssetId): void
     {
         $unique = $fields->where('is_unique', true);
 
@@ -122,9 +122,19 @@ class CustomFieldValidator
                 continue;
             }
 
+            /*
+             * A class-level unique field is unique across the class — two
+             * pieces of software cannot share a licence key whatever category
+             * each is filed under. A category-level one is scoped to its
+             * category, because a serial number colliding between a laptop and
+             * a monitor is a coincidence rather than a duplicate.
+             */
             $clash = Asset::query()
-                ->where('asset_class', $category->asset_class)
-                ->where('category', $category->name)
+                ->where('asset_class', $class)
+                ->when(
+                    $field->asset_category_id !== null && $category,
+                    fn ($q) => $q->where('category', $category->name),
+                )
                 ->when($ignoreAssetId, fn ($q) => $q->whereKeyNot($ignoreAssetId))
                 // Compared as text and case-insensitively: a MAC typed in
                 // capitals is the same MAC.

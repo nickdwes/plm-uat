@@ -89,12 +89,46 @@ const needsOwnName = computed(
  */
 const categoryFields = ref<any[]>([]);
 
+/** Software products a subscription can be attached to. */
+const softwareProducts = ref<{ id: number; name: string }[]>([]);
+
+async function loadSoftwareProducts() {
+  try {
+    const res = await api<{ data: any[] }>("GET", "/api/v1/assets", {
+      org: org(), params: { asset_class: "software", per_page: 200 },
+    });
+    softwareProducts.value = (res.data ?? []).map(a => ({ id: a.id, name: a.name }));
+  } catch { softwareProducts.value = []; }
+}
+
+/**
+ * The fields as the form draws them: grouped under their headings, in order.
+ *
+ * Software asks twenty-eight questions across five sections before its
+ * category adds any. Without the headings that is a wall, and a wall does not
+ * get filled in.
+ */
+const fieldSections = computed(() => {
+  const out: { title: string; fields: any[] }[] = [];
+  for (const f of categoryFields.value) {
+    const title = f.section ?? "";
+    const last = out[out.length - 1];
+    if (last && last.title === title) last.fields.push(f);
+    else out.push({ title, fields: [f] });
+  }
+  return out;
+});
+
 async function loadCategoryFields() {
   categoryFields.value = [];
   const c = chosenCategory.value;
   if (!c) return;
   try {
-    const res = await api<{ data: any[] }>("GET", `/api/v1/org/asset-categories/${c.id}/fields`, { org: org() });
+    // Class-level questions and the category's own, in one call and already
+    // ordered — the form should not have to know they come from two places.
+    const res = await api<{ data: any[] }>("GET", "/api/v1/org/asset-form-fields", {
+      org: org(), params: { asset_class: form.value.asset_class, category: c.name },
+    });
     categoryFields.value = res.data ?? [];
     // Start each answer empty so v-model has something to bind to.
     for (const f of categoryFields.value) {
@@ -129,6 +163,8 @@ const blankForm = () => ({
   other_name: "", other_description: "",
   /** Answers to whatever the chosen category asks. */
   custom_fields: {} as Record<string, any>,
+  /** The software product a subscription pays for. */
+  parent_asset_id: null as number | null,
   // Physical only.
   brand: "", model: "", serial_number: "",
   // A batch runs from a date to a date.
@@ -217,6 +253,10 @@ async function create() {
       body.custom_fields = f.custom_fields;
     }
 
+    if (f.asset_class === "subscription" && f.parent_asset_id) {
+      body.parent_asset_id = f.parent_asset_id;
+    }
+
     if (needsOwnName.value && f.other_description.trim()) {
       body.description = f.other_description.trim();
     }
@@ -255,6 +295,7 @@ async function create() {
 function openCreate() {
   form.value = blankForm();
   void loadCategoryFields();
+  void loadSoftwareProducts();
   createError.value = "";
   showCreate.value = true;
 }
@@ -995,8 +1036,27 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           </label>
         </template>
 
-        <!-- ── Licences and subscriptions ─────────────────────────────────── -->
-        <template v-else>
+        <!--
+          ── The commercial agreement ─────────────────────────────────────
+
+          A subscription only. Software is the product; a subscription is what
+          pays for access to it, and one product can carry several — an
+          enterprise agreement, an executive tier, a monthly CSP — each with its
+          own term, seats and cost. Asking a product when it renews is asking
+          the wrong thing of the wrong record.
+        -->
+        <template v-else-if="form.asset_class === 'subscription'">
+          <label class="field field-wide"><span>What this pays for</span>
+            <select v-model="form.parent_asset_id" class="control">
+              <option :value="null">Not tied to a software product</option>
+              <option v-for="p in softwareProducts" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <span class="hint">
+              One product can have several agreements. Linking them means seats
+              and spend can be totalled across the lot.
+            </span>
+          </label>
+
           <!--
             A batch runs from a date to a date. The end alone tells you when
             somebody gets locked out; both together tell you what the term was
@@ -1056,11 +1116,19 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           </label>
         </template>
 
-        <!-- ── What this category asks for ────────────────────────────────── -->
-        <template v-if="categoryFields.length">
-          <p class="field-wide cf-lead">For a {{ form.category }}</p>
+        <!-- Software: everything it is asked is configured, nothing hardcoded. -->
+        <template v-else>
+          <label class="field field-wide"><span>What this software does</span>
+            <textarea v-model="form.description" class="control" rows="3"
+                      placeholder="What it is for, and who depends on it."></textarea>
+          </label>
+        </template>
 
-          <label v-for="cf in categoryFields" :key="cf.key"
+        <!-- ── What this class and category ask for ───────────────────────── -->
+        <template v-for="sec in fieldSections" :key="sec.title || 'ungrouped'">
+          <p class="field-wide cf-lead">{{ sec.title || `For a ${form.category}` }}</p>
+
+          <label v-for="cf in sec.fields" :key="cf.key"
                  :class="['field', cf.type === 'textarea' ? 'field-wide' : '']">
             <span>{{ cf.label }}<template v-if="cf.is_required"> *</template></span>
 

@@ -146,22 +146,42 @@ class Asset extends Model
      * were configurable, or through another route, simply has no definitions
      * and shows none.
      */
+    /**
+     * Everything this asset is asked, class first and category after.
+     *
+     * The class holds what is true of every asset of that kind — a licence key
+     * and a seat count are asked of Microsoft 365, an ERP and an antivirus
+     * console alike. The category adds only what is peculiar to it: a tenant
+     * id, a database engine, an endpoint count.
+     *
+     * Matched on the link where there is one and the name where there is not,
+     * so anything registered before categories were configurable, or typed
+     * freehand under "other", keeps whatever its class asks.
+     */
     public function categoryFields()
     {
-        $q = AssetCategoryField::query()->orderBy('sort_order')->orderBy('id');
+        $class      = $this->asset_class;
+        $categoryId = $this->asset_category_id;
+        $name       = $this->category;
 
-        /*
-         * The link where there is one, the name where there is not.
-         *
-         * Anything registered before categories were configurable — and
-         * anything typed freehand under "other" — has no link, and matching on
-         * the name keeps its fields working rather than making them vanish.
-         */
-        return $this->asset_category_id
-            ? $q->where('asset_category_id', $this->asset_category_id)
-            : $q->whereHas('category', fn ($c) => $c
-                ->where('name', $this->category)
-                ->where('asset_class', $this->asset_class));
+        return AssetCategoryField::query()
+            ->where(function ($q) use ($class, $categoryId, $name) {
+                // Class-level: applies to everything of this kind.
+                $q->where(fn ($c) => $c->whereNull('asset_category_id')->where('asset_class', $class));
+
+                if ($categoryId) {
+                    $q->orWhere('asset_category_id', $categoryId);
+                } elseif ($name) {
+                    $q->orWhereHas('category', fn ($c) => $c
+                        ->where('name', $name)->where('asset_class', $class));
+                }
+            })
+            // Class-level sections come before the category's own, then by the
+            // ordering each was given.
+            ->orderByRaw('CASE WHEN asset_category_id IS NULL THEN 0 ELSE 1 END')
+            ->orderBy('section_order')
+            ->orderBy('sort_order')
+            ->orderBy('id');
     }
 
     public function photos()

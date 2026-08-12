@@ -852,6 +852,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
          * Asset categories. Configured per organisation rather than compiled
          * into the frontend, which is what they were.
          */
+        // What a form should ask for a given class and category — class-level
+        // questions and the category's own, already ordered.
+        Route::get('/asset-form-fields',                 [OrgManagementController::class, 'assetFormFields']);
+
         Route::get('/asset-categories',                  [OrgManagementController::class, 'assetCategories']);
         Route::post('/asset-categories',                 [OrgManagementController::class, 'storeAssetCategory']);
         Route::put('/asset-categories/{assetCategory}',  [OrgManagementController::class, 'updateAssetCategory']);
