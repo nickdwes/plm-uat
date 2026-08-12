@@ -127,6 +127,18 @@ class Asset extends Model
         return $this->hasMany(self::class, 'parent_asset_id');
     }
 
+    /** Who hears when this comes up for renewal. */
+    public function watchers(): HasMany
+    {
+        return $this->hasMany(AssetRenewalWatcher::class);
+    }
+
+    /** Every renewal term this has been through. */
+    public function renewals(): HasMany
+    {
+        return $this->hasMany(AssetRenewal::class);
+    }
+
     /** Every seat ever handed out of this batch, held or given back. */
     public function seats(): HasMany
     {

@@ -8,6 +8,8 @@ use App\Models\Asset\AssetDisposal;
 use App\Models\Asset\AssetIssue;
 use App\Models\Asset\AssetMaintenance;
 use App\Models\Asset\AssetRequest;
+use App\Services\Asset\RenewalSchedule;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -97,6 +99,88 @@ class AssetRegisterController extends Controller
                 'reported_on' => $i->created_at?->toDateString(),
                 'resolved_on' => $i->resolved_at?->toDateString(),
             ]),
+        ]);
+    }
+
+    /**
+     * What is coming up for renewal, and what it cost last time.
+     *
+     * The page a licence manager opens. Everything with a date, soonest first,
+     * with the previous term's cost and vendor beside it — because the question
+     * asked at a renewal is never just "when", it is "what did we pay, who did
+     * we pay, and is it going up".
+     *
+     * Expired items lead. Something that lapsed last week is a worse problem
+     * than something lapsing next month, and a list sorted purely by date
+     * buries it above the fold.
+     */
+    public function renewals(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Asset::class);
+
+        $withinDays = $request->integer('within') ?: null;
+
+        $q = Asset::query()
+            ->whereNotNull('expires_on')
+            ->where('status', '!=', Asset::STATUS_RETIRED)
+            ->with(['renewals' => fn ($r) => $r->latest('renewed_on')->limit(1), 'watchers.employee'])
+            ->withCount(['seats as seats_used' => fn ($s) => $s->whereNull('released_on')])
+            ->orderBy('expires_on');
+
+        // The default view is what needs attention; the full list is opt-in.
+        if (! $request->boolean('all')) {
+            $q->expiringSoon($withinDays);
+        }
+
+        $schedule = new RenewalSchedule();
+        $today    = CarbonImmutable::parse(now()->toDateString());
+
+        $rows = $q->get()->map(function (Asset $a) use ($schedule, $today) {
+            $last = $a->renewals->first();
+
+            return [
+                'id'          => $a->id,
+                'name'        => $a->name,
+                'asset_class' => $a->asset_class,
+                'category'    => $a->category,
+                'description' => $a->description,
+
+                'expires_on'     => $a->expires_on?->toDateString(),
+                'days_to_expiry' => $a->daysToExpiry(),
+                'auto_renews'    => (bool) $a->auto_renews,
+
+                // What it cost last time, and who from — the two facts a
+                // renewal conversation opens with.
+                'last_cost'     => $last?->cost,
+                'last_vendor'   => $last?->vendor_name ?? $a->vendor,
+                'last_renewed'  => $last?->renewed_on?->toDateString(),
+                // What it is expected to cost, which is a guess and labelled one.
+                'estimated_cost' => $a->estimated_renewal_cost ?? $a->renewal_cost,
+
+                'seats_total' => $a->seats_total,
+                'seats_used'  => $a->seats_used,
+
+                'reminders_on' => (bool) $a->renewal_reminders_on,
+                'watchers'     => $a->watchers->map(fn ($w) => [
+                    'id' => $w->id, 'employee_id' => $w->employee_id, 'name' => $w->employee?->full_name,
+                ])->values(),
+
+                // What the person has signed up to receive, so the toggle is
+                // not a promise nobody can see the shape of.
+                'schedule' => $a->expires_on
+                    ? $schedule->upcoming(CarbonImmutable::parse($a->expires_on->toDateString()), $today)
+                    : [],
+            ];
+        });
+
+        return response()->json([
+            'data' => $rows->sortBy(fn ($r) => $r['days_to_expiry'])->values(),
+            'summary' => [
+                'expired'     => $rows->filter(fn ($r) => $r['days_to_expiry'] < 0)->count(),
+                'this_month'  => $rows->filter(fn ($r) => $r['days_to_expiry'] >= 0 && $r['days_to_expiry'] <= 30)->count(),
+                'total'       => $rows->count(),
+                'estimated'   => (float) $rows->sum(fn ($r) => (float) ($r['estimated_cost'] ?? 0)),
+            ],
         ]);
     }
 

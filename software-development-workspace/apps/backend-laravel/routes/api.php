@@ -671,6 +671,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/issues',    [AssetRegisterController::class, 'issues']);
         Route::get('/disposals', [AssetRegisterController::class, 'disposals']);
         Route::get('/maintenance', [AssetRegisterController::class, 'maintenance']);
+        Route::get('/renewals',    [AssetRegisterController::class, 'renewals']);
 
         Route::get('/',            [AssetController::class, 'index']);
         Route::post('/',           [AssetController::class, 'store']);
@@ -687,6 +688,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // correcting a renewal date, so it is a different endpoint.
         Route::post('/{asset}/seats',              [AssetController::class, 'allocateSeat']);
         Route::delete('/{asset}/seats/{allocation}', [AssetController::class, 'releaseSeat']);
+
+        // Reminders and who receives them — one decision, one call.
+        Route::put('/{asset}/renewal-watchers', [AssetController::class, 'renewalWatchers']);
     });
 
     // ── Pre-Onboarding (Preboarding) ──────────────────────────────────────────

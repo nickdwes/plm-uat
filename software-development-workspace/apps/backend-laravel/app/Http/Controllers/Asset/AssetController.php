@@ -106,6 +106,41 @@ class AssetController extends Controller
     }
 
     /**
+     * Who hears about a renewal, and whether anybody does.
+     *
+     * Both in one call because they are one decision — turning reminders on
+     * with nobody to send them to is the setting that looks configured and does
+     * nothing.
+     */
+    public function renewalWatchers(Request $request, Asset $asset): JsonResponse
+    {
+        $this->authorize('update', $asset);
+
+        $data = $request->validate([
+            'reminders_on'  => ['required', 'boolean'],
+            'employee_ids'  => ['nullable', 'array'],
+            'employee_ids.*' => ['integer', 'exists:employees,id'],
+        ]);
+
+        $asset->update(['renewal_reminders_on' => $data['reminders_on']]);
+
+        if (array_key_exists('employee_ids', $data)) {
+            $asset->watchers()->delete();
+
+            foreach (array_unique($data['employee_ids'] ?? []) as $id) {
+                $asset->watchers()->create(['employee_id' => $id]);
+            }
+        }
+
+        return response()->json([
+            'data' => $asset->fresh(['watchers.employee'])->watchers->map(fn ($w) => [
+                'id' => $w->id, 'employee_id' => $w->employee_id, 'name' => $w->employee?->full_name,
+            ])->values(),
+            'reminders_on' => $asset->fresh()->renewal_reminders_on,
+        ]);
+    }
+
+    /**
      * The numbers across the top of the Assets page.
      *
      * Counted from the same rows the tabs list, so a card and the list beneath

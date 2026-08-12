@@ -6,7 +6,7 @@
  * mirroring the API: assigning equipment is a separate permission from
  * correcting a serial number, and the two should not look the same here.
  */
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
@@ -38,6 +38,54 @@ const STAGE_LABEL: Record<string, string> = {
   reassigned: "Reassigned", returned: "Returned", under_repair: "Under Repair",
   repaired: "Repaired", lost: "Lost", retired: "Retired", disposed: "Disposed",
 };
+
+/**
+ * Seats on a licence batch.
+ *
+ * The endpoints have existed since batches arrived and nothing showed them, so
+ * "who is affected" was answerable and unanswered. This is the screen that
+ * makes a licence something you can hand to somebody and take back.
+ */
+const showSeat   = ref(false);
+const seatForm   = ref<{ employee_id: number | null; note: string }>({ employee_id: null, note: "" });
+const seatError  = ref("");
+
+const isLicence = computed(() =>
+  ["software", "subscription"].includes((asset.value as any)?.asset_class ?? ""));
+
+async function allocateSeat() {
+  if (!seatForm.value.employee_id) return;
+  busy.value = true; seatError.value = "";
+  try {
+    const res = await api<{ data: any }>("POST", `/api/v1/assets/${props.id}/seats`, {
+      org: org(),
+      body: { employee_id: seatForm.value.employee_id, note: seatForm.value.note || null },
+    });
+    asset.value = res.data;
+    showSeat.value = false;
+  } catch (e) {
+    // The over-allocation refusal lands here, and it is the one message worth
+    // showing verbatim — it says exactly what to do about it.
+    seatError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not allocate that seat.";
+  } finally { busy.value = false; }
+}
+
+async function releaseSeat(allocationId: number, who: string) {
+  if (!confirm(`Take the seat back from ${who}? The record of them having held it is kept.`)) return;
+  busy.value = true;
+  try {
+    const res = await api<{ data: any }>("DELETE", `/api/v1/assets/${props.id}/seats/${allocationId}`, { org: org() });
+    asset.value = res.data;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Could not release that seat.";
+  } finally { busy.value = false; }
+}
+
+function openSeat() {
+  seatForm.value = { employee_id: null, note: "" };
+  seatError.value = "";
+  showSeat.value = true;
+}
 
 const showAssign  = ref(false);
 const assignError = ref("");
@@ -203,8 +251,59 @@ onMounted(load);
         <span v-if="asset.maintenance_is_due"> Maintenance due {{ asset.next_maintenance }}.</span>
       </p>
 
+      <!-- ── Seats, for a licence batch ─────────────────────────────────── -->
+      <section v-if="isLicence" class="panel">
+        <div class="panel-head">
+          <h2>Seats</h2>
+          <button class="btn-primary" :disabled="busy" @click="openSeat">Allocate a seat</button>
+        </div>
+
+        <div class="seat-counts">
+          <div class="seat-stat">
+            <span class="seat-n">{{ (asset as any).seats_total ?? '—' }}</span>
+            <span class="seat-l">in the batch</span>
+          </div>
+          <div class="seat-stat">
+            <span class="seat-n">{{ (asset as any).seats_used ?? 0 }}</span>
+            <span class="seat-l">allocated</span>
+          </div>
+          <!-- The number that hands money back at a renewal. -->
+          <div class="seat-stat">
+            <span class="seat-n">{{ (asset as any).seats_spare ?? '—' }}</span>
+            <span class="seat-l">spare</span>
+          </div>
+          <div v-if="(asset as any).starts_on || (asset as any).expires_on" class="seat-stat seat-term">
+            <span class="seat-l">Term</span>
+            <span class="seat-term-dates">
+              {{ (asset as any).starts_on ?? '—' }} → {{ (asset as any).expires_on ?? '—' }}
+            </span>
+          </div>
+        </div>
+
+        <p v-if="(asset as any).description" class="pad seat-desc">{{ (asset as any).description }}</p>
+
+        <p v-if="!(asset as any).seat_holders?.length" class="pad muted">
+          Nobody holds a seat on this batch yet.
+        </p>
+
+        <!-- Who is affected — the question a typed count could never answer. -->
+        <table v-else class="tl-table">
+          <thead>
+            <tr><th>Who</th><th>Since</th><th>Note</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="h in (asset as any).seat_holders" :key="h.id">
+              <td>{{ h.employee }}</td>
+              <td>{{ h.allocated_on }}</td>
+              <td class="muted">{{ h.note ?? '—' }}</td>
+              <td><button class="link-danger" :disabled="busy" @click="releaseSeat(h.id, h.employee)">Release</button></td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <!-- Custody -->
-      <section class="panel">
+      <section v-if="!isLicence" class="panel">
         <div class="panel-head">
           <h2>Custody</h2>
           <div class="actions">
@@ -268,6 +367,34 @@ onMounted(load);
       </section>
       </template>
     </template>
+
+    <!-- Allocate a seat -->
+    <div v-if="showSeat" class="overlay" @click.self="showSeat = false">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Allocate a seat">
+        <h2>Allocate a seat</h2>
+        <p class="muted seat-lead">
+          One seat comes off the batch and this person is recorded as holding it,
+          so a renewal or an exit knows who is affected.
+        </p>
+
+        <label class="field"><span>Who</span>
+          <EmployeePicker v-model="seatForm.employee_id" />
+        </label>
+
+        <label class="field"><span>Note</span>
+          <input v-model="seatForm.note" class="control" placeholder="What the seat is for, if it is not obvious" />
+        </label>
+
+        <p v-if="seatError" class="alert" role="alert">{{ seatError }}</p>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showSeat = false">Cancel</button>
+          <button class="btn-primary" :disabled="busy || !seatForm.employee_id" @click="allocateSeat">
+            {{ busy ? "Allocating…" : "Allocate" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Assign -->
     <div v-if="showAssign" class="overlay" @click.self="showAssign = false">
@@ -481,4 +608,18 @@ code {
                background: var(--color-surface-sunken); }
 .tl-table td { padding: 12px 16px; border-bottom: 1px solid var(--color-border); }
 .tl-table tr:last-child td { border-bottom: none; }
+
+/* ── Seats ─────────────────────────────────────────────────────────────── */
+.seat-counts { display: flex; flex-wrap: wrap; gap: 28px; padding: 4px 16px 14px; }
+.seat-stat { display: flex; flex-direction: column; }
+.seat-n { font-size: 1.5rem; font-weight: 600; color: var(--color-text); line-height: 1.1; }
+.seat-l { font-size: .75rem; color: var(--color-text-muted); }
+.seat-term { justify-content: center; }
+.seat-term-dates { font-size: .85rem; color: var(--color-text); }
+.seat-desc { font-size: .85rem; color: var(--color-text-muted); border-left: 3px solid var(--color-border);
+             margin: 0 16px 12px; padding-left: 12px; }
+.seat-lead { margin: -6px 0 14px; font-size: .82rem; }
+.link-danger { background: none; border: none; padding: 0; font: inherit; font-size: .82rem;
+               color: var(--color-danger-text); cursor: pointer; }
+.link-danger:hover { text-decoration: underline; }
 </style>

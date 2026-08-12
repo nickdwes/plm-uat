@@ -10,6 +10,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
+import EmployeePicker from "../../components/EmployeePicker.vue";
 import { currentOrgSlug } from "../../stores/auth";
 import type { Asset, AssetListMeta } from "../../lib/types";
 
@@ -233,7 +234,7 @@ const needsAttention = computed(
  * is not navigating anywhere. Each loads on first open and not before —
  * opening Assets should not fetch six lists nobody looked at.
  */
-type Tab = "overview" | "mine" | "requests" | "employee" | "inventory" | "maintenance" | "disposals";
+type Tab = "overview" | "mine" | "requests" | "employee" | "inventory" | "maintenance" | "renewals" | "disposals";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "overview",    label: "Overview" },
@@ -242,6 +243,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "employee",    label: "Employee Assets" },
   { key: "inventory",   label: "Assets Inventory" },
   { key: "maintenance", label: "Maintenance" },
+  { key: "renewals",    label: "Renewals" },
   { key: "disposals",   label: "Disposals" },
 ];
 
@@ -261,6 +263,66 @@ const requests  = ref<any[]>([]);
 const disposals = ref<any[]>([]);
 const mine      = ref<Asset[]>([]);
 const servicing = ref<any[]>([]);
+const renewals  = ref<any[]>([]);
+const renewalSummary = ref<any>(null);
+
+/** Who to tell, being edited for one asset at a time. */
+const editingWatchers = ref<any | null>(null);
+const watcherIds = ref<number[]>([]);
+const watcherSaving = ref(false);
+const watcherPick = ref<number | null>(null);
+
+/**
+ * Names for the ids being edited.
+ *
+ * Held here rather than refetched: the list came with the row, and somebody
+ * adding three people should not wait for three round trips to see them.
+ */
+const watcherNames = ref<Record<number, string>>({});
+
+const watcherChips = computed(() =>
+  watcherIds.value.map(id => ({ id, name: watcherNames.value[id] ?? `#${id}` })));
+
+function addWatcher() {
+  const id = watcherPick.value;
+  if (!id || watcherIds.value.includes(id)) { watcherPick.value = null; return; }
+  watcherIds.value = [...watcherIds.value, id];
+  watcherPick.value = null;
+}
+
+function removeWatcher(id: number) {
+  watcherIds.value = watcherIds.value.filter(x => x !== id);
+}
+
+async function loadRenewals() {
+  const res = await api<{ data: any[]; summary: any }>("GET", "/api/v1/assets/renewals", {
+    org: org(), params: { all: 1 },
+  });
+  renewals.value = res.data ?? [];
+  renewalSummary.value = res.summary ?? null;
+}
+
+function openWatchers(r: any) {
+  editingWatchers.value = r;
+  watcherIds.value = (r.watchers ?? []).map((w: any) => w.employee_id);
+  watcherNames.value = Object.fromEntries((r.watchers ?? []).map((w: any) => [w.employee_id, w.name]));
+  watcherPick.value = null;
+}
+
+async function saveWatchers(remindersOn: boolean) {
+  if (!editingWatchers.value) return;
+  watcherSaving.value = true;
+  try {
+    await api("PUT", `/api/v1/assets/${editingWatchers.value.id}/renewal-watchers`, {
+      org: org(),
+      body: { reminders_on: remindersOn, employee_ids: watcherIds.value },
+    });
+    editingWatchers.value = null;
+    await loadRenewals();
+  } catch (e) {
+    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save that.";
+  } finally { watcherSaving.value = false; }
+}
 const held      = ref<Asset[]>([]);
 
 async function openTab(next: Tab) {
@@ -274,6 +336,8 @@ async function openTab(next: Tab) {
       requests.value = (await api<{ data: any }>("GET", "/api/v1/assets/requests", { org: org() })).data?.data ?? [];
     } else if (next === "maintenance") {
       servicing.value = (await api<{ data: any }>("GET", "/api/v1/assets/maintenance", { org: org() })).data?.data ?? [];
+    } else if (next === "renewals") {
+      await loadRenewals();
     } else if (next === "disposals") {
       disposals.value = (await api<{ data: any }>("GET", "/api/v1/assets/disposals", { org: org() })).data?.data ?? [];
     } else if (next === "mine") {
@@ -437,6 +501,73 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
       </table>
     </section>
 
+    <!-- ── Renewals ─────────────────────────────────────────────────────── -->
+    <section v-else-if="tab === 'renewals'" class="pane">
+      <div v-if="renewalSummary" class="counts">
+        <!-- Expired leads. Something that lapsed last week is a worse problem
+             than something lapsing next month. -->
+        <div :class="['count', { bad: renewalSummary.expired }]">
+          <span class="count-n">{{ renewalSummary.expired }}</span><span class="count-l">already expired</span>
+        </div>
+        <div class="count">
+          <span class="count-n">{{ renewalSummary.this_month }}</span><span class="count-l">within 30 days</span>
+        </div>
+        <div class="count">
+          <span class="count-n">{{ renewalSummary.total }}</span><span class="count-l">with a date</span>
+        </div>
+        <div class="count">
+          <span class="count-n">{{ money(renewalSummary.estimated) }}</span>
+          <!-- Labelled a guess, because it is one. -->
+          <span class="count-l">estimated to renew</span>
+        </div>
+      </div>
+
+      <p v-if="!renewals.length" class="quiet">Nothing on the register has a renewal date.</p>
+
+      <table v-else class="grid">
+        <thead>
+          <tr>
+            <th>What</th><th>Expires</th><th>Seats</th>
+            <th>Last cost</th><th>Bought from</th><th>Estimated</th><th>Reminders</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="r in renewals" :key="r.id" :class="{ flagged: r.days_to_expiry < 0 }">
+            <td>
+              <router-link :to="{ name: 'asset-detail', params: { id: r.id } }" class="link">{{ r.name }}</router-link>
+              <div class="sub">{{ r.category }}</div>
+            </td>
+            <td>
+              {{ r.expires_on }}
+              <div :class="['sub', r.days_to_expiry < 0 ? 'sub-bad' : '']">
+                {{ r.days_to_expiry < 0
+                    ? `${Math.abs(r.days_to_expiry)} days ago`
+                    : `in ${r.days_to_expiry} days` }}
+                <template v-if="r.auto_renews"> · auto-renews</template>
+              </div>
+            </td>
+            <td>
+              <template v-if="r.seats_total">{{ r.seats_used }}/{{ r.seats_total }}</template>
+              <span v-else class="quiet">—</span>
+            </td>
+            <!-- What it actually cost, against what it is expected to. One is a
+                 fact and one is a guess, so they do not share a column. -->
+            <td>{{ r.last_cost ? money(Number(r.last_cost)) : '—' }}</td>
+            <td>{{ r.last_vendor ?? '—' }}</td>
+            <td>{{ r.estimated_cost ? money(Number(r.estimated_cost)) : '—' }}</td>
+            <td>
+              <button class="link" @click="openWatchers(r)">
+                <template v-if="r.reminders_on">
+                  {{ r.watchers.length }} {{ r.watchers.length === 1 ? 'person' : 'people' }}
+                </template>
+                <template v-else>off</template>
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
     <!-- ── Disposals ────────────────────────────────────────────────────── -->
     <section v-else-if="tab === 'disposals'" class="pane">
       <p v-if="!disposals.length" class="quiet">Nothing has been disposed of.</p>
@@ -574,6 +705,53 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
     </div>
 
     </template>
+
+    <!-- ── Who to tell ──────────────────────────────────────────────────── -->
+    <div v-if="editingWatchers" class="overlay" @click.self="editingWatchers = null">
+      <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-label="Renewal reminders">
+        <h2>Renewal reminders</h2>
+        <p class="quiet reminder-lead">
+          <strong>{{ editingWatchers.name }}</strong> expires {{ editingWatchers.expires_on }}.
+        </p>
+
+        <!--
+          The shape of what they are agreeing to, rather than a switch that
+          promises "reminders" and never says how many or when.
+        -->
+        <ul class="sched">
+          <li v-for="m in editingWatchers.schedule" :key="m.on">
+            <span class="sched-when">{{ m.label }}</span>
+            <span class="sched-on">{{ m.on }}</span>
+          </li>
+          <li class="sched-tail">then every day until it is renewed</li>
+        </ul>
+
+        <label class="field field-wide"><span>Who should hear about it</span>
+          <div class="watcher-add">
+            <EmployeePicker v-model="watcherPick" />
+            <button class="btn-secondary" :disabled="!watcherPick" @click="addWatcher">Add</button>
+          </div>
+        </label>
+
+        <p v-if="!watcherIds.length" class="quiet">
+          Nobody yet. A reminder with no recipients is a setting that looks
+          configured and does nothing.
+        </p>
+        <div v-else class="chips">
+          <span v-for="w in watcherChips" :key="w.id" class="chip">
+            {{ w.name }}
+            <button class="chip-x" aria-label="Remove" @click="removeWatcher(w.id)">×</button>
+          </span>
+        </div>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" :disabled="watcherSaving" @click="saveWatchers(false)">Turn off</button>
+          <button class="btn-primary" :disabled="watcherSaving || !watcherIds.length" @click="saveWatchers(true)">
+            {{ watcherSaving ? "Saving…" : "Remind these people" }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Create -->
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false">
@@ -999,4 +1177,32 @@ code {
              background: var(--color-surface-sunken); }
 .other-lead { font-size: .78rem; color: var(--color-text-muted); margin: 0 0 10px; }
 .link { color: var(--color-brand-on-surface); }
+
+/* ── Renewals ──────────────────────────────────────────────────────────── */
+.counts { display: flex; flex-wrap: wrap; gap: 28px; margin-bottom: 18px; }
+.count { display: flex; flex-direction: column; }
+.count-n { font-size: 1.5rem; font-weight: 600; color: var(--color-text); line-height: 1.1; }
+.count-l { font-size: .75rem; color: var(--color-text-muted); }
+.count.bad .count-n { color: var(--color-danger-text); }
+.sub { font-size: .75rem; color: var(--color-text-muted); }
+.sub-bad { color: var(--color-danger-text); }
+.grid tr.flagged td { background: color-mix(in oklab, var(--color-danger-subtle) 35%, transparent); }
+
+.dialog-narrow { max-width: 32rem; }
+.reminder-lead { margin: -6px 0 14px; }
+/* What they are agreeing to receive, rather than a switch promising
+   "reminders" without saying how many or when. */
+.sched { list-style: none; margin: 0 0 16px; padding: 10px 12px; border-radius: 8px;
+         background: var(--color-surface-sunken); display: flex; flex-direction: column; gap: 4px; }
+.sched li { display: flex; justify-content: space-between; font-size: .78rem; }
+.sched-when { color: var(--color-text); }
+.sched-on { color: var(--color-text-muted); font-family: ui-monospace, monospace; }
+.sched-tail { color: var(--color-text-muted); font-style: italic; }
+
+.watcher-add { display: flex; gap: 8px; align-items: center; }
+.watcher-add > :first-child { flex: 1; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+        background: var(--color-brand-subtle); color: var(--color-brand-on-surface); font-size: .78rem; }
+.chip-x { background: none; border: none; padding: 0; cursor: pointer; color: inherit; font-size: 1rem; line-height: 1; }
 </style>
