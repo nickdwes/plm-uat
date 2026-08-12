@@ -682,6 +682,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // than being a field on update.
         Route::post('/{asset}/assign',  [AssetController::class, 'assign']);
         Route::post('/{asset}/release', [AssetController::class, 'release']);
+
+        // Seats on a licence batch. Consuming one is a different act from
+        // correcting a renewal date, so it is a different endpoint.
+        Route::post('/{asset}/seats',              [AssetController::class, 'allocateSeat']);
+        Route::delete('/{asset}/seats/{allocation}', [AssetController::class, 'releaseSeat']);
     });
 
     // ── Pre-Onboarding (Preboarding) ──────────────────────────────────────────

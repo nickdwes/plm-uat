@@ -183,12 +183,17 @@ class AssetLifecycleTest extends TestCase
     {
         $licence = $this->asset([
             'asset_class' => Asset::CLASS_SUBSCRIPTION,
-            'name' => 'Figma', 'seats_total' => 25, 'seats_used' => 18,
+            'name' => 'Figma', 'seats_total' => 25,
         ]);
+
+        // Seats in use are people now, not a number — so eighteen of them.
+        foreach (range(1, 18) as $i) {
+            $licence->allocateSeat($this->employee("Person{$i}")->id);
+        }
 
         $laptop = $this->asset();
 
-        $this->assertSame(7, $licence->seatsSpare());
+        $this->assertSame(7, $licence->fresh()->seatsSpare());
         // Not nought — a laptop has no seats to spare, which is a different
         // statement from a fully-subscribed licence.
         $this->assertNull($laptop->seatsSpare());

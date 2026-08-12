@@ -60,8 +60,9 @@ class Asset extends Model
         'handover_required', 'handover_signed_at',
         'purchase_date', 'purchase_value', 'vendor', 'invoice_number',
         'warranty_period', 'warranty_expiry_date',
-        'expires_on', 'auto_renews', 'renewal_notice_days', 'renewal_cost',
-        'seats_total', 'seats_used',
+        'starts_on', 'expires_on', 'auto_renews', 'renewal_notice_days', 'renewal_cost',
+        'estimated_renewal_cost', 'renewal_reminders_on',
+        'description', 'seats_total',
         'vendor_contact', 'support_contact', 'sla',
         'processor', 'ram', 'storage', 'operating_system',
         'notes',
@@ -77,6 +78,7 @@ class Asset extends Model
         'handover_signed_at'   => 'datetime',
         'handover_required'    => 'boolean',
         'purchase_value'       => 'decimal:2',
+        'starts_on'            => 'date',
         'expires_on'           => 'date',
         'auto_renews'          => 'boolean',
         'renewal_cost'         => 'decimal:2',
@@ -125,12 +127,32 @@ class Asset extends Model
         return $this->hasMany(self::class, 'parent_asset_id');
     }
 
+    /** Every seat ever handed out of this batch, held or given back. */
+    public function seats(): HasMany
+    {
+        return $this->hasMany(AssetSeatAllocation::class);
+    }
+
     // ── Derived ───────────────────────────────────────────────────────────────
 
     /** Bought in quantity and consumed by people. */
     public function isSeated(): bool
     {
         return in_array($this->asset_class, self::SEATED_CLASSES, true);
+    }
+
+    /**
+     * Seats currently held by somebody.
+     *
+     * Counted from allocations rather than stored. A hand-kept number drifts
+     * the first time somebody leaves and nobody decrements it, and the register
+     * then reports a full licence while six seats sit unused — which is money.
+     */
+    public function seatsUsed(): int
+    {
+        return $this->relationLoaded('seats')
+            ? $this->seats->whereNull('released_on')->count()
+            : $this->seats()->active()->count();
     }
 
     /**
@@ -145,7 +167,39 @@ class Asset extends Model
             return null;
         }
 
-        return max(0, $this->seats_total - (int) $this->seats_used);
+        return max(0, $this->seats_total - $this->seatsUsed());
+    }
+
+    /**
+     * Hand a seat to somebody.
+     *
+     * Refuses to over-allocate. A licence with more people on it than seats
+     * paid for is the compliance finding the register exists to prevent, and
+     * the moment to catch it is the moment somebody is added — not in an audit
+     * eighteen months later.
+     */
+    public function allocateSeat(int $employeeId, ?string $on = null, ?string $note = null, ?int $by = null): AssetSeatAllocation
+    {
+        abort_unless($this->isSeated(), 422, 'Only licences and subscriptions have seats.');
+
+        $existing = $this->seats()->active()->where('employee_id', $employeeId)->exists();
+        abort_if($existing, 422, 'They already hold a seat on this licence.');
+
+        if ($this->seats_total !== null) {
+            abort_if(
+                $this->seatsUsed() >= $this->seats_total,
+                422,
+                'Every seat on this batch is allocated. Release one or buy more.',
+            );
+        }
+
+        return $this->seats()->create([
+            'organization_id' => $this->organization_id,
+            'employee_id'     => $employeeId,
+            'allocated_on'    => $on ?: now()->toDateString(),
+            'note'            => $note,
+            'allocated_by'    => $by,
+        ]);
     }
 
     /**

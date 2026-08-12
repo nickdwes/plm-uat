@@ -64,7 +64,9 @@ class StoreAssetRequest extends FormRequest
              * because a laptop can have a support contract that ends, but they
              * are the whole point of the other two.
              */
-            'expires_on'          => ['nullable', 'date'],
+            'starts_on'           => ['nullable', 'date'],
+            'expires_on'          => ['nullable', 'date', 'after_or_equal:starts_on'],
+            'description'         => ['nullable', 'string', 'max:5000'],
             'auto_renews'         => ['nullable', 'boolean'],
             'renewal_notice_days' => ['nullable', 'integer', 'min:1', 'max:365'],
             'renewal_cost'        => ['nullable', 'numeric', 'min:0'],
@@ -79,8 +81,11 @@ class StoreAssetRequest extends FormRequest
              * exists to prevent, and it should be refused at the door rather
              * than discovered in an audit.
              */
+            /*
+             * How many the batch was bought with. Seats in use are counted from
+             * allocations, so there is nothing here to keep in step with them.
+             */
             'seats_total' => ['nullable', 'integer', 'min:1'],
-            'seats_used'  => ['nullable', 'integer', 'min:0', 'lte:seats_total'],
 
             'vendor_contact'  => ['nullable', 'string', 'max:255'],
             'support_contact' => ['nullable', 'string', 'max:255'],

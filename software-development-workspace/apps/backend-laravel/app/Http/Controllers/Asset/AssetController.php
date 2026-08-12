@@ -56,7 +56,53 @@ class AssetController extends Controller
         // always shown is a round trip nobody needed.
         return new AssetResource($asset->load([
             'holder', 'department', 'events.employee', 'events.vendor',
+            'seats.employee',
         ]));
+    }
+
+    /**
+     * Hand a seat out of a licence batch.
+     *
+     * Its own endpoint rather than a field on update, for the same reason
+     * assigning a laptop is: consuming a seat is a different act from
+     * correcting a renewal date, and the register should not let one look like
+     * the other.
+     */
+    public function allocateSeat(Request $request, Asset $asset): AssetResource
+    {
+        $this->authorize('assign', $asset);
+
+        $data = $request->validate([
+            'employee_id'  => ['required', 'integer', 'exists:employees,id'],
+            'allocated_on' => ['nullable', 'date'],
+            'note'         => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $asset->allocateSeat(
+            (int) $data['employee_id'],
+            $data['allocated_on'] ?? null,
+            $data['note'] ?? null,
+            $request->user()->id,
+        );
+
+        return new AssetResource($asset->fresh(['holder', 'department', 'seats.employee']));
+    }
+
+    /**
+     * Give a seat back.
+     *
+     * Released, not deleted — a seat held for eight months and returned is part
+     * of what a renewal conversation needs, and removing it would make a
+     * fully-consumed licence read as under-used for the year it was full.
+     */
+    public function releaseSeat(Request $request, Asset $asset, int $allocation): AssetResource
+    {
+        $this->authorize('assign', $asset);
+
+        $seat = $asset->seats()->findOrFail($allocation);
+        $seat->update(['released_on' => $request->input('released_on', now()->toDateString())]);
+
+        return new AssetResource($asset->fresh(['holder', 'department', 'seats.employee']));
     }
 
     /**

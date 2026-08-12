@@ -56,14 +56,20 @@ const CATEGORIES_BY_CLASS: Record<string, string[]> = {
 
 const blankForm = () => ({
   asset_class: "physical",
-  name: "", asset_tag: "", category: "laptop",
+  name: "", asset_tag: "", category: "laptop", vendor: "",
+  /*
+   * What the licence lets somebody do — kept apart from operational notes.
+   * This is what the person deciding whether to buy another seat reads.
+   */
+  description: "",
   // Physical only.
   brand: "", model: "", serial_number: "",
-  // The other two.
-  expires_on: "", seats_total: "" as string | number, seats_used: "" as string | number,
+  // A batch runs from a date to a date.
+  starts_on: "", expires_on: "",
+  seats_total: "" as string | number,
   renewal_cost: "" as string | number, auto_renews: false,
   renewal_notice_days: "" as string | number,
-  vendor: "", vendor_contact: "",
+  vendor_contact: "",
 });
 
 const form = ref(blankForm());
@@ -134,9 +140,12 @@ async function create() {
       });
     } else {
       Object.assign(body, {
+        description: f.description || undefined,
+        starts_on: f.starts_on || undefined,
         expires_on: f.expires_on || undefined,
+        // How many the batch was bought with. Seats in use are counted from
+        // who holds them, so there is nothing to keep in step.
         seats_total: f.seats_total === "" ? undefined : Number(f.seats_total),
-        seats_used:  f.seats_used  === "" ? undefined : Number(f.seats_used),
         renewal_cost: f.renewal_cost === "" ? undefined : Number(f.renewal_cost),
         renewal_notice_days: f.renewal_notice_days === "" ? undefined : Number(f.renewal_notice_days),
         auto_renews: f.auto_renews,
@@ -526,6 +535,8 @@ onMounted(() => { void load(); void openTab("overview"); });
           questions. Three cards rather than a dropdown: the difference between
           them is not obvious from a word, and the hint is doing the work.
         -->
+        <div class="dialog-body">
+        <div class="form-grid">
         <fieldset class="kinds">
           <legend class="field-legend">What are you registering?</legend>
           <label v-for="c in CLASSES" :key="c.key" :class="['kind', { on: form.asset_class === c.key }]">
@@ -535,7 +546,7 @@ onMounted(() => { void load(); void openTab("overview"); });
           </label>
         </fieldset>
 
-        <label class="field"><span>Name</span>
+        <label class="field field-wide"><span>Name</span>
           <input v-model="form.name" class="control"
                  :placeholder="form.asset_class === 'physical' ? 'ThinkPad X1 Carbon'
                    : form.asset_class === 'software' ? 'Adobe Creative Cloud'
@@ -568,23 +579,32 @@ onMounted(() => { void load(); void openTab("overview"); });
 
         <!-- ── Licences and subscriptions ─────────────────────────────────── -->
         <template v-else>
-          <label class="field"><span>Expires on</span>
-            <input v-model="form.expires_on" class="control" type="date" />
-            <span class="hint">
-              The date it stops working. A certificate nobody renewed is a public
-              site down; a licence nobody renewed is a team locked out on a Monday.
-            </span>
-          </label>
-
+          <!--
+            A batch runs from a date to a date. The end alone tells you when
+            somebody gets locked out; both together tell you what the term was
+            when the invoice is queried.
+          -->
           <div class="row">
-            <label class="field"><span>Seats purchased</span>
-              <input v-model="form.seats_total" class="control" type="number" min="1" />
+            <label class="field"><span>Subscription starts</span>
+              <input v-model="form.starts_on" class="control" type="date" />
             </label>
-            <label class="field"><span>Seats in use</span>
-              <input v-model="form.seats_used" class="control" type="number" min="0" />
-              <span class="hint">Seats paid for and unused is the one number here that hands money back.</span>
+            <label class="field"><span>Proposed end</span>
+              <input v-model="form.expires_on" class="control" type="date" />
+              <span class="hint">
+                A certificate nobody renewed is a public site down; a licence
+                nobody renewed is a team locked out on a Monday.
+              </span>
             </label>
           </div>
+
+          <label class="field"><span>Seats in this batch</span>
+            <input v-model="form.seats_total" class="control" type="number" min="1" placeholder="25" />
+            <span class="hint">
+              How many the batch was bought with. Seats in use are counted from
+              who holds them — you allocate them to people from the licence
+              itself, and each allocation comes off the batch.
+            </span>
+          </label>
 
           <div class="row">
             <label class="field"><span>Renewal cost</span>
@@ -605,7 +625,21 @@ onMounted(() => { void load(); void openTab("overview"); });
           <label class="field"><span>Vendor contact</span>
             <input v-model="form.vendor_contact" class="control" placeholder="Who to chase when it is due" />
           </label>
+
+          <!--
+            What it actually lets somebody do. Separate from notes, which are
+            operational — where the key is kept, who to ring. This is the
+            capability, and it is what somebody deciding whether to buy another
+            seat needs to read.
+          -->
+          <label class="field field-wide"><span>What this licence covers</span>
+            <textarea v-model="form.description" class="control" rows="4"
+                      placeholder="Full Creative Cloud — all apps, 100GB storage, commercial use. Named-user licensing, two machines per seat."></textarea>
+          </label>
         </template>
+
+        </div>
+        </div>
 
         <p v-if="createError" class="alert" role="alert">{{ createError }}</p>
 
@@ -770,14 +804,41 @@ code {
   padding: var(--space-4);
 }
 
+/*
+ * Wide enough for two columns, and never taller than the window.
+ *
+ * The form grew from six fields to nearer twenty once a licence stopped
+ * pretending to be a laptop, and a 30rem column turned that into a scroll on
+ * every screen. It now takes the width it can get and scrolls its body rather
+ * than the page — the actions stay put at the bottom, which is where somebody
+ * looks for them after filling in twenty fields.
+ */
 .dialog {
-  @apply w-full;
-  max-width: 30rem;
+  @apply w-full flex flex-col;
+  max-width: 52rem;
+  max-height: min(90vh, 56rem);
   background: var(--color-surface);
   border-radius: var(--radius-2xl);
   padding: var(--space-5);
   box-shadow: var(--shadow-lg);
 }
+
+/* The scrolling part. Padding on the right so a scrollbar does not sit on top
+   of the inputs. */
+.dialog-body { @apply flex-1 overflow-y-auto; padding-right: var(--space-2); margin-right: calc(-1 * var(--space-2)); }
+
+/*
+ * Two columns where there is room, one where there is not.
+ *
+ * Fields that carry a sentence of explanation — the ones with hints — span
+ * both, because a hint wrapped into four lines beside a date picker is worse
+ * than no hint.
+ */
+.form-grid { @apply grid; grid-template-columns: 1fr 1fr; gap: 0 var(--space-4); }
+@media (max-width: 46rem) { .form-grid { grid-template-columns: 1fr; } }
+.field-wide { grid-column: 1 / -1; }
+.form-grid .row { grid-column: 1 / -1; }
+.form-grid .kinds { grid-column: 1 / -1; }
 
 .dialog h2 {
   @apply font-semibold;
@@ -842,7 +903,8 @@ code {
 .pill-wait { background: var(--color-warning-subtle, var(--color-surface-sunken)); color: var(--color-text); }
 
 /* ── What kind of thing is this ────────────────────────────────────────── */
-.kinds { border: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.kinds { border: none; margin: 0 0 14px; padding: 0; display: grid;
+         grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 8px; }
 .field-legend { font-size: .78rem; color: var(--color-text-muted); padding: 0; margin-bottom: 8px; }
 .kind {
   display: grid; grid-template-columns: 18px 1fr; gap: 4px 10px; align-items: start;

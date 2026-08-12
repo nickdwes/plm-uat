@@ -68,12 +68,29 @@ class AssetResource extends JsonResource
             // What kind of thing this is, and the questions that only apply to
             // some kinds. Null seats on a laptop is not nought seats.
             'asset_class'    => $this->asset_class,
+            'description'    => $this->description,
+            'starts_on'      => $this->starts_on?->toDateString(),
             'expires_on'     => $this->expires_on?->toDateString(),
             'days_to_expiry' => $this->daysToExpiry(),
             'auto_renews'    => (bool) $this->auto_renews,
             'seats_total'    => $this->seats_total,
-            'seats_used'     => $this->seats_used,
+            // Counted from allocations. Nobody types this.
+            'seats_used'     => $this->isSeated() ? $this->seatsUsed() : null,
             'seats_spare'    => $this->seatsSpare(),
+
+            /*
+             * Who is affected — the question a typed count could never answer,
+             * and the reason a renewal or an exit interview needs this at all.
+             */
+            'seat_holders' => $this->whenLoaded('seats', fn () => $this->seats
+                ->whereNull('released_on')
+                ->map(fn ($a) => [
+                    'id'           => $a->id,
+                    'employee_id'  => $a->employee_id,
+                    'employee'     => $a->employee?->full_name,
+                    'allocated_on' => $a->allocated_on?->toDateString(),
+                    'note'         => $a->note,
+                ])->values()),
 
             /*
              * The lifecycle timeline.
