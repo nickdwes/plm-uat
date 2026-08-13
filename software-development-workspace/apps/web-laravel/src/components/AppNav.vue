@@ -375,6 +375,21 @@ watch(() => route.name, () => {
         Assets
       </router-link>
 
+      <!--
+        Directly under Assets, because that is the only thing it feeds. Filed
+        away under a general settings menu it would be found by whoever went
+        looking for it and by nobody else.
+      -->
+      <router-link
+        :to="{ name: 'integration-connections' }"
+        :class="['nav-item', { active: isActive('integrations') }]"
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M11.7 3.3a3.5 3.5 0 015 5l-2 2a3.5 3.5 0 01-5 0 1 1 0 011.4-1.4 1.5 1.5 0 002.2 0l2-2a1.5 1.5 0 00-2.2-2.2l-.8.8a1 1 0 11-1.4-1.4l.8-.8zM8.3 16.7a3.5 3.5 0 01-5-5l2-2a3.5 3.5 0 015 0 1 1 0 01-1.4 1.4 1.5 1.5 0 00-2.2 0l-2 2a1.5 1.5 0 002.2 2.2l.8-.8a1 1 0 111.4 1.4l-.8.8z" />
+        </svg>
+        Connected tenants
+      </router-link>
+
       <!-- ── Section: Vendor Management ─────────────────────────────────────── -->
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Vendor Management</div>

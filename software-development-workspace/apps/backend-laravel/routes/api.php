@@ -64,6 +64,7 @@ use App\Http\Controllers\Roster\RosterShiftSwapController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\AzureSsoController;
 use App\Http\Controllers\Auth\NewPasswordController;
+use App\Http\Controllers\Integration\IntegrationConnectionController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Public\PublicJobController;
 use App\Http\Controllers\Public\PublicPreboardingController;
@@ -676,6 +677,27 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     });
 
     // ── Assets ────────────────────────────────────────────────────────────────
+    /*
+     * Where the register is told to read somebody else's estate.
+     *
+     * Under the same org-context group as everything else, so a connection
+     * belongs to the organisation in context — a tenant describes one company's
+     * estate and importing it into another mixes two registers.
+     */
+    Route::prefix('integrations/connections')->group(function () {
+        Route::get('/',                       [IntegrationConnectionController::class, 'index']);
+        Route::post('/',                      [IntegrationConnectionController::class, 'store']);
+        Route::put('/{connection}',           [IntegrationConnectionController::class, 'update']);
+        Route::delete('/{connection}',        [IntegrationConnectionController::class, 'destroy']);
+
+        // Credential checks and subscription discovery, kept apart from the
+        // sync itself — finding out what a principal may do should never
+        // write anything to the register.
+        Route::post('/{connection}/test',          [IntegrationConnectionController::class, 'test']);
+        Route::post('/{connection}/discover',      [IntegrationConnectionController::class, 'discover']);
+        Route::put('/{connection}/subscriptions',  [IntegrationConnectionController::class, 'setSubscriptions']);
+    });
+
     Route::prefix('assets')->group(function () {
         /*
          * Before /{asset}, or the router reads "summary" as an id — the same

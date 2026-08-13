@@ -80,6 +80,10 @@ class AppServiceProvider extends ServiceProvider
         // resolves App\Models\X to App\Policies\XPolicy — it does not follow
         // sub-namespaces, so a policy in a folder is silently never applied.
         Gate::policy(\App\Models\Asset\Asset::class, \App\Policies\Asset\AssetPolicy::class);
+        Gate::policy(
+            \App\Models\Integration\IntegrationConnection::class,
+            \App\Policies\Integration\IntegrationConnectionPolicy::class,
+        );
 
         // Accounts (customer master). Laravel's policy auto-discovery does not
         // follow sub-namespaces, so an unregistered policy fails open here.

@@ -23,7 +23,40 @@ class MicrosoftInventory
     private const GRAPH = 'https://graph.microsoft.com';
     private const ARM   = 'https://management.azure.com';
 
+    /**
+     * Credentials for one tenant, or null to fall back to config.
+     *
+     * The config route is what the console command used while there was one
+     * tenant. It stays because a deployment with a single estate should not
+     * need a database row to read its own licences, and because it is the
+     * fixture the tests run against.
+     */
+    private ?array $credentials = null;
+
     public function __construct(private readonly LicenceSkus $skus = new LicenceSkus()) {}
+
+    /**
+     * A reader bound to one registered tenant.
+     *
+     * Returns a fresh instance rather than mutating this one — a service
+     * resolved from the container is shared, and a sync that looped over four
+     * connections while quietly rebinding the same object would read the last
+     * tenant four times.
+     */
+    public function forConnection(\App\Models\Integration\IntegrationConnection $connection): self
+    {
+        $clone = new self($this->skus);
+
+        $clone->credentials = [
+            'tenant_id'     => $connection->tenant_id,
+            'client_id'     => $connection->client_id,
+            'client_secret' => $connection->client_secret,
+            // Only what somebody ticked. See IntegrationSubscription.
+            'subscription_id' => $connection->enabledSubscriptionIds()[0] ?? null,
+        ];
+
+        return $clone;
+    }
 
     // ── Tokens ────────────────────────────────────────────────────────────────
 
@@ -68,16 +101,42 @@ class MicrosoftInventory
 
     private function config(string $key): string
     {
-        $value = config("services.ms_inventory.{$key}");
+        $value = $this->credentials !== null
+            ? ($this->credentials[$key] ?? null)
+            : config("services.ms_inventory.{$key}");
 
         if (blank($value)) {
             throw new RuntimeException(
-                "services.ms_inventory.{$key} is not set. The inventory sync needs its own "
-                . 'app registration — see config/services.php.',
+                $this->credentials !== null
+                    ? "This connection has no {$key}. Edit it and supply one."
+                    : "services.ms_inventory.{$key} is not set. The inventory sync needs its own "
+                        . 'app registration — see config/services.php.',
             );
         }
 
         return (string) $value;
+    }
+
+    /**
+     * Every subscription this principal can see.
+     *
+     * Used by the connection screen to offer a list rather than asking somebody
+     * to type a UUID. What is reachable is not the same as what belongs in this
+     * register, so nothing here is enabled by being found.
+     */
+    public function discoverSubscriptions(): array
+    {
+        $response = Http::withToken($this->token(self::ARM))
+            ->timeout(30)
+            ->get(self::ARM . '/subscriptions?api-version=2020-01-01');
+
+        $this->assertOk($response, 'subscriptions');
+
+        return collect($response->json('value') ?? [])->map(fn (array $s): array => [
+            'subscription_id' => $s['subscriptionId'] ?? null,
+            'display_name'    => $s['displayName'] ?? null,
+            'state'           => $s['state'] ?? null,
+        ])->filter(fn (array $s) => $s['subscription_id'] !== null)->values()->all();
     }
 
     /** Which permissions the token actually carries, for diagnosis. */

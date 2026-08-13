@@ -185,6 +185,19 @@ final class Permission
     public const ASSETS_REPORT_ISSUE  = 'assets.report_issue';
     public const ASSETS_RESOLVE_ISSUE = 'assets.resolve_issue';
 
+    /*
+     * Reading somebody else's system.
+     *
+     * Kept apart from the asset permissions deliberately. Maintaining the
+     * register is a different job from holding a credential that can read a
+     * whole directory, and `sync` is separate again — running an import is an
+     * action somebody may be trusted to take without being trusted to change
+     * where the data comes from.
+     */
+    public const INTEGRATIONS_VIEW   = 'integrations.view';
+    public const INTEGRATIONS_MANAGE = 'integrations.manage';
+    public const INTEGRATIONS_SYNC   = 'integrations.sync';
+
     // ── Accounts (customer master) ────────────────────────────────────────
     public const ACCOUNTS_VIEW       = 'accounts.view';
     /** An account manager seeing only the customers assigned to them. */
@@ -336,6 +349,9 @@ final class Permission
                 self::ASSETS_UPDATE, self::ASSETS_DELETE, self::ASSETS_ASSIGN,
                 self::ASSETS_REQUEST, self::ASSETS_APPROVE,
                 self::ASSETS_REPORT_ISSUE, self::ASSETS_RESOLVE_ISSUE,
+            ],
+            'integrations'  => [
+                self::INTEGRATIONS_VIEW, self::INTEGRATIONS_MANAGE, self::INTEGRATIONS_SYNC,
             ],
             'travel'        => [
                 self::TRAVEL_VIEW, self::TRAVEL_VIEW_OWN, self::TRAVEL_VIEW_TEAM,
