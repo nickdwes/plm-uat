@@ -222,6 +222,18 @@ const seatError  = ref("");
 const isLicence = computed(() =>
   ["software", "subscription"].includes((asset.value as any)?.asset_class ?? ""));
 
+/*
+ * Cloud resources have no serial number, no processor to record by hand and
+ * nothing to photograph. Asking anyway fills the page with dashes and teaches
+ * the reader that most of it is irrelevant, which is how the fields that do
+ * matter stop being read.
+ */
+const isCloud = computed(() => (asset.value as any)?.asset_class === "cloud");
+
+/** "in_service" is not a sentence. */
+const statusLabel = computed(() =>
+  ((asset.value?.status ?? "") as string).replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()));
+
 async function allocateSeat() {
   if (!seatForm.value.employee_id) return;
   busy.value = true; seatError.value = "";
@@ -296,6 +308,10 @@ async function load() {
   }
 }
 
+const showCustodian   = ref(false);
+const custodianError  = ref("");
+const custodianForm   = ref<{ employee_id: number | null; note: string }>({ employee_id: null, note: "" });
+
 async function assign() {
   busy.value = true; assignError.value = "";
   try {
@@ -311,6 +327,47 @@ async function assign() {
   } catch (e) {
     // 422 here is usually the tenancy check: a real employee id, wrong org.
     assignError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not assign the asset.";
+  } finally {
+    busy.value = false;
+  }
+}
+
+/*
+ * Custodianship, not assignment.
+ *
+ * A separate call because it is a separate act: nothing is handed over, nothing
+ * is signed, and nothing comes back at an exit interview. Sharing the assign
+ * endpoint would put a core switch on somebody's leaver checklist.
+ */
+async function setCustodian() {
+  busy.value = true; custodianError.value = "";
+  try {
+    const res = await api<{ data: Asset }>("POST", `/api/v1/assets/${props.id}/custodian`, {
+      org: org(),
+      body: { employee_id: custodianForm.value.employee_id, note: custodianForm.value.note || null },
+    });
+    asset.value = res.data;
+    showCustodian.value = false;
+    custodianForm.value = { employee_id: null, note: "" };
+    // Reload rather than trust the action's payload: it carries the custodian
+    // but not the timeline, and a half-refreshed page blanks the history.
+    await load();
+  } catch (e) {
+    custodianError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not record the custodian.";
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function clearCustodian() {
+  if (!confirm("Record that nobody is looking after this? It stays in service.")) return;
+  busy.value = true; error.value = "";
+  try {
+    const res = await api<{ data: Asset }>("DELETE", `/api/v1/assets/${props.id}/custodian`, { org: org() });
+    asset.value = res.data;
+    await load();
+  } catch (e) {
+    error.value = e instanceof ApiError ? e.message : "Could not clear the custodian.";
   } finally {
     busy.value = false;
   }
@@ -358,7 +415,7 @@ onMounted(load);
         </div>
         <div class="head-actions">
           <button class="btn-secondary" @click="openEdit">Edit</button>
-          <span :class="['pill', `pill-${asset.status}`]">{{ asset.status }}</span>
+          <span :class="['pill', `pill-${asset.status}`]">{{ statusLabel }}</span>
         </div>
       </header>
 
@@ -496,8 +553,47 @@ onMounted(load);
         </table>
       </section>
 
+      <!--
+        Custody, asked the way this kind of thing is actually held.
+
+        Racked equipment and cloud resources have somebody answerable for them
+        and nobody carrying them, so the panel offers a custodian rather than an
+        assignee — and never offers "return to stock" on a switch that was never
+        taken anywhere.
+      -->
+      <section v-if="!isLicence && asset.uses_custodian" class="panel">
+        <div class="panel-head">
+          <h2>Looked after by</h2>
+          <div class="actions">
+            <button class="btn-primary" :disabled="busy" @click="showCustodian = true">
+              {{ asset.custodian ? "Hand over" : "Set custodian" }}
+            </button>
+            <button v-if="asset.custodian" class="btn-secondary" :disabled="busy" @click="clearCustodian">
+              Clear
+            </button>
+          </div>
+        </div>
+        <dl class="facts pad">
+          <dt>Custodian</dt>
+          <dd>
+            <template v-if="asset.custodian">
+              {{ asset.custodian.full_name }}
+              <span class="muted">({{ asset.custodian.employee_number }})</span>
+            </template>
+            <span v-else class="pill pill-warn">Nobody answerable</span>
+          </dd>
+          <dt>Since</dt><dd>{{ asset.custodian_since || "—" }}</dd>
+          <dt>Department</dt><dd>{{ asset.department?.name || "—" }}</dd>
+          <dt>Location</dt><dd>{{ asset.location || "—" }}</dd>
+        </dl>
+        <p class="pad muted">
+          A custodian is answerable for this, not holding it — nothing is signed
+          for and nothing is returned when they leave.
+        </p>
+      </section>
+
       <!-- Custody -->
-      <section v-if="!isLicence" class="panel">
+      <section v-else-if="!isLicence" class="panel">
         <div class="panel-head">
           <h2>Custody</h2>
           <div class="actions">
@@ -542,7 +638,7 @@ onMounted(load);
           </dl>
         </section>
 
-        <section class="panel">
+        <section v-if="!isCloud" class="panel">
           <div class="panel-head"><h2>Specification</h2></div>
           <dl class="facts pad">
             <dt>Serial</dt><dd><code v-if="asset.serial_number">{{ asset.serial_number }}</code><span v-else class="muted">—</span></dd>
@@ -556,7 +652,7 @@ onMounted(load);
       </div>
 
       <!-- ── Photographs ────────────────────────────────────────────────── -->
-      <section class="panel">
+      <section v-if="!isCloud" class="panel">
         <div class="panel-head">
           <h2>Photographs</h2>
           <div class="photo-actions">
@@ -744,6 +840,36 @@ onMounted(load);
     </div>
 
     <!-- Assign -->
+    <!--
+      Handing over responsibility, which is not handing over a thing. No date
+      field: it starts today, because a custodian backdated to last March
+      implies somebody was answerable for an incident they had not heard of.
+    -->
+    <div v-if="showCustodian" class="overlay" @click.self="showCustodian = false">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Set custodian">
+        <h2>{{ asset?.custodian ? "Hand over" : "Set custodian for" }} {{ asset?.name }}</h2>
+        <p class="muted">
+          Who is answerable for this — who to ring when it fails, and who
+          approves a change. They are not being given it.
+        </p>
+        <div class="field">
+          <span>Custodian</span>
+          <EmployeePicker v-model="custodianForm.employee_id" />
+        </div>
+        <label class="field"><span>Note</span>
+          <input v-model="custodianForm.note" class="control"
+                 placeholder="Why it changed hands, if it is worth recording" />
+        </label>
+        <p v-if="custodianError" class="alert" role="alert">{{ custodianError }}</p>
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showCustodian = false">Cancel</button>
+          <button class="btn-primary" :disabled="busy || !custodianForm.employee_id" @click="setCustodian">
+            {{ busy ? "Saving…" : "Record custodian" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showAssign" class="overlay" @click.self="showAssign = false">
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Assign asset">
         <h2>Assign {{ asset?.name }}</h2>
@@ -845,6 +971,10 @@ code {
 .pill-assigned    { background: var(--color-brand-light);   color: var(--color-brand-dark); }
 .pill-maintenance { background: var(--color-warning-light); color: #7C2D12; }
 .pill-retired     { background: var(--color-surface-sunken); color: var(--color-text-light); }
+/* Running and looked after — its own colour, because it is neither "on a shelf"
+   nor "somebody has it". */
+.pill-in_service  { background: var(--color-brand-subtle);  color: var(--color-brand-dark); }
+.pill-pending_acceptance { background: var(--color-warning-light); color: #7C2D12; }
 .pill-warn        { background: var(--color-warning-light); color: #7C2D12; }
 
 .note {

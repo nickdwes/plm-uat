@@ -1143,7 +1143,14 @@ export interface VendorProject {
 // Assets
 // ---------------------------------------------------------------------------
 
-export type AssetStatus = "available" | "assigned" | "maintenance" | "retired";
+/*
+ * `in_service` is for things that are running and looked after rather than
+ * held — a switch in a rack, a production virtual machine. Calling those
+ * "available" says they are on a shelf and could be handed to somebody.
+ */
+export type AssetStatus =
+  | "available" | "assigned" | "maintenance" | "retired"
+  | "pending_acceptance" | "in_service";
 
 export interface Asset {
   id: number;
@@ -1162,6 +1169,15 @@ export interface Asset {
   location: string | null;
   holder: { id: number; full_name: string; employee_number: string } | null;
   department: { id: number; name: string } | null;
+
+  /*
+   * Looked after rather than carried. Decided by the category, so a racked
+   * switch and a virtual machine both answer true while a laptop does not —
+   * the screen uses it to choose which question to ask.
+   */
+  uses_custodian: boolean;
+  custodian_since: string | null;
+  custodian: { id: number; full_name: string; employee_number: string } | null;
 
   handover_required: boolean;
   handover_signed_at: string | null;

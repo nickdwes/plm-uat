@@ -43,11 +43,25 @@ interface Connection {
 
 interface Check { ok: boolean; count: number | null; message: string | null }
 
+interface AzurePreview {
+  committed: boolean;
+  to_create: { name: string; category: string; type: string }[];
+  to_update: number;
+  retired: number;
+  untagged: number;
+  skipped_types: Record<string, number>;
+  skipped_total: number;
+}
+
 const connections = ref<Connection[]>([]);
 const loading     = ref(false);
 const error       = ref("");
 const busyId      = ref<number | null>(null);
 const checks      = ref<Record<number, Record<string, Check | null>>>({});
+
+const previews = ref<Record<number, AzurePreview>>({});
+const importing = ref<number | null>(null);
+const imported  = ref<Record<number, string>>({});
 
 const showForm = ref(false);
 const editing  = ref<Connection | null>(null);
@@ -166,6 +180,47 @@ async function toggleSubscription(c: Connection, sub: Subscription): Promise<voi
     error.value = err instanceof ApiError ? err.message : "Could not change the selection.";
   } finally {
     busyId.value = null;
+  }
+}
+
+/*
+ * Always previewed before it commits.
+ *
+ * This one writes into the asset register itself rather than a snapshot of its
+ * own, so the first time somebody runs it they should see thirteen machines and
+ * thirty-six skipped bits of plumbing before anything appears in their list.
+ */
+async function previewAzure(c: Connection): Promise<void> {
+  busyId.value = c.id;
+  error.value = "";
+  try {
+    const res = await api<{ preview: AzurePreview }>(
+      "POST", `/api/v1/integrations/connections/${c.id}/azure/preview`, { org: org.value },
+    );
+    previews.value[c.id] = res.preview;
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "Could not read the subscription.";
+  } finally {
+    busyId.value = null;
+  }
+}
+
+async function importAzure(c: Connection): Promise<void> {
+  importing.value = c.id;
+  error.value = "";
+  try {
+    const res = await api<{ result: AzurePreview }>(
+      "POST", `/api/v1/integrations/connections/${c.id}/azure/import`, { org: org.value },
+    );
+    const r = res.result;
+    imported.value[c.id] = `${r.to_create.length} created, ${r.to_update} updated`
+      + (r.retired ? `, ${r.retired} retired` : "") + ".";
+    delete previews.value[c.id];
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "The import failed.";
+  } finally {
+    importing.value = null;
   }
 }
 
@@ -311,6 +366,62 @@ onMounted(load);
           up can see other parts of the business, and those do not belong in this
           register.
         </p>
+
+        <!-- ── Bringing them in ────────────────────────────────────────── -->
+        <div v-if="c.subscriptions.some((s) => s.is_enabled)" class="import-row">
+          <button class="btn btn-sm" :disabled="busyId === c.id || importing !== null"
+                  @click="previewAzure(c)">
+            {{ busyId === c.id ? "Reading…" : "Preview import" }}
+          </button>
+
+          <span v-if="imported[c.id]" class="ok-note">{{ imported[c.id] }}</span>
+        </div>
+
+        <div v-if="previews[c.id]" class="preview">
+          <p class="preview-lead">
+            <strong>{{ previews[c.id].to_create.length }}</strong> to create,
+            <strong>{{ previews[c.id].to_update }}</strong> to update<template v-if="previews[c.id].retired">,
+            <strong>{{ previews[c.id].retired }}</strong> to retire</template>.
+          </p>
+
+          <ul class="preview-list">
+            <li v-for="r in previews[c.id].to_create" :key="r.name">
+              <span class="chip chip-on">{{ r.category }}</span> {{ r.name }}
+            </li>
+          </ul>
+
+          <!--
+            Named, not silently dropped. Network interfaces and metric alerts
+            belong to something else, but a reader who does not know they were
+            left out cannot ask for them back.
+          -->
+          <details v-if="previews[c.id].skipped_total">
+            <summary>{{ previews[c.id].skipped_total }} not imported</summary>
+            <ul class="preview-list">
+              <li v-for="(n, t) in previews[c.id].skipped_types" :key="t">
+                <span class="chip chip-off">{{ n }}×</span> {{ t }}
+              </li>
+            </ul>
+            <p class="hint">
+              Plumbing that belongs to something else — interfaces, disks, alerts.
+              Ask if any of these should become assets in their own right.
+            </p>
+          </details>
+
+          <p v-if="previews[c.id].untagged" class="hint">
+            {{ previews[c.id].untagged }} carry no Azure tags, so they arrive with
+            no owner or environment. Tagging them in Azure is cheaper than keying
+            it in here.
+          </p>
+
+          <div class="import-row">
+            <button class="btn btn-primary btn-sm" :disabled="importing !== null"
+                    @click="importAzure(c)">
+              {{ importing === c.id ? "Importing…" : "Import into the register" }}
+            </button>
+            <button class="btn btn-sm" @click="delete previews[c.id]">Cancel</button>
+          </div>
+        </div>
       </section>
     </article>
 
@@ -441,6 +552,20 @@ onMounted(load);
 .sub-list { @apply flex flex-col; list-style: none; margin: 10px 0 0; padding: 0; gap: 6px; }
 .sub { @apply flex flex-wrap items-center gap-2; font-size: var(--text-sm-size); cursor: pointer; }
 .sub-name { color: var(--color-text); }
+
+.import-row { @apply flex flex-wrap items-center gap-2; margin-top: 12px; }
+
+.preview {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-md);
+}
+.preview-lead { font-size: var(--text-sm-size); color: var(--color-text); margin: 0 0 8px; }
+.preview-list { @apply flex flex-col; list-style: none; margin: 0; padding: 0; gap: 4px;
+  font-size: var(--text-sm-size); color: var(--color-text); }
+
+.ok-note { font-size: var(--text-xs-size); color: var(--color-success); }
 
 .empty {
   padding: 20px;

@@ -331,7 +331,12 @@ const tab = ref<Tab>("overview");
 const loaded = ref<Set<Tab>>(new Set());
 
 interface Summary {
-  totals: { assigned: number; available: number; pending_requests: number; under_repair: number };
+  totals: {
+    assigned: number; available: number; pending_requests: number; under_repair: number;
+    // Added with the cloud class — optional so an older backend does not blank
+    // the whole tile row on a mismatched deploy.
+    in_service?: number; looked_after?: number;
+  };
   details: { licences_expiring: number; due_for_return: number; maintenance_due: number; purchase_value: number };
   by_category: { label: string; count: number }[];
   by_department: { label: string; count: number }[];
@@ -562,6 +567,10 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
             <div class="stats">
               <div class="stat"><span class="stat-n">{{ summary.totals.assigned }}</span><span class="stat-l">Assigned</span></div>
               <div class="stat"><span class="stat-n">{{ summary.totals.available }}</span><span class="stat-l">Available</span></div>
+              <!-- Running and looked after: cloud resources and racked kit,
+                   which the tiles omitted entirely before this existed. -->
+              <div class="stat"><span class="stat-n">{{ summary.totals.in_service ?? 0 }}</span><span class="stat-l">In service</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.totals.looked_after ?? 0 }}</span><span class="stat-l">Has a custodian</span></div>
               <div class="stat"><span class="stat-n">{{ summary.totals.pending_requests }}</span><span class="stat-l">Pending requests</span></div>
               <div class="stat"><span class="stat-n">{{ summary.totals.under_repair }}</span><span class="stat-l">Under repair</span></div>
             </div>

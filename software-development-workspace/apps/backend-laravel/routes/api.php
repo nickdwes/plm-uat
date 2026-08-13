@@ -701,6 +701,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Pulling the picture in. Separate permission from configuring where
         // it comes from — see IntegrationConnectionPolicy.
         Route::post('/{connection}/sync', [LicenceSyncController::class, 'sync']);
+
+        // Azure writes into the asset register itself, so the preview is a
+        // separate call and always available before the commit.
+        Route::post('/{connection}/azure/preview', [LicenceSyncController::class, 'previewAzure']);
+        Route::post('/{connection}/azure/import',  [LicenceSyncController::class, 'importAzure']);
     });
 
     // Read from the last snapshot, not from Microsoft: opening the page should

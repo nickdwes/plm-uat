@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Integration;
 
 use App\Http\Controllers\Controller;
 use App\Models\Integration\IntegrationConnection;
+use App\Services\Integration\AzureResourceImport;
 use App\Services\Integration\LicenceSnapshot;
 use App\Services\Integration\LicenceStatistics;
 use Illuminate\Http\JsonResponse;
@@ -26,6 +27,7 @@ class LicenceSyncController extends Controller
     public function __construct(
         private readonly LicenceSnapshot $snapshot,
         private readonly LicenceStatistics $statistics,
+        private readonly AzureResourceImport $azure,
     ) {}
 
     /** Read the tenant and write the snapshot. */
@@ -61,6 +63,47 @@ class LicenceSyncController extends Controller
             'statistics' => $this->statistics->for($connection->id),
             'synced_at'  => $connection->fresh()->last_synced_at?->toDateTimeString(),
         ]);
+    }
+
+    /**
+     * What an Azure import would do, without doing it.
+     *
+     * Always offered before the commit, because this one writes into the asset
+     * register itself rather than into a snapshot of its own — and the first
+     * time somebody runs it they should see thirteen machines and thirty-six
+     * skipped bits of plumbing before anything appears in the list.
+     */
+    public function previewAzure(IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('sync', $connection);
+
+        try {
+            return response()->json(['preview' => $this->azure->preview($connection)]);
+        } catch (Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /** Create and update the cloud assets. */
+    public function importAzure(IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('sync', $connection);
+
+        abort_unless(
+            $connection->is_active,
+            422,
+            'That connection is paused. Switch it on before importing.',
+        );
+
+        try {
+            $result = $this->azure->import($connection);
+        } catch (Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $connection->update(['last_synced_at' => now()]);
+
+        return response()->json(['result' => $result]);
     }
 
     /**

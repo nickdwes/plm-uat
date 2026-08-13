@@ -84,6 +84,7 @@ class Asset extends Model
     protected $fillable = [
         'organization_id', 'asset_class', 'parent_asset_id',
         'name', 'asset_tag', 'category', 'asset_category_id', 'brand', 'model',
+        'external_ref', 'external_source', 'external_synced_at',
         'serial_number', 'status', 'lifecycle_stage', 'condition',
         'procured_date', 'in_stock_date', 'next_maintenance',
         'assigned_to', 'assigned_date', 'custodian_id', 'custodian_since',
@@ -106,6 +107,7 @@ class Asset extends Model
         'in_stock_date'        => 'date',
         'assigned_date'        => 'date',
         'custodian_since'      => 'date',
+        'external_synced_at'   => 'datetime',
         'next_maintenance'     => 'date',
         'warranty_expiry_date' => 'date',
         'handover_signed_at'   => 'datetime',

@@ -69,7 +69,10 @@ class AssetController extends Controller
          * shown rather than rendered under a raw key.
          */
         return (new AssetResource($asset->load([
-            'holder', 'department', 'events.employee', 'events.vendor',
+            // `custodian` alongside `holder`: without it the detail page saves a
+            // custodian and then renders "nobody answerable", because the
+            // resource only emits relations that were actually loaded.
+            'holder', 'custodian', 'department', 'events.employee', 'events.vendor',
             'seats.employee', 'photos', 'documents',
         ])))->additional([
             'custom_field_defs' => $asset->categoryFields()->get()->map(fn ($f) => [
@@ -436,6 +439,17 @@ class AssetController extends Controller
             'totals' => [
                 'assigned'  => (clone $base())->whereNotNull('assigned_to')->count(),
                 'available' => (clone $base())->where('status', Asset::STATUS_AVAILABLE)->count(),
+                /*
+                 * Running and looked after, rather than held or on a shelf.
+                 *
+                 * Without this the tiles silently omit every cloud resource and
+                 * every racked switch: the first Azure import put thirteen
+                 * assets in the register and the summary still read "1
+                 * available", which is worse than a wrong number because it
+                 * looks like nothing happened.
+                 */
+                'in_service' => (clone $base())->where('status', Asset::STATUS_IN_SERVICE)->count(),
+                'looked_after' => (clone $base())->whereNotNull('custodian_id')->count(),
                 'pending_requests' => AssetRequest::where('status', AssetRequest::STATUS_PENDING)->count(),
                 'under_repair' => (clone $base())->where('status', Asset::STATUS_MAINTENANCE)->count(),
             ],
