@@ -390,6 +390,16 @@ watch(() => route.name, () => {
         Connected tenants
       </router-link>
 
+      <router-link
+        :to="{ name: 'licence-statistics' }"
+        :class="['nav-item', { active: isActive('licence') }]"
+      >
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 6a1 1 0 011-1h5a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zm9 0a1 1 0 011-1h3a1 1 0 011 1v6a1 1 0 01-1 1h-3a1 1 0 01-1-1v-6z" />
+        </svg>
+        Licence statistics
+      </router-link>
+
       <!-- ── Section: Vendor Management ─────────────────────────────────────── -->
       <div class="sidebar-divider"></div>
       <div class="sidebar-section">Vendor Management</div>

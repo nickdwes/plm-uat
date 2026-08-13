@@ -65,6 +65,7 @@ use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\AzureSsoController;
 use App\Http\Controllers\Auth\NewPasswordController;
 use App\Http\Controllers\Integration\IntegrationConnectionController;
+use App\Http\Controllers\Integration\LicenceSyncController;
 use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Public\PublicJobController;
 use App\Http\Controllers\Public\PublicPreboardingController;
@@ -696,7 +697,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{connection}/test',          [IntegrationConnectionController::class, 'test']);
         Route::post('/{connection}/discover',      [IntegrationConnectionController::class, 'discover']);
         Route::put('/{connection}/subscriptions',  [IntegrationConnectionController::class, 'setSubscriptions']);
+
+        // Pulling the picture in. Separate permission from configuring where
+        // it comes from — see IntegrationConnectionPolicy.
+        Route::post('/{connection}/sync', [LicenceSyncController::class, 'sync']);
     });
+
+    // Read from the last snapshot, not from Microsoft: opening the page should
+    // not depend on the tenant being reachable.
+    Route::get('/integrations/licence-statistics', [LicenceSyncController::class, 'statistics']);
 
     Route::prefix('assets')->group(function () {
         /*

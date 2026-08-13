@@ -103,6 +103,7 @@ import NotificationsView from "../views/NotificationsView.vue";
 
 // Integrations — where the register reads other systems from
 import ConnectionsView from "../views/Integration/ConnectionsView.vue";
+import LicenceStatisticsView from "../views/Integration/LicenceStatisticsView.vue";
 
 const routes: RouteRecordRaw[] = [
   { path: "/",           redirect: "/hr-dashboard" },
@@ -124,6 +125,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/hr-dashboard",    name: "hr-dashboard",     component: HRDashboardView },
   { path: "/notifications",   name: "notifications",    component: NotificationsView },
   { path: "/integrations/connections", name: "integration-connections", component: ConnectionsView },
+  { path: "/integrations/licences",    name: "licence-statistics",     component: LicenceStatisticsView },
   { path: "/employees",       name: "employees",        component: EmployeesView },
   { path: "/employees/onboard",name: "onboard",          component: OnboardingView },
   { path: "/employees/:id/edit",name: "employee-edit",   component: OnboardingView, props: true },
