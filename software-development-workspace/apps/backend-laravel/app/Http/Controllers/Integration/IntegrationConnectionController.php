@@ -231,6 +231,20 @@ class IntegrationConnectionController extends Controller
 
     private function validated(Request $request, ?IntegrationConnection $existing): array
     {
+        /*
+         * "The tenant id has already been taken" is true and useless.
+         *
+         * A tenant may only be registered once per organisation, so hitting
+         * this means the connection is already there — usually the one already
+         * syncing. Naming it, and saying to edit it, is the difference between
+         * a dead end and a next step.
+         */
+        $clash = IntegrationConnection::withoutGlobalScope('organization')
+            ->where('organization_id', $this->organizationId())
+            ->where('tenant_id', $request->input('tenant_id'))
+            ->when($existing, fn ($q) => $q->whereKeyNot($existing->id))
+            ->first();
+
         return $request->validate([
             'name'      => ['required', 'string', 'max:120'],
             'provider'  => ['nullable', Rule::in([IntegrationConnection::PROVIDER_MICROSOFT])],
@@ -247,6 +261,11 @@ class IntegrationConnectionController extends Controller
             'sync_licences'     => ['boolean'],
             'sync_azure'        => ['boolean'],
             'is_active'         => ['boolean'],
+        ], [
+            'tenant_id.unique' => $clash
+                ? "That tenant is already connected here as \"{$clash->name}\". "
+                    . 'Edit that one instead — adding it twice would import every licence twice.'
+                : 'That tenant is already connected to this organisation.',
         ]);
     }
 

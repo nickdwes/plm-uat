@@ -178,6 +178,25 @@ class IntegrationConnectionTest extends TestCase
             ->assertJsonValidationErrors('tenant_id');
     }
 
+    /**
+     * "The tenant id has already been taken" is true and a dead end.
+     *
+     * Hitting this means the connection is already there — usually the one
+     * already syncing — so the message names it and says to edit that instead.
+     */
+    public function test_the_duplicate_message_names_the_connection_already_there(): void
+    {
+        $this->signIn(['integrations.manage']);
+        $this->connection(['name' => 'Konvergenz — Microsoft 365']);
+
+        $response = $this->postJson($this->url(), $this->payload())->assertStatus(422);
+
+        $message = $response->json('errors.tenant_id.0');
+
+        $this->assertStringContainsString('Konvergenz — Microsoft 365', $message);
+        $this->assertStringContainsString('Edit that one instead', $message);
+    }
+
     public function test_the_same_tenant_may_serve_a_different_organization(): void
     {
         $other = Organization::create(['name' => 'Beta', 'slug' => 'beta']);
