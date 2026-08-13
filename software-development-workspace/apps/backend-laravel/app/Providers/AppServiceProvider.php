@@ -32,8 +32,25 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        /*
+         * Where the link in the email points.
+         *
+         * The `#` is not decoration. The SPA runs on `createWebHashHistory`,
+         * so a path without one never reaches the router — the static server
+         * either 404s or serves the app at its root, which silently drops the
+         * token and lands the person on a login screen with no explanation.
+         * This URL had no `#` and had never been clicked, because nothing
+         * routed the endpoint that sends it.
+         *
+         * The address is carried as a query parameter so the reset form can
+         * submit it back; the broker checks the token against it, so a tampered
+         * address simply fails rather than resetting somebody else's account.
+         */
         ResetPassword::createUrlUsing(function (object $notifiable, string $token) {
-            return config('app.frontend_url')."/password-reset/$token?email={$notifiable->getEmailForPasswordReset()}";
+            $base  = rtrim(config('app.frontend_url'), '/');
+            $email = urlencode($notifiable->getEmailForPasswordReset());
+
+            return "{$base}/#/reset-password/{$token}?email={$email}";
         });
 
         // Microsoft Graph custom mail transport

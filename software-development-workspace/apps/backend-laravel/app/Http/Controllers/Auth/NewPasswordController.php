@@ -15,39 +15,67 @@ use Illuminate\Validation\ValidationException;
 class NewPasswordController extends Controller
 {
     /**
-     * Handle an incoming new password request.
+     * Set the new password against a token from the emailed link.
      *
      * @throws ValidationException
      */
     public function store(Request $request): JsonResponse
     {
         $request->validate([
-            'token' => ['required'],
-            'email' => ['required', 'email'],
+            'token'    => ['required'],
+            'email'    => ['required', 'email'],
             'password' => ['required', 'confirmed', Rules\Password::defaults()],
         ]);
 
-        // Here we will attempt to reset the user's password. If it is successful we
-        // will update the password on an actual user model and persist it to the
-        // database. Otherwise we will parse the error and return the response.
         $status = Password::reset(
             $request->only('email', 'password', 'password_confirmation', 'token'),
             function ($user) use ($request) {
+                /*
+                 * A valid token is not on its own permission to get back in.
+                 *
+                 * Status can change between the link being sent and the link
+                 * being used — somebody suspended on Friday still holds a
+                 * working token until Saturday — and the check costs nothing.
+                 */
+                abort_unless(
+                    $user->isAccountActive() && ! $user->sso_only,
+                    403,
+                    'That account cannot sign in with a password.',
+                );
+
                 $user->forceFill([
-                    'password' => Hash::make($request->string('password')),
+                    'password'       => Hash::make($request->string('password')),
                     'remember_token' => Str::random(60),
                 ])->save();
+
+                /*
+                 * Every existing session dies with the old password.
+                 *
+                 * Most people reset because they forgot. The ones who matter
+                 * reset because somebody else has been in the account, and
+                 * leaving the intruder's bearer token valid means the reset
+                 * changed nothing for them — the tokens here last a fortnight.
+                 */
+                $user->tokens()->delete();
 
                 event(new PasswordReset($user));
             }
         );
 
-        if ($status != Password::PASSWORD_RESET) {
+        if ($status !== Password::PASSWORD_RESET) {
+            /*
+             * Expired, already used, or forged. Named against `email` because
+             * that is where the form shows it, and kept vague on purpose: which
+             * of the three it was is not the resetter's business.
+             */
             throw ValidationException::withMessages([
                 'email' => [__($status)],
             ]);
         }
 
-        return response()->json(['status' => __($status)]);
+        return response()->json([
+            'status' => 'Your password has been changed. Sign in with it. '
+                . 'Anywhere you were already signed in has been signed out.',
+        ]);
     }
 }

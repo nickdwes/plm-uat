@@ -63,6 +63,8 @@ use App\Http\Controllers\Roster\RosterScheduleController;
 use App\Http\Controllers\Roster\RosterShiftSwapController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\Auth\AzureSsoController;
+use App\Http\Controllers\Auth\NewPasswordController;
+use App\Http\Controllers\Auth\PasswordResetLinkController;
 use App\Http\Controllers\Public\PublicJobController;
 use App\Http\Controllers\Public\PublicPreboardingController;
 use App\Http\Controllers\PublicHolidayController;
@@ -72,6 +74,25 @@ use Illuminate\Support\Facades\Route;
 // ── Auth (no CSRF — Bearer token based) ──────────────────────────────────────
 Route::post('/login',  [AuthenticatedSessionController::class, 'store'])->middleware('guest');
 Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->middleware('auth:sanctum');
+
+/*
+ * Forgotten passwords.
+ *
+ * These controllers have existed since the project was scaffolded and were
+ * never routed — `routes/auth.php` defined them and nothing ever registered
+ * that file, so the only way back into a locked-out account was for somebody
+ * with database access to rewrite the hash by hand.
+ *
+ * Throttled hard. The request endpoint sends mail to an address the caller
+ * chooses, which is a way to have this server post to somebody's inbox on
+ * repeat; the reset endpoint is a token guess. Laravel's own broker throttle
+ * (60s, per config/auth.php) stops a person double-clicking, not a script.
+ */
+Route::post('/forgot-password', [PasswordResetLinkController::class, 'store'])
+    ->middleware(['guest', 'throttle:6,1']);
+
+Route::post('/reset-password', [NewPasswordController::class, 'store'])
+    ->middleware(['guest', 'throttle:6,1']);
 
 // Azure AD SSO
 Route::prefix('auth/azure')->middleware('throttle:20,1')->group(function () {

@@ -3,17 +3,25 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Password;
-use Illuminate\Validation\ValidationException;
 
 class PasswordResetLinkController extends Controller
 {
     /**
-     * Handle an incoming password reset link request.
+     * "I have forgotten my password."
      *
-     * @throws ValidationException
+     * The reply is deliberately the same whatever happens: address on file or
+     * not, account suspended or not, throttled or not. The scaffolded version
+     * returned "We can't find a user with that email address", which turns this
+     * endpoint into a way to ask whether somebody works here — and for a
+     * company directory that is worth something to whoever is asking.
+     *
+     * The cost is that a typo looks like success. That is the right trade: the
+     * person who typed it wrong finds out when no mail arrives, and the sentence
+     * below tells them to check the address.
      */
     public function store(Request $request): JsonResponse
     {
@@ -21,19 +29,25 @@ class PasswordResetLinkController extends Controller
             'email' => ['required', 'email'],
         ]);
 
-        // We will send the password reset link to this user. Once we have attempted
-        // to send the link, we will examine the response then see the message we
-        // need to show to the user. Finally, we'll send out a proper response.
-        $status = Password::sendResetLink(
-            $request->only('email')
-        );
+        $email = $request->string('email')->toString();
+        $user  = User::where('email', $email)->first();
 
-        if ($status != Password::RESET_LINK_SENT) {
-            throw ValidationException::withMessages([
-                'email' => [__($status)],
-            ]);
+        /*
+         * Only active, password-holding accounts get a link.
+         *
+         * A leaver keeps their row so their history stays attributable, and
+         * sending them a working reset link would hand a former employee the
+         * way back in. Somebody who signs in through Azure has no local
+         * password to reset — issuing one would quietly create a second way
+         * into their account that bypasses the tenant's own sign-in policy.
+         */
+        if ($user && $user->isAccountActive() && ! $user->sso_only) {
+            Password::sendResetLink(['email' => $email]);
         }
 
-        return response()->json(['status' => __($status)]);
+        return response()->json([
+            'status' => 'If that address belongs to an account, a reset link is on its way. '
+                . 'It expires in an hour.',
+        ]);
     }
 }
