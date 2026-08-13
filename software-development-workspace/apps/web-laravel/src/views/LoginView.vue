@@ -16,7 +16,6 @@ const showPassword = ref(false);
 const loading      = ref(false);
 const ssoLoading   = ref(false);
 const error        = ref((route.query.sso_error as string) ?? "");
-const showResetHelp = ref(false);
 
 const year = new Date().getFullYear();
 
@@ -146,15 +145,10 @@ async function signInWithMicrosoft(): Promise<void> {
               <input v-model="remember" type="checkbox" />
               <span>Remember me</span>
             </label>
-            <button type="button" class="link" @click="showResetHelp = !showResetHelp">
+            <router-link class="link" :to="{ name: 'forgot-password' }">
               Forgot Your Password?
-            </button>
+            </router-link>
           </div>
-
-          <p v-if="showResetHelp" class="hint" role="status">
-            Self-service password reset isn't available yet. Ask your HR administrator
-            to reset it for you.
-          </p>
 
           <p v-if="error" class="error" role="alert">{{ error }}</p>
 

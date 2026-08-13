@@ -2,6 +2,8 @@ import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-rou
 import { isAuthenticated } from "../stores/auth";
 
 import LoginView           from "../views/LoginView.vue";
+import ForgotPasswordView  from "../views/ForgotPasswordView.vue";
+import ResetPasswordView   from "../views/ResetPasswordView.vue";
 import DashboardView       from "../views/DashboardView.vue";
 import HRDashboardView     from "../views/HRDashboardView.vue";
 import EmployeesView       from "../views/EmployeesView.vue";
@@ -103,6 +105,18 @@ const routes: RouteRecordRaw[] = [
   { path: "/",           redirect: "/hr-dashboard" },
   { path: "/login",      name: "login",        component: LoginView,       meta: { public: true } },
   { path: "/sso/callback", name: "sso-callback", component: SsoCallbackView, meta: { public: true } },
+
+  /*
+   * Password recovery. Public, because the whole point is that the person
+   * cannot sign in — the guard below would otherwise bounce them to the login
+   * screen they are stuck on.
+   *
+   * The token is a path segment and the address a query parameter because that
+   * is the shape the backend builds into the email; changing either here
+   * silently breaks every link already sent.
+   */
+  { path: "/forgot-password", name: "forgot-password", component: ForgotPasswordView, meta: { public: true } },
+  { path: "/reset-password/:token", name: "reset-password", component: ResetPasswordView, meta: { public: true } },
   { path: "/dashboard",       name: "dashboard",        component: DashboardView },
   { path: "/hr-dashboard",    name: "hr-dashboard",     component: HRDashboardView },
   { path: "/notifications",   name: "notifications",    component: NotificationsView },
