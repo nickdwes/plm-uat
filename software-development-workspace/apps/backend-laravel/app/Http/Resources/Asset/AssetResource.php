@@ -30,6 +30,20 @@ class AssetResource extends JsonResource
                 'full_name'       => trim($this->holder->first_name . ' ' . $this->holder->last_name),
                 'employee_number' => $this->holder->employee_number,
             ]),
+            /*
+             * Who is answerable, for the things nobody carries.
+             *
+             * `uses_custodian` travels with it so the screen knows which of the
+             * two questions to ask — offering "assign" on a core switch is how
+             * racked equipment ends up on a leaver's return checklist.
+             */
+            'uses_custodian'  => $this->usesCustodian(),
+            'custodian_since' => $this->custodian_since?->toDateString(),
+            'custodian'       => $this->whenLoaded('custodian', fn () => $this->custodian ? [
+                'id'              => $this->custodian->id,
+                'full_name'       => trim($this->custodian->first_name . ' ' . $this->custodian->last_name),
+                'employee_number' => $this->custodian->employee_number,
+            ] : null),
             'department'      => $this->whenLoaded('department', fn () => [
                 'id'   => $this->department->id,
                 'name' => $this->department->name,

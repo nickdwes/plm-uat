@@ -22,7 +22,10 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class AssetController extends Controller
 {
-    public function __construct(private readonly AssetService $service) {}
+    public function __construct(
+        private readonly AssetService $service,
+        private readonly \App\Services\Asset\AssetLifecycle $lifecycle,
+    ) {}
 
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -510,6 +513,56 @@ class AssetController extends Controller
         return new AssetResource(
             $this->service->assign($asset, $employee, $request->input('assigned_date'))
         );
+    }
+
+    /**
+     * Record who is answerable for something nobody carries.
+     *
+     * A separate endpoint from `assign` because it is a separate act with
+     * different consequences — no handover, no acceptance, and nothing to
+     * return at an exit interview.
+     */
+    public function setCustodian(Request $request, Asset $asset): AssetResource
+    {
+        $this->authorize('assign', $asset);
+
+        $data = $request->validate([
+            'employee_id' => ['required', 'integer', 'exists:employees,id'],
+            'note'        => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $employee = Employee::findOrFail($data['employee_id']);
+
+        // Same tenancy check as assignment: `exists` knows nothing about which
+        // organisation an employee belongs to.
+        abort_unless(
+            (int) $employee->primary_organization_id === (int) app('current.organization_id'),
+            422,
+            'That employee is not in the current organization.',
+        );
+
+        $this->lifecycle->setCustodian(
+            $asset,
+            $employee->id,
+            array_filter(['note' => $data['note'] ?? null]),
+            $request->user()?->employeeId(),
+        );
+
+        return new AssetResource($asset->fresh(['custodian', 'holder', 'assetCategory']));
+    }
+
+    /** Nobody is answerable for it at the moment. */
+    public function clearCustodian(Request $request, Asset $asset): AssetResource
+    {
+        $this->authorize('assign', $asset);
+
+        $this->lifecycle->clearCustodian(
+            $asset,
+            array_filter(['note' => $request->input('note')]),
+            $request->user()?->employeeId(),
+        );
+
+        return new AssetResource($asset->fresh(['custodian', 'holder', 'assetCategory']));
     }
 
     /** Take the asset back. */

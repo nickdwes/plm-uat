@@ -747,6 +747,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{asset}/assign',  [AssetController::class, 'assign']);
         Route::post('/{asset}/release', [AssetController::class, 'release']);
 
+        /*
+         * Custodianship, not assignment. Racked equipment and cloud resources
+         * have somebody answerable for them and nobody carrying them — see the
+         * migration for why the two are kept apart.
+         */
+        Route::post('/{asset}/custodian',   [AssetController::class, 'setCustodian']);
+        Route::delete('/{asset}/custodian', [AssetController::class, 'clearCustodian']);
+
         // Seats on a licence batch. Consuming one is a different act from
         // correcting a renewal date, so it is a different endpoint.
         // Only the recipient can do this, which is why it is not an update.

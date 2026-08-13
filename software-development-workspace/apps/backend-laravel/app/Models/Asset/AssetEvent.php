@@ -55,10 +55,23 @@ class AssetEvent extends Model
     public const RETIRED     = 'retired';
     public const DISPOSED    = 'disposed';
 
+    /*
+     * Custodianship, kept apart from assignment.
+     *
+     * A switch changing hands is not a laptop changing hands: nothing is
+     * carried away, nothing is signed, and nothing is returned at an exit
+     * interview. Recording it as `assigned` would put racked equipment on
+     * somebody's leaver checklist.
+     */
+    public const CUSTODIAN_SET     = 'custodian_set';
+    public const CUSTODIAN_CHANGED = 'custodian_changed';
+    public const CUSTODIAN_CLEARED = 'custodian_cleared';
+
     public const EVENTS = [
         self::PROCURED, self::IN_STOCK, self::ASSIGNED, self::REASSIGNED,
         self::RETURNED, self::UNDER_REPAIR, self::REPAIRED, self::LOST,
         self::RETIRED, self::DISPOSED,
+        self::CUSTODIAN_SET, self::CUSTODIAN_CHANGED, self::CUSTODIAN_CLEARED,
     ];
 
     /**
@@ -78,6 +91,18 @@ class AssetEvent extends Model
         self::RETIRED      => Asset::STATUS_RETIRED,
         self::DISPOSED     => Asset::STATUS_RETIRED,
         self::LOST         => Asset::STATUS_RETIRED,
+
+        /*
+         * In service, not assigned. `available` on a running virtual machine
+         * says it is on a shelf and could be handed to somebody, which is a lie
+         * with consequences.
+         *
+         * Clearing a custodian deliberately moves nothing: a switch with nobody
+         * answerable for it is still running, and pretending otherwise would
+         * take it out of the register the moment somebody left.
+         */
+        self::CUSTODIAN_SET     => Asset::STATUS_IN_SERVICE,
+        self::CUSTODIAN_CHANGED => Asset::STATUS_IN_SERVICE,
     ];
 
     public function asset(): BelongsTo

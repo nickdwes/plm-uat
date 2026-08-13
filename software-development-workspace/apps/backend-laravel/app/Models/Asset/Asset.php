@@ -31,12 +31,22 @@ class Asset extends Model
      */
     public const STATUS_PENDING_ACCEPTANCE = 'pending_acceptance';
 
+    /*
+     * Running, and looked after rather than held.
+     *
+     * A core switch or a production virtual machine is neither on a shelf nor
+     * in somebody's bag. Calling it `available` says it could be handed out,
+     * which is the kind of wrong that gets acted on.
+     */
+    public const STATUS_IN_SERVICE = 'in_service';
+
     public const STATUSES = [
         self::STATUS_AVAILABLE,
         self::STATUS_ASSIGNED,
         self::STATUS_MAINTENANCE,
         self::STATUS_RETIRED,
         self::STATUS_PENDING_ACCEPTANCE,
+        self::STATUS_IN_SERVICE,
     ];
 
     /**
@@ -52,10 +62,20 @@ class Asset extends Model
     public const CLASS_SOFTWARE     = 'software';
     public const CLASS_SUBSCRIPTION = 'subscription';
 
+    /*
+     * Metered infrastructure that exists until somebody deletes it.
+     *
+     * Not a laptop with the hardware fields blank, and not a subscription with
+     * no seats — it is asked what it runs on, what depends on it, and who is
+     * answerable for it.
+     */
+    public const CLASS_CLOUD = 'cloud';
+
     public const CLASSES = [
         self::CLASS_PHYSICAL,
         self::CLASS_SOFTWARE,
         self::CLASS_SUBSCRIPTION,
+        self::CLASS_CLOUD,
     ];
 
     /** The classes bought in quantity and consumed by people. */
@@ -66,7 +86,8 @@ class Asset extends Model
         'name', 'asset_tag', 'category', 'asset_category_id', 'brand', 'model',
         'serial_number', 'status', 'lifecycle_stage', 'condition',
         'procured_date', 'in_stock_date', 'next_maintenance',
-        'assigned_to', 'assigned_date', 'department_id', 'location',
+        'assigned_to', 'assigned_date', 'custodian_id', 'custodian_since',
+        'department_id', 'location',
         'handover_required', 'handover_signed_at', 'accepted_by', 'acceptance_note',
         'purchase_date', 'purchase_value', 'vendor', 'invoice_number',
         'warranty_period', 'warranty_expiry_date',
@@ -84,6 +105,7 @@ class Asset extends Model
         'procured_date'        => 'date',
         'in_stock_date'        => 'date',
         'assigned_date'        => 'date',
+        'custodian_since'      => 'date',
         'next_maintenance'     => 'date',
         'warranty_expiry_date' => 'date',
         'handover_signed_at'   => 'datetime',
@@ -116,6 +138,18 @@ class Asset extends Model
     public function holder(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'assigned_to');
+    }
+
+    /**
+     * The person answerable for something nobody carries.
+     *
+     * Distinct from `holder`: a custodian has not been given the thing and has
+     * nothing to hand back, so they must never appear on a leaver's return
+     * checklist beside a laptop.
+     */
+    public function custodian(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class, 'custodian_id');
     }
 
     public function department(): BelongsTo
@@ -233,6 +267,27 @@ class Asset extends Model
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────
+
+    /**
+     * Looked after rather than carried, as this asset's category defines it.
+     *
+     * Falls back to the class where there is no category — anything filed under
+     * `cloud` is infrastructure whatever else is unknown about it — and to the
+     * carried model otherwise, which is what the register assumed before
+     * custodians existed.
+     */
+    public function usesCustodian(): bool
+    {
+        if ($this->relationLoaded('assetCategory') || $this->asset_category_id !== null) {
+            $category = $this->assetCategory;
+
+            if ($category !== null) {
+                return $category->usesCustodian();
+            }
+        }
+
+        return $this->asset_class === self::CLASS_CLOUD;
+    }
 
     /** Bought in quantity and consumed by people. */
     public function isSeated(): bool

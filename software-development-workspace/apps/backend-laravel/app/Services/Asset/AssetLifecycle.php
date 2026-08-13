@@ -72,6 +72,90 @@ class AssetLifecycle
     }
 
     /** Take it back. Who returned it is worth recording; who has it now is not. */
+    /**
+     * Make somebody answerable for something nobody carries.
+     *
+     * Deliberately not `assign()`. A custodian is not given the thing and has
+     * nothing to hand back, so routing this through assignment would put a core
+     * switch on a leaver's return checklist beside their laptop — and the
+     * register would then be corrected by deleting the switch.
+     *
+     * Refuses on categories that are carried, because a laptop with a custodian
+     * and no assignee is a laptop nobody can be asked to return.
+     */
+    public function setCustodian(
+        Asset $asset,
+        int $employeeId,
+        array $context = [],
+        ?int $recordedBy = null,
+    ): AssetEvent {
+        abort_unless(
+            $asset->usesCustodian(),
+            422,
+            'That kind of asset is handed to somebody, not looked after — assign it instead.',
+        );
+
+        $previous = $asset->custodian_id;
+
+        $event = $previous !== null && $previous !== $employeeId
+            ? AssetEvent::CUSTODIAN_CHANGED
+            : AssetEvent::CUSTODIAN_SET;
+
+        /*
+         * Who it came from goes in the note, not a context key.
+         *
+         * `record()` maps a fixed set of keys onto columns and drops the rest,
+         * so a `previous_custodian_id` would have been silently discarded — and
+         * the timeline would have shown a handover with no sign of who let go
+         * of it. The note is a real column and is what the timeline renders, so
+         * it says the thing out loud to whoever reads it.
+         */
+        if ($event === AssetEvent::CUSTODIAN_CHANGED && blank($context['note'] ?? null)) {
+            $outgoing = \App\Models\Employee::find($previous);
+
+            if ($outgoing !== null) {
+                $context['note'] = 'Taken over from '
+                    . trim($outgoing->first_name . ' ' . $outgoing->last_name) . '.';
+            }
+        }
+
+        $asset->forceFill([
+            'custodian_id'    => $employeeId,
+            'custodian_since' => now()->toDateString(),
+        ])->save();
+
+        return $this->record(
+            $asset,
+            $event,
+            $context + ['employee_id' => $employeeId],
+            $recordedBy,
+        );
+    }
+
+    /**
+     * Nobody is answerable for it at the moment.
+     *
+     * Recorded rather than blanked, and it moves no status: infrastructure with
+     * no custodian is still running. Marking it available would offer a
+     * production database to whoever asked next, and taking it out of service
+     * because somebody left would be worse.
+     */
+    public function clearCustodian(Asset $asset, array $context = [], ?int $recordedBy = null): AssetEvent
+    {
+        $previous = $asset->custodian_id;
+
+        abort_if($previous === null, 422, 'Nobody is recorded as looking after that.');
+
+        $asset->forceFill(['custodian_id' => null, 'custodian_since' => null])->save();
+
+        return $this->record(
+            $asset,
+            AssetEvent::CUSTODIAN_CLEARED,
+            $context + ['employee_id' => $previous],
+            $recordedBy,
+        );
+    }
+
     public function release(Asset $asset, array $context = [], ?int $recordedBy = null): AssetEvent
     {
         return $this->record(
