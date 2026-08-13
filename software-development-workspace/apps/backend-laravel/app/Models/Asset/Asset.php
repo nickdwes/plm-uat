@@ -40,6 +40,17 @@ class Asset extends Model
      */
     public const STATUS_IN_SERVICE = 'in_service';
 
+    /*
+     * Stopped by the vendor, not broken by us.
+     *
+     * A suspended subscription is neither in service nor under repair, and
+     * filing it as maintenance put three licences on the dashboard as
+     * "under repair" — which sends somebody looking for a fault that does not
+     * exist. It usually means a payment problem or a term that lapsed, and it
+     * is somebody's to chase either way.
+     */
+    public const STATUS_SUSPENDED = 'suspended';
+
     public const STATUSES = [
         self::STATUS_AVAILABLE,
         self::STATUS_ASSIGNED,
@@ -47,6 +58,7 @@ class Asset extends Model
         self::STATUS_RETIRED,
         self::STATUS_PENDING_ACCEPTANCE,
         self::STATUS_IN_SERVICE,
+        self::STATUS_SUSPENDED,
     ];
 
     /**
@@ -95,7 +107,7 @@ class Asset extends Model
         'starts_on', 'expires_on', 'end_of_support_on',
         'auto_renews', 'renewal_notice_days', 'renewal_cost',
         'estimated_renewal_cost', 'renewal_reminders_on',
-        'description', 'seats_total',
+        'description', 'seats_total', 'seats_assigned_reported',
         'vendor_contact', 'support_contact', 'sla',
         'processor', 'ram', 'storage', 'operating_system',
         'custom_fields', 'notes',
@@ -317,6 +329,23 @@ class Asset extends Model
      * Null when the question does not apply, which is not the same as nought —
      * a laptop with no spare seats is a laptop, not a fully-subscribed licence.
      */
+    /**
+     * What the vendor says is in use, which is not what we can account for.
+     *
+     * Deliberately not folded into `seatsUsed()`. That counts seats handed to a
+     * named person; this is Microsoft's number for accounts nobody here has
+     * matched to an employee yet. Merging them would make the register agree
+     * with the vendor about people it has never heard of.
+     */
+    public function seatsReportedUnaccounted(): ?int
+    {
+        if ($this->seats_assigned_reported === null) {
+            return null;
+        }
+
+        return max(0, $this->seats_assigned_reported - $this->seatsUsed());
+    }
+
     public function seatsSpare(): ?int
     {
         if (! $this->isSeated() || $this->seats_total === null) {

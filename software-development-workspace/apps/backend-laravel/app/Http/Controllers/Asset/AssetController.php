@@ -450,6 +450,9 @@ class AssetController extends Controller
                  */
                 'in_service' => (clone $base())->where('status', Asset::STATUS_IN_SERVICE)->count(),
                 'looked_after' => (clone $base())->whereNotNull('custodian_id')->count(),
+                // Stopped by the vendor. Its own count, because it is chased by
+                // whoever handles the account rather than by whoever fixes kit.
+                'suspended' => (clone $base())->where('status', Asset::STATUS_SUSPENDED)->count(),
                 'pending_requests' => AssetRequest::where('status', AssetRequest::STATUS_PENDING)->count(),
                 'under_repair' => (clone $base())->where('status', Asset::STATUS_MAINTENANCE)->count(),
             ],

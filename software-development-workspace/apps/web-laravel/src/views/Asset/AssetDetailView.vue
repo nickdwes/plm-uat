@@ -975,6 +975,8 @@ code {
    nor "somebody has it". */
 .pill-in_service  { background: var(--color-brand-subtle);  color: var(--color-brand-dark); }
 .pill-pending_acceptance { background: var(--color-warning-light); color: #7C2D12; }
+/* Stopped by the vendor — an account problem, not a broken thing. */
+.pill-suspended   { background: var(--color-warning-light); color: #7C2D12; }
 .pill-warn        { background: var(--color-warning-light); color: #7C2D12; }
 
 .note {

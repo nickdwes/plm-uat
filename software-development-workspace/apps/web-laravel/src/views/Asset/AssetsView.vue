@@ -335,7 +335,7 @@ interface Summary {
     assigned: number; available: number; pending_requests: number; under_repair: number;
     // Added with the cloud class — optional so an older backend does not blank
     // the whole tile row on a mismatched deploy.
-    in_service?: number; looked_after?: number;
+    in_service?: number; looked_after?: number; suspended?: number;
   };
   details: { licences_expiring: number; due_for_return: number; maintenance_due: number; purchase_value: number };
   by_category: { label: string; count: number }[];
@@ -571,6 +571,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
                    which the tiles omitted entirely before this existed. -->
               <div class="stat"><span class="stat-n">{{ summary.totals.in_service ?? 0 }}</span><span class="stat-l">In service</span></div>
               <div class="stat"><span class="stat-n">{{ summary.totals.looked_after ?? 0 }}</span><span class="stat-l">Has a custodian</span></div>
+              <div class="stat"><span class="stat-n">{{ summary.totals.suspended ?? 0 }}</span><span class="stat-l">Suspended</span></div>
               <div class="stat"><span class="stat-n">{{ summary.totals.pending_requests }}</span><span class="stat-l">Pending requests</span></div>
               <div class="stat"><span class="stat-n">{{ summary.totals.under_repair }}</span><span class="stat-l">Under repair</span></div>
             </div>

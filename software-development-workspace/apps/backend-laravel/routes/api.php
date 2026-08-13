@@ -704,6 +704,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Azure writes into the asset register itself, so the preview is a
         // separate call and always available before the commit.
+        Route::post('/{connection}/licences/preview', [LicenceSyncController::class, 'previewLicenceAssets']);
+        Route::post('/{connection}/licences/import',  [LicenceSyncController::class, 'importLicenceAssets']);
+
         Route::post('/{connection}/azure/preview', [LicenceSyncController::class, 'previewAzure']);
         Route::post('/{connection}/azure/import',  [LicenceSyncController::class, 'importAzure']);
     });

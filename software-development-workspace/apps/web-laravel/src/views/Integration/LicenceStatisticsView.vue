@@ -46,6 +46,19 @@ const error       = ref("");
 const note        = ref("");
 const showAll     = ref(false);
 
+interface AssetPreview {
+  committed: boolean;
+  products: { name: string; new: boolean }[];
+  agreements: { name: string; seats: number; renews: string | null; status: string; new: boolean }[];
+  products_new: number; agreements_new: number; seats_total: number;
+  retired: number; excluded_free: number;
+}
+
+const assetPreview = ref<AssetPreview | null>(null);
+const previewingId = ref<number | null>(null);
+const importingId  = ref<number | null>(null);
+const importNote   = ref("");
+
 const org = computed(() => currentOrgSlug.value);
 const syncable = computed(() => connections.value.filter((c) => c.sync_licences && c.is_active));
 
@@ -86,6 +99,46 @@ async function sync(c: ConnectionRow): Promise<void> {
   }
 }
 
+/*
+ * Putting the licences into the register as things.
+ *
+ * Separate from "Sync", which only refreshes the snapshot these counts come
+ * from. This one creates assets, so it is previewed first — the same rule the
+ * Azure import follows.
+ */
+async function previewAssets(c: ConnectionRow): Promise<void> {
+  previewingId.value = c.id;
+  error.value = ""; importNote.value = "";
+  try {
+    const res = await api<{ preview: AssetPreview }>(
+      "POST", `/api/v1/integrations/connections/${c.id}/licences/preview`, { org: org.value },
+    );
+    assetPreview.value = res.preview;
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "Could not read the licences.";
+  } finally {
+    previewingId.value = null;
+  }
+}
+
+async function importAssets(c: ConnectionRow): Promise<void> {
+  importingId.value = c.id;
+  error.value = "";
+  try {
+    const res = await api<{ result: AssetPreview }>(
+      "POST", `/api/v1/integrations/connections/${c.id}/licences/import`, { org: org.value },
+    );
+    const r = res.result;
+    importNote.value = `${r.products.length} products and ${r.agreements.length} agreements in the register`
+      + ` — ${r.seats_total} seats` + (r.retired ? `, ${r.retired} retired` : "") + ".";
+    assetPreview.value = null;
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "The import failed.";
+  } finally {
+    importingId.value = null;
+  }
+}
+
 const visibleSkus = computed(() =>
   showAll.value ? (stats.value?.by_sku ?? [])
                 : (stats.value?.by_sku ?? []).filter((s) => s.classification === "paid"));
@@ -115,6 +168,7 @@ onMounted(load);
 
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="note" class="note" role="status">{{ note }}</p>
+    <p v-if="importNote" class="note" role="status">{{ importNote }}</p>
     <p v-if="loading && !stats" class="muted">Loading…</p>
 
     <p v-if="!loading && syncable.length === 0" class="empty">
@@ -158,6 +212,69 @@ onMounted(load);
         {{ fmt(stats.skus.excluded_nominal_seats) }} nominal seats are set aside —
         including them would put utilisation at zero.
       </p>
+
+      <!-- ── Into the register ────────────────────────────────────────────── -->
+      <section class="panel">
+        <div class="panel-head">
+          <h3>Licences in the asset register</h3>
+          <button v-for="c in syncable" :key="c.id" class="btn btn-sm"
+                  :disabled="previewingId !== null || importingId !== null"
+                  @click="previewAssets(c)">
+            {{ previewingId === c.id ? "Reading…" : "Preview" }}
+          </button>
+        </div>
+        <p class="panel-lead">
+          The counts above come from a snapshot. This puts the licences into the
+          register itself — a software product per licence, and a subscription
+          agreement per purchase, so renewals and seats sit where the rest of the
+          register expects them.
+        </p>
+
+        <div v-if="assetPreview" class="preview">
+          <p class="preview-lead">
+            <strong>{{ assetPreview.products.length }}</strong> products,
+            <strong>{{ assetPreview.agreements.length }}</strong> agreements,
+            <strong>{{ assetPreview.seats_total }}</strong> seats.
+            <template v-if="assetPreview.products_new || assetPreview.agreements_new">
+              {{ assetPreview.products_new }} and {{ assetPreview.agreements_new }} of them new.
+            </template>
+          </p>
+
+          <table class="table">
+            <thead><tr><th>Agreement</th><th>Seats</th><th>Renews</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr v-for="(a, i) in assetPreview.agreements" :key="i">
+                <td>{{ a.name }}</td>
+                <td>{{ a.seats }}</td>
+                <td>{{ a.renews ?? "—" }}</td>
+                <td>
+                  <span :class="['chip', a.status === 'Enabled' ? 'chip-on' : 'chip-warn']">{{ a.status }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!--
+            One SKU can be bought several times on separate terms. Saying so
+            stops the duplicate-looking rows reading as a bug.
+          -->
+          <p class="aside">
+            A licence bought more than once appears once per purchase, because
+            each has its own term and renewal date.
+            {{ assetPreview.excluded_free }} free or trial licences are left out —
+            their nominal seat counts would make every total in the register
+            meaningless.
+          </p>
+
+          <div class="import-row">
+            <button v-for="c in syncable" :key="c.id" class="btn btn-primary btn-sm"
+                    :disabled="importingId !== null" @click="importAssets(c)">
+              {{ importingId === c.id ? "Importing…" : "Add to the register" }}
+            </button>
+            <button class="btn btn-sm" @click="assetPreview = null">Cancel</button>
+          </div>
+        </div>
+      </section>
 
       <!-- ── The thing to act on ──────────────────────────────────────────── -->
       <section v-if="stats.waste.blocked_accounts_with_licences > 0" class="panel panel-alert">
@@ -324,6 +441,10 @@ onMounted(load);
 .panel h3 { @apply font-semibold; margin: 0; font-size: var(--text-sm-size); color: var(--color-text); }
 .panel-lead { font-size: var(--text-sm-size); color: var(--color-text-light); margin: 6px 0 12px; }
 .panel-head { @apply flex flex-wrap items-center justify-between gap-3; }
+
+.preview { margin-top: 10px; padding: 12px 14px; background: var(--color-surface-sunken); border-radius: var(--radius-md); }
+.preview-lead { font-size: var(--text-sm-size); color: var(--color-text); margin: 0 0 8px; }
+.import-row { @apply flex flex-wrap items-center gap-2; margin-top: 12px; }
 
 .two-up { @apply grid gap-3; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 

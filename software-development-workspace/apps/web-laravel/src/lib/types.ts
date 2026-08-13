@@ -1150,7 +1150,7 @@ export interface VendorProject {
  */
 export type AssetStatus =
   | "available" | "assigned" | "maintenance" | "retired"
-  | "pending_acceptance" | "in_service";
+  | "pending_acceptance" | "in_service" | "suspended";
 
 export interface Asset {
   id: number;

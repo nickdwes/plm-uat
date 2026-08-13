@@ -64,6 +64,21 @@ class IntegrationConnection extends Model
      */
     protected $hidden = ['client_secret'];
 
+    /**
+     * Column defaults do not reach the model instance after create().
+     *
+     * Without these a freshly created connection reads `sync_licences` as null
+     * even though the row in the database says true, and every guard written as
+     * `abort_unless($connection->sync_licences, ...)` refuses a connection that
+     * is in fact configured. The same note appears on Asset and AssetRequest.
+     */
+    protected $attributes = [
+        'provider'      => self::PROVIDER_MICROSOFT,
+        'sync_licences' => true,
+        'sync_azure'    => false,
+        'is_active'     => true,
+    ];
+
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Integration;
 use App\Http\Controllers\Controller;
 use App\Models\Integration\IntegrationConnection;
 use App\Services\Integration\AzureResourceImport;
+use App\Services\Integration\LicenceAssetImport;
 use App\Services\Integration\LicenceSnapshot;
 use App\Services\Integration\LicenceStatistics;
 use Illuminate\Http\JsonResponse;
@@ -28,6 +29,7 @@ class LicenceSyncController extends Controller
         private readonly LicenceSnapshot $snapshot,
         private readonly LicenceStatistics $statistics,
         private readonly AzureResourceImport $azure,
+        private readonly LicenceAssetImport $licenceAssets,
     ) {}
 
     /** Read the tenant and write the snapshot. */
@@ -63,6 +65,38 @@ class LicenceSyncController extends Controller
             'statistics' => $this->statistics->for($connection->id),
             'synced_at'  => $connection->fresh()->last_synced_at?->toDateTimeString(),
         ]);
+    }
+
+    /**
+     * What a licence import would put in the register, without doing it.
+     *
+     * Separate from the licence *sync*, which only refreshes the snapshot the
+     * statistics are counted from. This one creates assets, so it is previewed
+     * first like the Azure import.
+     */
+    public function previewLicenceAssets(IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('sync', $connection);
+
+        try {
+            return response()->json(['preview' => $this->licenceAssets->preview($connection)]);
+        } catch (Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /** Create the software products and their subscription agreements. */
+    public function importLicenceAssets(IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('sync', $connection);
+
+        abort_unless($connection->is_active, 422, 'That connection is paused.');
+
+        try {
+            return response()->json(['result' => $this->licenceAssets->import($connection)]);
+        } catch (Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     /**

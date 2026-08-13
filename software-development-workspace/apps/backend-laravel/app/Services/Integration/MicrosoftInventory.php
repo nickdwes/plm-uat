@@ -254,6 +254,15 @@ class MicrosoftInventory
         $this->assertOk($response, 'directory/subscriptions');
 
         return collect($response->json('value') ?? [])->map(fn (array $s): array => [
+            /*
+             * The purchase, not the SKU.
+             *
+             * One SKU can carry several: this tenant holds two Visio purchases
+             * of five seats each, renewing three weeks apart, which
+             * `subscribedSkus` reports only as ten. The id is what makes each
+             * one a thing the register can name.
+             */
+            'id'          => $s['id'] ?? null,
             'sku_id'      => $s['skuId'] ?? null,
             'part_number' => $s['skuPartNumber'] ?? null,
             'status'      => $s['status'] ?? null,
