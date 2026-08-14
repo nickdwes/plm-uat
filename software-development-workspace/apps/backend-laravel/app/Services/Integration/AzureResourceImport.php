@@ -224,6 +224,7 @@ class AzureResourceImport
         return [
             'create' => [
                 'organization_id' => $connection->organization_id,
+                'integration_connection_id' => $connection->id,
                 'asset_class'     => Asset::CLASS_CLOUD,
                 'external_source' => self::SOURCE,
                 'external_ref'    => $resource['resource_id'],
@@ -243,6 +244,9 @@ class AzureResourceImport
                 'location'          => $resource['location'],
                 'vendor'            => 'Microsoft Azure',
                 'external_synced_at' => now(),
+                // Stamped on refresh as well, so rows imported before the
+                // column existed pick up their tenant on the next run.
+                'integration_connection_id' => $connection->id,
                 'custom_fields'     => array_filter([
                     'resource_group' => $resource['resource_group'],
                     'subscription'   => $resource['subscription'],

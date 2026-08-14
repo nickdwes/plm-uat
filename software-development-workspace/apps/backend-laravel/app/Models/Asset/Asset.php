@@ -97,6 +97,7 @@ class Asset extends Model
         'organization_id', 'asset_class', 'parent_asset_id',
         'name', 'asset_tag', 'category', 'asset_category_id', 'brand', 'model',
         'external_ref', 'external_source', 'external_synced_at',
+        'integration_connection_id',
         'serial_number', 'status', 'lifecycle_stage', 'condition',
         'procured_date', 'in_stock_date', 'next_maintenance',
         'assigned_to', 'assigned_date', 'custodian_id', 'custodian_since',
@@ -164,6 +165,16 @@ class Asset extends Model
     public function custodian(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'custodian_id');
+    }
+
+    /**
+     * The tenant this was imported from, if it was imported at all.
+     *
+     * Null means somebody typed it in — and a sync must never touch those.
+     */
+    public function integrationConnection(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Integration\IntegrationConnection::class, 'integration_connection_id');
     }
 
     public function department(): BelongsTo

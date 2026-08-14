@@ -176,7 +176,10 @@ class LicenceAssetImport
                 // Only the vendor's facts. Notes, cost and anything a person set
                 // are left alone — an import that overwrites corrections every
                 // night trains people to stop making them.
-                $existing->forceFill($onRefresh + ['external_synced_at' => now()])->save();
+                $existing->forceFill($onRefresh + [
+                    'external_synced_at'        => now(),
+                    'integration_connection_id' => $connection->id,
+                ])->save();
             }
 
             return ['id' => $existing->id, 'created' => false];
@@ -189,6 +192,7 @@ class LicenceAssetImport
         $asset = Asset::withoutGlobalScope('organization')->create(
             $onRefresh + $onCreate + [
                 'organization_id'    => $connection->organization_id,
+                'integration_connection_id' => $connection->id,
                 'external_source'    => self::SOURCE,
                 'external_ref'       => $ref,
                 'external_synced_at' => now(),

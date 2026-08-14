@@ -124,7 +124,13 @@ class AssetRegisterController extends Controller
         $products = Asset::query()
             ->where('asset_class', Asset::CLASS_SOFTWARE)
             ->where('status', '!=', Asset::STATUS_RETIRED)
-            ->with(['children' => fn ($q) => $q->withCount(['seats as seats_used' => fn ($s) => $s->whereNull('released_on')])])
+            ->with([
+                'children' => fn ($q) => $q->withCount(['seats as seats_used' => fn ($s) => $s->whereNull('released_on')]),
+                // Which directory this came from. With one tenant it is the
+                // same on every row; with two it is the difference between a
+                // duplicate and a second company's licence.
+                'integrationConnection:id,name',
+            ])
             ->get();
 
         $agreements = Asset::query()
@@ -209,6 +215,7 @@ class AssetRegisterController extends Controller
                     'id'         => $p->id,
                     'name'       => $p->name,
                     'category'   => $p->category,
+                    'tenant'     => $p->integrationConnection?->name,
                     'agreements' => $p->children->count(),
                     'seats'      => $seats,
                     'allocated'  => $allocated,

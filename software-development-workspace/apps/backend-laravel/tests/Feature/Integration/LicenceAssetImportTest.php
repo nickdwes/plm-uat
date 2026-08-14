@@ -238,6 +238,41 @@ class LicenceAssetImportTest extends TestCase
         $this->assertSame('Design team only. Ask before adding seats.', $product->fresh()->notes);
     }
 
+    /**
+     * An organisation may hold several tenants, and then "which directory is
+     * this Business Premium on" needs an answer — otherwise two tenants holding
+     * the same SKU produce rows that read as duplicates of each other.
+     */
+    public function test_imported_assets_record_the_tenant_they_came_from(): void
+    {
+        $this->import();
+
+        foreach (Asset::whereNotNull('external_source')->get() as $asset) {
+            $this->assertSame($this->connection->id, $asset->integration_connection_id, $asset->name);
+        }
+
+        $this->assertSame(
+            'Alpha — Microsoft 365',
+            Asset::where('name', 'Visio Plan 2')->first()->integrationConnection->name,
+        );
+    }
+
+    /** A hand-registered asset belongs to no tenant and no sync may claim it. */
+    public function test_hand_registered_assets_have_no_tenant(): void
+    {
+        $laptop = Asset::create([
+            'organization_id' => $this->org->id,
+            'asset_class'     => Asset::CLASS_PHYSICAL,
+            'category'        => 'laptop',
+            'name'            => 'ThinkPad X1',
+            'asset_tag'       => 'KNS-001',
+        ]);
+
+        $this->import();
+
+        $this->assertNull($laptop->fresh()->integration_connection_id);
+    }
+
     public function test_a_preview_writes_nothing(): void
     {
         $preview = app(LicenceAssetImport::class)->preview($this->connection);

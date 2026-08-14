@@ -647,6 +647,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
               <thead>
                 <tr>
                   <th>Product</th>
+                  <th>Tenant</th>
                   <th class="num">Licences</th>
                   <th class="num">Allocated</th>
                   <th class="num">Available</th>
@@ -667,6 +668,15 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
                       </template>
                       <template v-else>nothing tracked</template>
                     </div>
+                  </td>
+                  <!--
+                    Which directory it came from. Identical on every row while
+                    there is one tenant, and the thing that stops two companies'
+                    identical licences reading as duplicates once there are two.
+                  -->
+                  <td>
+                    <template v-if="p.tenant">{{ p.tenant }}</template>
+                    <span v-else class="sub">entered by hand</span>
                   </td>
                   <td class="num">{{ p.seats || "—" }}</td>
                   <td class="num">{{ p.in_use || "—" }}</td>
