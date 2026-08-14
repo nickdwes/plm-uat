@@ -477,12 +477,34 @@ async function submitRequest() {
 const showAssign     = ref(false);
 const assignSaving   = ref(false);
 const assignError    = ref("");
-const assignDone     = ref<{ asset: string; employee: string; id: number } | null>(null);
+const assignDone     = ref<{ asset: string; employee: string; id: number; kind: "equipment" | "licence" } | null>(null);
 const assignable     = ref<Asset[]>([]);
+/*
+ * Equipment or a licence.
+ *
+ * To whoever is standing there it is one job — give this person the thing they
+ * need — so it is one drawer. Underneath they are different acts: equipment has
+ * one holder and comes back, a licence is a seat drawn from a batch and is
+ * released rather than returned. Software has no route at all without this:
+ * the categories are custody_model `none`, so the equipment picker correctly
+ * excludes them, and two hundred spare seats sat in the register unreachable.
+ */
+const assignKind = ref<"equipment" | "licence">("equipment");
+const licences   = ref<Asset[]>([]);
+const licenceQuery = ref("");
+
 const assignForm     = ref<{
   employee_id: number | null; category: string; asset_id: number | null;
-  accessories: string[]; assigned_date: string; expected_return_date: string;
-}>({ employee_id: null, category: "", asset_id: null, accessories: [], assigned_date: "", expected_return_date: "" });
+  accessories: string[]; assigned_date: string; expected_return_date: string; note: string;
+}>({ employee_id: null, category: "", asset_id: null, accessories: [], assigned_date: "", expected_return_date: "", note: "" });
+
+/** Only agreements with a seat left, newest term first. */
+const licenceMatches = computed(() => {
+  const q = licenceQuery.value.trim().toLowerCase();
+  return licences.value
+    .filter((l) => ((l as any).seats_spare ?? 0) > 0)
+    .filter((l) => !q || l.name.toLowerCase().includes(q));
+});
 
 // The designs' set. It belongs in category configuration eventually — a vehicle
 // goes out with keys and a logbook, not a laptop bag.
@@ -500,14 +522,38 @@ const assignableCategories = computed(() =>
   categories.value.filter((c) => (c.custody_model ?? "assignee") === "assignee"));
 
 function openAssign() {
+  assignKind.value = "equipment";
+  licenceQuery.value = "";
   assignForm.value = {
     employee_id: null, category: "", asset_id: null,
-    accessories: [], assigned_date: "", expected_return_date: "",
+    accessories: [], assigned_date: "", expected_return_date: "", note: "",
   };
   assignable.value = [];
   assignError.value = "";
   assignDone.value = null;
   showAssign.value = true;
+}
+
+/**
+ * Agreements with a seat to give.
+ *
+ * No category step: the imported agreements all sit under "saas", so filtering
+ * by category would find nothing, and the names say what they are anyway.
+ */
+async function loadLicences() {
+  assignForm.value.asset_id = null;
+  try {
+    licences.value = (await api<{ data: Asset[] }>("GET", "/api/v1/assets", {
+      org: org(), params: { has_spare_seats: 1, per_page: 200 },
+    })).data ?? [];
+  } catch { licences.value = []; }
+}
+
+function pickKind(kind: "equipment" | "licence") {
+  assignKind.value = kind;
+  assignForm.value.asset_id = null;
+  assignForm.value.category = "";
+  if (kind === "licence" && !licences.value.length) void loadLicences();
 }
 
 /** Only what is actually free to give out, narrowed by category. */
@@ -525,6 +571,37 @@ async function loadAssignable() {
 async function submitAssign() {
   assignSaving.value = true; assignError.value = "";
   try {
+    if (assignKind.value === "licence") {
+      // A seat off a batch, not a handover. `allocateSeat` refuses to
+      // over-allocate, which is the compliance check worth having at the
+      // moment somebody is added rather than in an audit later.
+      const res = await api<{ data: Asset }>("POST", `/api/v1/assets/${assignForm.value.asset_id}/seats`, {
+        org: org(),
+        body: {
+          employee_id: assignForm.value.employee_id,
+          allocated_on: assignForm.value.assigned_date || null,
+          note: assignForm.value.note || null,
+        },
+      });
+      /*
+       * Named from the seat that was just written, rather than a placeholder.
+       * The response carries the holders, so the person is knowable — and a
+       * confirmation that says "them" is one nobody can check.
+       */
+      const seat = ((res.data as any).seat_holders ?? [])
+        .filter((h: any) => h.employee_id === assignForm.value.employee_id)
+        .pop();
+      assignDone.value = {
+        asset: res.data.name,
+        employee: seat?.employee ?? "the employee",
+        id: res.data.id,
+        kind: "licence",
+      };
+      showAssign.value = false;
+      await loadLicences();
+      return;
+    }
+
     const res = await api<{ data: Asset }>("POST", `/api/v1/assets/${assignForm.value.asset_id}/assign`, {
       org: org(),
       body: {
@@ -538,6 +615,7 @@ async function submitAssign() {
       asset: res.data.name,
       employee: (res.data as any).holder?.full_name ?? "the employee",
       id: res.data.id,
+      kind: "equipment",
     };
     showAssign.value = false;
     loaded.value.delete("employee");
@@ -1530,7 +1608,21 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
             <EmployeePicker v-model="assignForm.employee_id" />
           </div>
 
-          <label class="field"><span>Asset Category <b>*</b></span>
+          <!--
+            Equipment or a licence. One drawer because it is one job; two
+            branches because a laptop has a holder and comes back, while a seat
+            is drawn from a batch and is released.
+          -->
+          <div class="field"><span>What are you giving them <b>*</b></span>
+            <div class="kind-pick">
+              <button type="button" :class="['kind-btn', { on: assignKind === 'equipment' }]"
+                      @click="pickKind('equipment')">Equipment</button>
+              <button type="button" :class="['kind-btn', { on: assignKind === 'licence' }]"
+                      @click="pickKind('licence')">Software licence</button>
+            </div>
+          </div>
+
+          <label v-if="assignKind === 'equipment'" class="field"><span>Asset Category <b>*</b></span>
             <select v-model="assignForm.category" class="control" @change="loadAssignable">
               <option value="">Select Asset Category</option>
               <option v-for="c in assignableCategories" :key="c.id" :value="c.name">{{ c.name }}</option>
@@ -1538,10 +1630,33 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           </label>
 
           <!--
+            No category step for licences: the imported agreements all sit under
+            "saas", so a category filter would find nothing, and the names say
+            what they are. Spare seats are shown because that is the number that
+            decides whether this one can be given at all.
+          -->
+          <div v-else class="field">
+            <span>Licence <b>*</b></span>
+            <input v-model="licenceQuery" class="control" placeholder="Search licences…" />
+            <p v-if="!licenceMatches.length" class="hint">
+              {{ licences.length ? "Nothing matches that." : "No licence has a seat free." }}
+            </p>
+            <ul v-else class="pick-list">
+              <li v-for="l in licenceMatches" :key="l.id">
+                <label class="pick">
+                  <input v-model="assignForm.asset_id" type="radio" :value="l.id" />
+                  <span class="pick-name">{{ l.name }}</span>
+                  <span class="chip">{{ (l as any).seats_spare }} spare</span>
+                </label>
+              </li>
+            </ul>
+          </div>
+
+          <!--
             Only what is free to give out. Condition sits beside each because it
             is the fact that decides between two of the same model.
           -->
-          <div v-if="assignForm.category" class="field">
+          <div v-if="assignKind === 'equipment' && assignForm.category" class="field">
             <span>Asset <b>*</b></span>
             <p v-if="!assignable.length" class="hint">
               Nothing available in that category. It would have to be requested from procurement.
@@ -1558,7 +1673,18 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
             </ul>
           </div>
 
-          <template v-if="assignForm.asset_id">
+          <!-- A seat has no charger and is not returned at an exit interview. -->
+          <template v-if="assignKind === 'licence' && assignForm.asset_id">
+            <label class="field"><span>Allocated on</span>
+              <input v-model="assignForm.assigned_date" class="control" type="date" />
+              <span class="hint">Today, if left blank.</span>
+            </label>
+            <label class="field"><span>Note</span>
+              <input v-model="assignForm.note" class="control" placeholder="Why they need it, if worth recording" />
+            </label>
+          </template>
+
+          <template v-if="assignKind === 'equipment' && assignForm.asset_id">
             <div class="field">
               <span>Accessories</span>
               <div class="checks">
@@ -1591,7 +1717,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
           <button class="btn-primary"
                   :disabled="assignSaving || !assignForm.employee_id || !assignForm.asset_id"
                   @click="submitAssign">
-            {{ assignSaving ? "Assigning…" : "Assign Asset" }}
+            {{ assignSaving ? "Assigning…" : assignKind === "licence" ? "Allocate seat" : "Assign Asset" }}
           </button>
         </footer>
       </aside>
@@ -1601,9 +1727,14 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
     <div v-if="assignDone" class="overlay" @click.self="assignDone = null">
       <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-label="Assigned">
         <div class="done-mark" aria-hidden="true">✓</div>
-        <h2>Asset Assigned Successfully</h2>
+        <h2>{{ assignDone.kind === "licence" ? "Seat allocated" : "Asset Assigned Successfully" }}</h2>
         <p class="muted">
-          {{ assignDone.asset }} is now with {{ assignDone.employee }}.
+          <template v-if="assignDone.kind === 'licence'">
+            {{ assignDone.employee }} now holds a seat on {{ assignDone.asset }}.
+          </template>
+          <template v-else>
+            {{ assignDone.asset }} is now with {{ assignDone.employee }}.
+          </template>
         </p>
         <div class="dialog-actions">
           <button class="btn-secondary" @click="assignDone = null">Close</button>
@@ -1860,6 +1991,13 @@ code {
 .pick-name { flex: 1; color: var(--color-text); }
 .pick-id { font-size: .72rem; color: var(--color-text-muted); }
 .checks { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.kind-pick { display: flex; gap: 8px; margin-top: 6px; }
+.kind-btn { flex: 1; padding: 8px 10px; font-size: .85rem; cursor: pointer;
+  border: 1px solid var(--color-border-strong); border-radius: 8px;
+  background: var(--color-surface); color: var(--color-text); }
+.kind-btn.on { border-color: var(--color-brand-base); background: var(--color-brand-subtle);
+  color: var(--color-brand-base); font-weight: 600; }
 
 .done-mark { width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center;
   background: var(--color-success-light); color: var(--color-success); font-size: 1.2rem; margin-bottom: 12px; }

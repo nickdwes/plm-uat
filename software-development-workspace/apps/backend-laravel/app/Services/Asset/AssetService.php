@@ -39,6 +39,22 @@ class AssetService
 
         // Software, subscription or physical — the register asks each kind
         // different questions, so it is often listed one kind at a time.
+        /*
+         * Licences with a seat left to give.
+         *
+         * The seat count is derived from allocations rather than stored, so the
+         * spare figure cannot be a WHERE clause — but eager-loading the
+         * allocations turns thirty-one queries into one, and the resource then
+         * computes spare without touching the database again.
+         */
+        if (filter_var($filters['has_spare_seats'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $query->whereIn('asset_class', Asset::SEATED_CLASSES)
+                ->whereNotNull('seats_total')
+                ->where('seats_total', '>', 0)
+                ->where('status', '!=', Asset::STATUS_RETIRED)
+                ->with('seats');
+        }
+
         if ($class = $filters['asset_class'] ?? null) {
             $query->where('asset_class', $class);
         }
