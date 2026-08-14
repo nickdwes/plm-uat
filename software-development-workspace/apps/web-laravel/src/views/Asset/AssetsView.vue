@@ -608,17 +608,22 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
               <span class="count-n">{{ software.totals.agreements }}</span>
               <span class="count-l">agreements</span>
             </div>
-            <!-- Seats paid for against seats actually handed out. Answerable
-                 only because agreements hang off products. -->
-            <div :class="['count', { bad: software.seats.utilisation !== null && software.seats.utilisation < 60 }]">
-              <span class="count-n">
-                {{ software.seats.utilisation === null ? "—" : software.seats.utilisation + "%" }}
-              </span>
-              <span class="count-l">seats in use</span>
+            <div class="count">
+              <span class="count-n">{{ software.seats.purchased }}</span>
+              <span class="count-l">seats bought</span>
+            </div>
+            <!--
+              The vendor's count while nothing is matched, and labelled as
+              theirs. Showing the register's nought here would report a fully
+              consumed tenant as entirely idle.
+            -->
+            <div class="count">
+              <span class="count-n">{{ software.seats.assigned_reported ?? software.seats.assigned }}</span>
+              <span class="count-l">allocated</span>
             </div>
             <div :class="['count', { bad: software.seats.spare }]">
               <span class="count-n">{{ software.seats.spare }}</span>
-              <span class="count-l">seats spare</span>
+              <span class="count-l">available</span>
             </div>
             <div :class="['count', { bad: software.totals.unsupported }]">
               <span class="count-n">{{ software.totals.unsupported }}</span>
@@ -630,30 +635,61 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
             </div>
           </div>
 
-          <table class="grid">
-            <thead>
-              <tr><th>Product</th><th>Agreements</th><th>Seats</th><th>Annual</th><th>Criticality</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="p in software.by_product" :key="p.id">
-                <td>
-                  <router-link :to="{ name: 'asset-detail', params: { id: p.id } }" class="link">{{ p.name }}</router-link>
-                  <!-- A security finding, not a label somebody forgot to update. -->
-                  <span v-if="p.unsupported" class="pill pill-bad">unsupported</span>
-                  <div class="sub">{{ p.category }}</div>
-                </td>
-                <td>
-                  {{ p.agreements }}
-                  <!-- A product nobody is paying for is worth seeing. It may be
-                       perpetual, or free, or forgotten. -->
-                  <span v-if="!p.agreements" class="sub">nothing tracked</span>
-                </td>
-                <td>{{ p.assigned }}/{{ p.seats }}</td>
-                <td>{{ p.annual ? money(p.annual) : "—" }}</td>
-                <td>{{ p.criticality ?? "—" }}</td>
-              </tr>
-            </tbody>
-          </table>
+          <!--
+            Five columns, and every one of them populated. The previous version
+            carried Annual and Criticality, which are empty for every Microsoft
+            licence because Graph publishes no price and nobody has set a
+            criticality — two columns of dashes that pushed the table wider than
+            its card and left the header band adrift from the rows.
+          -->
+          <div class="table-scroll">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th class="num">Licences</th>
+                  <th class="num">Allocated</th>
+                  <th class="num">Available</th>
+                  <th>Renews</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in software.by_product" :key="p.id">
+                  <td>
+                    <router-link :to="{ name: 'asset-detail', params: { id: p.id } }" class="link">{{ p.name }}</router-link>
+                    <!-- A security finding, not a label somebody forgot to update. -->
+                    <span v-if="p.unsupported" class="pill pill-bad">unsupported</span>
+                    <div class="sub">
+                      <!-- A product nobody is paying for is worth seeing. It may
+                           be perpetual, or free, or forgotten. -->
+                      <template v-if="p.agreements">
+                        {{ p.agreements }} agreement{{ p.agreements === 1 ? "" : "s" }}
+                      </template>
+                      <template v-else>nothing tracked</template>
+                    </div>
+                  </td>
+                  <td class="num">{{ p.seats || "—" }}</td>
+                  <td class="num">{{ p.in_use || "—" }}</td>
+                  <td :class="['num', { spare: p.available > 0 }]">{{ p.available || "—" }}</td>
+                  <td>
+                    <template v-if="p.next_renewal">
+                      {{ p.next_renewal }}
+                      <!-- Two purchases of one product renew twice; this is the
+                           next one, which is what somebody is scanning for. -->
+                      <div v-if="p.agreements > 1" class="sub">first of {{ p.agreements }}</div>
+                    </template>
+                    <span v-else class="sub">—</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="table-note">
+            Allocated is Microsoft's own count. The register will show seats it
+            can name a person for once employees are matched, and the difference
+            between the two is worth looking at when it appears.
+          </p>
         </article>
 
         <div class="charts">
@@ -689,7 +725,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
       <p v-if="!(tab === 'mine' ? mine : held).length" class="quiet">
         {{ tab === 'mine' ? 'Nothing is assigned to you.' : 'Nothing is assigned to anybody yet.' }}
       </p>
-      <table v-else class="grid">
+      <table v-else class="data-table">
         <thead>
           <tr>
             <th>Asset</th><th>Serial</th><th v-if="tab === 'employee'">Holder</th>
@@ -711,7 +747,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
     <!-- ── Requests ─────────────────────────────────────────────────────── -->
     <section v-else-if="tab === 'requests'" class="pane">
       <p v-if="!requests.length" class="quiet">No requests have been raised.</p>
-      <table v-else class="grid">
+      <table v-else class="data-table">
         <thead>
           <tr><th>Request</th><th>Item</th><th>Employee</th><th>Urgency</th><th>Submitted</th><th>Status</th><th></th></tr>
         </thead>
@@ -756,7 +792,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
 
       <p v-if="!renewals.length" class="quiet">Nothing on the register has a renewal date.</p>
 
-      <table v-else class="grid">
+      <table v-else class="data-table">
         <thead>
           <tr>
             <th>What</th><th>Expires</th><th>Seats</th>
@@ -803,7 +839,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
     <!-- ── Disposals ────────────────────────────────────────────────────── -->
     <section v-else-if="tab === 'disposals'" class="pane">
       <p v-if="!disposals.length" class="quiet">Nothing has been disposed of.</p>
-      <table v-else class="grid">
+      <table v-else class="data-table">
         <thead>
           <tr><th>Asset</th><th>Serial</th><th>Category</th><th>Purchased</th><th>Disposed</th><th>Method</th><th>Certificate</th></tr>
         </thead>
@@ -832,7 +868,7 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
     <!-- ── Maintenance ──────────────────────────────────────────────────── -->
     <section v-else-if="tab === 'maintenance'" class="pane">
       <p v-if="!servicing.length" class="quiet">No servicing has been recorded.</p>
-      <table v-else class="grid">
+      <table v-else class="data-table">
         <thead>
           <tr><th>ID</th><th>Asset</th><th>Type</th><th>Reason</th><th>Date</th><th>Cost</th><th>Status</th></tr>
         </thead>
@@ -1484,11 +1520,21 @@ code {
 .bar-n { font-size: 0.8rem; color: var(--color-text); text-align: right; }
 
 /* ── Tab tables ────────────────────────────────────────────────────────── */
-.grid { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-.grid th { text-align: left; padding: 10px 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+/*
+ * Not `.grid`.
+ *
+ * Tailwind owns that class name and defines `display: grid` on it, which turned
+ * every table in this view into a grid container: `thead` became a block, the
+ * table layout algorithm was discarded, and the header cells sized themselves
+ * independently of the rows. The visible symptom was a header band that stopped
+ * short of the data — reported as "this page appears very skewed", and true of
+ * all six tables here, not just the software one.
+ */
+.data-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+.data-table th { text-align: left; padding: 10px 12px; font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
            letter-spacing: .04em; color: var(--color-text-muted); background: var(--color-surface-sunken); white-space: nowrap; }
-.grid td { padding: 12px; border-bottom: 1px solid var(--color-border); color: var(--color-text); }
-.grid tr:last-child td { border-bottom: none; }
+.data-table td { padding: 12px; border-bottom: 1px solid var(--color-border); color: var(--color-text); }
+.data-table tr:last-child td { border-bottom: none; }
 .mono { font-family: ui-monospace, monospace; font-size: 0.82rem; }
 .pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 0.75rem;
         background: var(--color-surface-sunken); color: var(--color-text-muted); }
@@ -1527,7 +1573,7 @@ code {
 .count.bad .count-n { color: var(--color-danger-text); }
 .sub { font-size: .75rem; color: var(--color-text-muted); }
 .sub-bad { color: var(--color-danger-text); }
-.grid tr.flagged td { background: color-mix(in oklab, var(--color-danger-subtle) 35%, transparent); }
+.data-table tr.flagged td { background: color-mix(in oklab, var(--color-danger-subtle) 35%, transparent); }
 
 .dialog-narrow { max-width: 32rem; }
 .reminder-lead { margin: -6px 0 14px; }
@@ -1563,5 +1609,11 @@ code {
 .btn-danger:disabled { opacity: .5; cursor: default; }
 
 .software-card { margin-top: 16px; }
+/* The card is narrower than the widest sensible table, and a table that
+   overflows leaves its header band adrift from the rows. */
+.table-scroll { overflow-x: auto; }
+.data-table td.num, .data-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.data-table td.spare { color: var(--color-warning, var(--color-text)); font-weight: 600; }
+.table-note { margin: 10px 2px 0; font-size: .75rem; color: var(--color-text-muted); }
 .software-card .counts { margin-bottom: 16px; }
 </style>

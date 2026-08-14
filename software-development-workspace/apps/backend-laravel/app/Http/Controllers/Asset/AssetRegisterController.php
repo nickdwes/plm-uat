@@ -136,6 +136,15 @@ class AssetRegisterController extends Controller
         $seatsBought = (int) $agreements->sum('seats_total');
         $seatsUsed   = (int) $agreements->sum('seats_used');
 
+        /*
+         * What the vendor says is in use, summed across the products.
+         *
+         * Kept separate from `$seatsUsed` for the reason the column above is:
+         * one counts seats we can name a person for, the other is Microsoft's.
+         * Until the accounts are matched only the second is populated.
+         */
+        $seatsReported = (int) $products->sum(fn ($p) => (int) $p->seats_assigned_reported);
+
         return response()->json([
             'totals' => [
                 'products'   => $products->count(),
@@ -151,8 +160,13 @@ class AssetRegisterController extends Controller
                 'assigned'    => $seatsUsed,
                 // Seats paid for and not handed out. The number that hands
                 // money back at a renewal.
-                'spare'       => max(0, $seatsBought - $seatsUsed),
+                'assigned_reported' => $seatsReported,
+                'spare'       => max(0, $seatsBought - max($seatsUsed, $seatsReported)),
                 'utilisation' => $seatsBought > 0 ? (int) round(100 * $seatsUsed / $seatsBought) : null,
+                // What the numbers actually mean today, before matching exists.
+                'utilisation_reported' => $seatsBought > 0
+                    ? (int) round(100 * $seatsReported / $seatsBought)
+                    : null,
             ],
 
             'renewals' => [
@@ -174,19 +188,51 @@ class AssetRegisterController extends Controller
              * still appear, at nought — a product nobody is paying for is
              * itself worth seeing.
              */
-            'by_product' => $products->map(fn ($p) => [
-                'id'         => $p->id,
-                'name'       => $p->name,
-                'category'   => $p->category,
-                'agreements' => $p->children->count(),
-                'seats'      => (int) $p->children->sum('seats_total'),
-                'assigned'   => (int) $p->children->sum('seats_used'),
-                'annual'     => (float) $p->children->sum(
-                    fn ($c) => (float) ($c->estimated_renewal_cost ?? $c->renewal_cost ?? 0),
-                ),
-                'criticality'  => $p->custom_fields['business_criticality'] ?? null,
-                'unsupported'  => $p->isUnsupported(),
-            ])->sortByDesc('annual')->values(),
+            'by_product' => $products->map(function ($p) {
+                $seats     = (int) $p->children->sum('seats_total');
+                $allocated = (int) $p->children->sum('seats_used');
+
+                /*
+                 * Two different counts, deliberately both present.
+                 *
+                 * `allocated` is seats handed to somebody the register can name.
+                 * `reported` is the vendor's own figure. Until employees are
+                 * migrated the first is nought everywhere and the second is the
+                 * only true one, so the screen leads with the vendor's and says
+                 * whose it is — showing "0 of 486 in use" on a fully consumed
+                 * tenant would be a wrong number presented as a finding.
+                 */
+                $reported = $p->seats_assigned_reported;
+                $inUse    = $reported ?? $allocated;
+
+                return [
+                    'id'         => $p->id,
+                    'name'       => $p->name,
+                    'category'   => $p->category,
+                    'agreements' => $p->children->count(),
+                    'seats'      => $seats,
+                    'allocated'  => $allocated,
+                    'reported'   => $reported,
+                    'in_use'     => $inUse,
+                    'available'  => max(0, $seats - $inUse),
+                    /*
+                     * The soonest of its agreements. A product bought twice
+                     * renews twice, and the date that matters is the next one.
+                     */
+                    'next_renewal' => $p->children
+                        ->pluck('expires_on')->filter()->sort()->first()?->toDateString(),
+                    'annual'     => (float) $p->children->sum(
+                        fn ($c) => (float) ($c->estimated_renewal_cost ?? $c->renewal_cost ?? 0),
+                    ),
+                    'criticality'  => $p->custom_fields['business_criticality'] ?? null,
+                    'unsupported'  => $p->isUnsupported(),
+                ];
+            })
+                // Soonest renewal first: it is the column somebody is scanning
+                // for, and anything with no date sorts to the end rather than
+                // to the top, where a null would otherwise land.
+                ->sortBy(fn ($p) => $p['next_renewal'] ?? '9999-12-31')
+                ->values(),
 
             'by_vendor' => $products->groupBy(fn ($p) => $p->vendor ?: 'Unrecorded')
                 ->map(fn ($g, $vendor) => ['vendor' => $vendor, 'count' => $g->count()])
