@@ -59,6 +59,9 @@ const CLASSES = [
 interface AssetCategory {
   id: number; asset_class: string; name: string;
   description: string | null; is_active: boolean;
+  /* assignee | custodian | none — whether this kind of thing is carried by a
+     person, looked after by one, or consumed as seats. */
+  custody_model?: string;
 }
 
 const categories = ref<AssetCategory[]>([]);
@@ -408,6 +411,143 @@ async function declineRequest() {
   } finally { requestBusy.value = false; }
 }
 
+/*
+ * ── Raising a request ────────────────────────────────────────────────────
+ *
+ * A 420px side drawer, per the designs — not a centred modal. The chain could
+ * advance, decline, forward and fulfil since the approval work went in, and
+ * nothing could raise one, so the tab said "No requests have been raised" and
+ * always would have.
+ */
+const showRequest    = ref(false);
+const requestSaving  = ref(false);
+const requestError   = ref("");
+const requestForm    = ref<{
+  employee_id: number | null; item: string; category: string;
+  quantity: number; urgency: string; reason: string;
+}>({ employee_id: null, item: "", category: "", quantity: 1, urgency: "normal", reason: "" });
+
+/*
+ * The designs label priority P0/P1/P2 rather than low/normal/high. Their
+ * numbering is not the usual one — P0 is the *lowest* there — so the mapping is
+ * written out rather than computed, and the stored value stays the plain word.
+ */
+const URGENCY = [
+  { value: "high",   label: "High (P1)" },
+  { value: "normal", label: "Medium (P2)" },
+  { value: "low",    label: "Low (P0)" },
+];
+const urgencyLabel = (u: string | null) =>
+  URGENCY.find((x) => x.value === u)?.label ?? u ?? "—";
+
+function startRequest() {
+  requestForm.value = { employee_id: null, item: "", category: "", quantity: 1, urgency: "normal", reason: "" };
+  requestError.value = "";
+  showRequest.value = true;
+}
+
+async function submitRequest() {
+  requestSaving.value = true; requestError.value = "";
+  try {
+    await api("POST", "/api/v1/assets/requests", {
+      org: org(),
+      // Omitted rather than sent null, so the backend can default it to the
+      // caller's own employee record.
+      body: {
+        ...requestForm.value,
+        employee_id: requestForm.value.employee_id ?? undefined,
+      },
+    });
+    showRequest.value = false;
+    await loadRequestsTab();
+    tab.value = "requests";
+  } catch (e) {
+    requestError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not raise the request.";
+  } finally { requestSaving.value = false; }
+}
+
+/*
+ * ── Assigning ────────────────────────────────────────────────────────────
+ *
+ * Employee, then category, then the asset — in that order, because the asset
+ * list is only useful once it is narrowed. The designs show the available
+ * assets as a radio list with the condition beside each, which is the fact that
+ * decides between two identical models.
+ */
+const showAssign     = ref(false);
+const assignSaving   = ref(false);
+const assignError    = ref("");
+const assignDone     = ref<{ asset: string; employee: string; id: number } | null>(null);
+const assignable     = ref<Asset[]>([]);
+const assignForm     = ref<{
+  employee_id: number | null; category: string; asset_id: number | null;
+  accessories: string[]; assigned_date: string; expected_return_date: string;
+}>({ employee_id: null, category: "", asset_id: null, accessories: [], assigned_date: "", expected_return_date: "" });
+
+// The designs' set. It belongs in category configuration eventually — a vehicle
+// goes out with keys and a logbook, not a laptop bag.
+const ACCESSORIES = ["Charger", "Mouse", "Laptop bag"];
+
+/*
+ * Only things a person can actually be handed.
+ *
+ * The unfiltered list offered virtual machines, key vaults and storage accounts
+ * — nobody carries those home, and the register would then claim somebody was
+ * holding a subscription. Categories say which model they follow; this is that
+ * answer applied.
+ */
+const assignableCategories = computed(() =>
+  categories.value.filter((c) => (c.custody_model ?? "assignee") === "assignee"));
+
+function openAssign() {
+  assignForm.value = {
+    employee_id: null, category: "", asset_id: null,
+    accessories: [], assigned_date: "", expected_return_date: "",
+  };
+  assignable.value = [];
+  assignError.value = "";
+  assignDone.value = null;
+  showAssign.value = true;
+}
+
+/** Only what is actually free to give out, narrowed by category. */
+async function loadAssignable() {
+  assignForm.value.asset_id = null;
+  if (!assignForm.value.category) { assignable.value = []; return; }
+  try {
+    assignable.value = (await api<{ data: Asset[] }>("GET", "/api/v1/assets", {
+      org: org(),
+      params: { status: "available", category: assignForm.value.category, per_page: 100 },
+    })).data ?? [];
+  } catch { assignable.value = []; }
+}
+
+async function submitAssign() {
+  assignSaving.value = true; assignError.value = "";
+  try {
+    const res = await api<{ data: Asset }>("POST", `/api/v1/assets/${assignForm.value.asset_id}/assign`, {
+      org: org(),
+      body: {
+        employee_id: assignForm.value.employee_id,
+        assigned_date: assignForm.value.assigned_date || null,
+        expected_return_date: assignForm.value.expected_return_date || null,
+        accessories: assignForm.value.accessories,
+      },
+    });
+    assignDone.value = {
+      asset: res.data.name,
+      employee: (res.data as any).holder?.full_name ?? "the employee",
+      id: res.data.id,
+    };
+    showAssign.value = false;
+    loaded.value.delete("employee");
+    await openTab("employee");
+  } catch (e) {
+    // 422 here is usually the tenancy check: a real employee id, wrong org.
+    assignError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not assign it.";
+  } finally { assignSaving.value = false; }
+}
+
 async function loadRequestsTab() {
   requests.value = (await api<{ data: any }>("GET", "/api/v1/assets/requests", { org: org() })).data?.data ?? [];
 }
@@ -732,6 +872,16 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
 
     <!-- ── My assets / Employee assets ──────────────────────────────────── -->
     <section v-else-if="tab === 'mine' || tab === 'employee'" class="pane">
+      <!--
+        The designs put these at the top right of their tabs: "Assign Asset" on
+        Employee Assets, and asking for something on My Assets. Both were
+        missing, which is what made the module look read-only.
+      -->
+      <div class="pane-actions">
+        <button v-if="tab === 'employee'" class="btn-primary" @click="openAssign">Assign Asset</button>
+        <button v-else class="btn-primary" @click="startRequest">Request an asset</button>
+      </div>
+
       <p v-if="!(tab === 'mine' ? mine : held).length" class="quiet">
         {{ tab === 'mine' ? 'Nothing is assigned to you.' : 'Nothing is assigned to anybody yet.' }}
       </p>
@@ -756,17 +906,27 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
 
     <!-- ── Requests ─────────────────────────────────────────────────────── -->
     <section v-else-if="tab === 'requests'" class="pane">
-      <p v-if="!requests.length" class="quiet">No requests have been raised.</p>
+      <div class="pane-actions">
+        <button class="btn-primary" @click="startRequest">Request an asset</button>
+      </div>
+
+      <p v-if="!requests.length" class="quiet">
+        No requests have been raised. "Request an asset" starts one — it goes to HR first.
+      </p>
       <table v-else class="data-table">
         <thead>
-          <tr><th>Request</th><th>Item</th><th>Employee</th><th>Urgency</th><th>Submitted</th><th>Status</th><th></th></tr>
+          <tr><th>Request ID</th><th>Asset</th><th>Employee</th><th>Priority</th><th>Submitted On</th><th>Status</th><th>Actions</th></tr>
         </thead>
         <tbody>
           <tr v-for="r in requests" :key="r.id">
             <td class="mono">{{ r.reference }}</td>
             <td>{{ r.item }}</td>
             <td>{{ r.employee ?? '—' }}</td>
-            <td>{{ r.urgency ?? '—' }}</td>
+            <!-- The designs show priority as a flag when it is high; a row of
+                 identical grey words tells nobody which to read first. -->
+            <td :class="{ urgent: r.urgency === 'high' }">
+              <span v-if="r.urgency === 'high'" aria-hidden="true">⚑ </span>{{ urgencyLabel(r.urgency) }}
+            </td>
             <td>{{ r.submitted_on }}</td>
             <td>
               <span :class="['pill', r.status === 'rejected' ? 'pill-bad' : r.status === 'fulfilled' ? 'pill-ok' : '']">
@@ -1291,6 +1451,169 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
         </div>
       </div>
     </div>
+    <!-- ══ Request an asset ═══════════════════════════════════════════════
+         A right-hand drawer at the designs' 420px, not a centred modal. -->
+    <div v-if="showRequest" class="overlay drawer-overlay" @click.self="showRequest = false">
+      <aside class="drawer" role="dialog" aria-modal="true" aria-label="Request an asset">
+        <header class="drawer-head">
+          <h2>Request an asset</h2>
+          <button class="drawer-x" aria-label="Close" @click="showRequest = false">✕</button>
+        </header>
+
+        <div class="drawer-body">
+          <!--
+            Who it is for. Blank means the person filling it in, which is the
+            common case — but an account with no employee record behind it has
+            nobody to default to, and without this field the refusal was a dead
+            end with nothing to act on.
+          -->
+          <div class="field"><span>Requested for</span>
+            <EmployeePicker v-model="requestForm.employee_id" />
+            <span class="hint">Leave blank to request for yourself.</span>
+          </div>
+
+          <label class="field"><span>What do you need <b>*</b></span>
+            <input v-model="requestForm.item" class="control" placeholder="Laptop, 16GB RAM" />
+          </label>
+
+          <label class="field"><span>Asset category <b>*</b></span>
+            <select v-model="requestForm.category" class="control">
+              <option value="">Choose one…</option>
+              <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
+            </select>
+          </label>
+
+          <div class="row">
+            <label class="field"><span>Quantity <b>*</b></span>
+              <input v-model.number="requestForm.quantity" class="control" type="number" min="1" max="500" />
+            </label>
+            <label class="field"><span>Priority <b>*</b></span>
+              <select v-model="requestForm.urgency" class="control">
+                <option v-for="u in URGENCY" :key="u.value" :value="u.value">{{ u.label }}</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field"><span>Description <b>*</b></span>
+            <textarea v-model="requestForm.reason" class="control" rows="5"
+                      placeholder="What it is for, and why the current one will not do."></textarea>
+            <!-- The reason is what HR reads and what a decline is argued
+                 against, so it is asked for rather than left optional. -->
+            <span class="hint">This is what HR sees when they decide.</span>
+          </label>
+        </div>
+
+        <p v-if="requestError" class="alert" role="alert">{{ requestError }}</p>
+
+        <footer class="drawer-foot">
+          <button class="btn-secondary" @click="showRequest = false">Cancel</button>
+          <button class="btn-primary"
+                  :disabled="requestSaving || !requestForm.item.trim() || !requestForm.category
+                             || !requestForm.reason.trim()"
+                  @click="submitRequest">
+            {{ requestSaving ? "Submitting…" : "Submit Request" }}
+          </button>
+        </footer>
+      </aside>
+    </div>
+
+    <!-- ══ Assign an Asset ════════════════════════════════════════════════ -->
+    <div v-if="showAssign" class="overlay drawer-overlay" @click.self="showAssign = false">
+      <aside class="drawer" role="dialog" aria-modal="true" aria-label="Assign an asset">
+        <header class="drawer-head">
+          <h2>Assign an Asset</h2>
+          <button class="drawer-x" aria-label="Close" @click="showAssign = false">✕</button>
+        </header>
+
+        <div class="drawer-body">
+          <div class="field"><span>Assign to <b>*</b></span>
+            <EmployeePicker v-model="assignForm.employee_id" />
+          </div>
+
+          <label class="field"><span>Asset Category <b>*</b></span>
+            <select v-model="assignForm.category" class="control" @change="loadAssignable">
+              <option value="">Select Asset Category</option>
+              <option v-for="c in assignableCategories" :key="c.id" :value="c.name">{{ c.name }}</option>
+            </select>
+          </label>
+
+          <!--
+            Only what is free to give out. Condition sits beside each because it
+            is the fact that decides between two of the same model.
+          -->
+          <div v-if="assignForm.category" class="field">
+            <span>Asset <b>*</b></span>
+            <p v-if="!assignable.length" class="hint">
+              Nothing available in that category. It would have to be requested from procurement.
+            </p>
+            <ul v-else class="pick-list">
+              <li v-for="a in assignable" :key="a.id">
+                <label class="pick">
+                  <input v-model="assignForm.asset_id" type="radio" :value="a.id" />
+                  <span class="pick-name">{{ a.name }}</span>
+                  <code class="pick-id">{{ a.asset_tag }}</code>
+                  <span v-if="a.condition" class="chip">{{ a.condition }}</span>
+                </label>
+              </li>
+            </ul>
+          </div>
+
+          <template v-if="assignForm.asset_id">
+            <div class="field">
+              <span>Accessories</span>
+              <div class="checks">
+                <label v-for="acc in ACCESSORIES" :key="acc" class="check-inline">
+                  <input v-model="assignForm.accessories" type="checkbox" :value="acc" />
+                  <span>{{ acc }}</span>
+                </label>
+              </div>
+              <!-- Ticked here so the return screen can tick them back off. -->
+              <span class="hint">Recorded so the return form can check them back in.</span>
+            </div>
+
+            <div class="row">
+              <label class="field"><span>Assignment Date</span>
+                <input v-model="assignForm.assigned_date" class="control" type="date" />
+                <span class="hint">Today, if left blank.</span>
+              </label>
+              <label class="field"><span>Expected Return Date</span>
+                <input v-model="assignForm.expected_return_date" class="control" type="date" />
+                <span class="hint">Blank means no date agreed.</span>
+              </label>
+            </div>
+          </template>
+        </div>
+
+        <p v-if="assignError" class="alert" role="alert">{{ assignError }}</p>
+
+        <footer class="drawer-foot">
+          <button class="btn-secondary" @click="showAssign = false">Cancel</button>
+          <button class="btn-primary"
+                  :disabled="assignSaving || !assignForm.employee_id || !assignForm.asset_id"
+                  @click="submitAssign">
+            {{ assignSaving ? "Assigning…" : "Assign Asset" }}
+          </button>
+        </footer>
+      </aside>
+    </div>
+
+    <!-- ══ Assigned ═══════════════════════════════════════════════════════ -->
+    <div v-if="assignDone" class="overlay" @click.self="assignDone = null">
+      <div class="dialog dialog-narrow" role="dialog" aria-modal="true" aria-label="Assigned">
+        <div class="done-mark" aria-hidden="true">✓</div>
+        <h2>Asset Assigned Successfully</h2>
+        <p class="muted">
+          {{ assignDone.asset }} is now with {{ assignDone.employee }}.
+        </p>
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="assignDone = null">Close</button>
+          <router-link class="btn-primary" :to="{ name: 'asset-detail', params: { id: assignDone.id } }">
+            View asset
+          </router-link>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -1505,6 +1828,41 @@ code {
 .tab.on { color: var(--color-brand-base); border-bottom-color: var(--color-brand-base); font-weight: 600; }
 
 .pane { margin-top: 20px; }
+.pane-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.urgent { color: var(--color-error); font-weight: 600; }
+
+/* ── Side drawers ──────────────────────────────────────────────────────────
+   The designs use a 420px right-hand panel for these, not a centred modal. */
+.drawer-overlay { align-items: stretch; justify-content: flex-end; padding: 0; }
+.drawer {
+  display: flex; flex-direction: column;
+  width: min(420px, 100%); height: 100%;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+}
+.drawer-head { display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 24px; border-bottom: 1px solid var(--color-border); }
+.drawer-head h2 { margin: 0; font-size: 1.05rem; font-weight: 600; color: var(--color-text); }
+.drawer-x { border: none; background: none; cursor: pointer; font-size: 1rem;
+  color: var(--color-text-muted); padding: 4px; }
+.drawer-body { flex: 1; overflow-y: auto; padding: 20px 24px;
+  display: flex; flex-direction: column; gap: 16px; }
+.drawer-foot { display: flex; gap: 10px; padding: 16px 24px;
+  border-top: 1px solid var(--color-border); }
+.drawer-foot .btn-secondary, .drawer-foot .btn-primary { flex: 1; justify-content: center; }
+.field b { color: var(--color-error); }
+
+.pick-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column;
+  gap: 4px; max-height: 15rem; overflow-y: auto; }
+.pick { display: flex; align-items: center; gap: 8px; padding: 8px 10px; cursor: pointer;
+  border: 1px solid var(--color-border); border-radius: 8px; font-size: .85rem; }
+.pick:hover { background: var(--color-surface-sunken); }
+.pick-name { flex: 1; color: var(--color-text); }
+.pick-id { font-size: .72rem; color: var(--color-text-muted); }
+.checks { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.done-mark { width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center;
+  background: var(--color-success-light); color: var(--color-success); font-size: 1.2rem; margin-bottom: 12px; }
 .quiet { color: var(--color-text-muted); font-size: 0.88rem; }
 
 /* ── Overview ──────────────────────────────────────────────────────────── */

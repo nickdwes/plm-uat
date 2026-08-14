@@ -528,7 +528,14 @@ class AssetController extends Controller
         );
 
         return new AssetResource(
-            $this->service->assign($asset, $employee, $request->input('assigned_date'))
+            $this->service->assign(
+                $asset,
+                $employee,
+                $request->input('assigned_date'),
+                // Whatever the form ticked; the return screen reads it back.
+                $request->has('accessories') ? (array) $request->input('accessories', []) : null,
+                $request->input('expected_return_date'),
+            )
         );
     }
 

@@ -142,14 +142,30 @@ class AssetService
      * assigned but still marked available, or the reverse, is the state that
      * makes a register untrustworthy.
      */
-    public function assign(Asset $asset, Employee $employee, ?string $on = null): Asset
-    {
-        return DB::transaction(function () use ($asset, $employee, $on) {
-            $asset->update([
+    /**
+     * Hand the asset over.
+     *
+     * `$accessories` is what physically goes with it — the charger, the mouse,
+     * the bag. Recorded because the return form ticks the same list back off,
+     * and "did the charger come back" is otherwise a question nobody can answer.
+     * Null leaves whatever was there; an empty array means nothing went with it,
+     * which is a different statement and worth being able to make.
+     */
+    public function assign(
+        Asset $asset,
+        Employee $employee,
+        ?string $on = null,
+        ?array $accessories = null,
+        ?string $expectedReturn = null,
+    ): Asset {
+        return DB::transaction(function () use ($asset, $employee, $on, $accessories, $expectedReturn) {
+            $asset->update(array_filter([
                 'assigned_to'   => $employee->getKey(),
                 'assigned_date' => $on ?? now()->toDateString(),
                 'status'        => Asset::STATUS_ASSIGNED,
-            ]);
+                'expected_return_date' => $expectedReturn,
+                'assigned_accessories' => $accessories,
+            ], fn ($v) => $v !== null));
 
             return $asset->fresh(['holder', 'department']);
         });

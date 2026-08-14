@@ -12,7 +12,9 @@ use App\Services\Asset\AssetRequestChain;
 use App\Services\Asset\RenewalSchedule;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
+use App\Models\Employee;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The lists behind the Assets tabs that had no way of being read.
@@ -68,6 +70,93 @@ class AssetRegisterController extends Controller
                 'decision_note' => $r->decision_note,
             ]),
         ]);
+    }
+
+    /**
+     * Ask for something you do not have.
+     *
+     * The chain could advance, decline, forward and fulfil a request since the
+     * approval work — and nothing could raise one. Every stage after the first
+     * existed for a record that had no way of being created, so the tab read
+     * "No requests have been raised" and always would.
+     */
+    public function storeRequest(Request $request): JsonResponse
+    {
+        $this->authorize('create', Asset::class);
+
+        $data = $request->validate([
+            'item'        => ['required', 'string', 'max:160'],
+            /*
+             * Required, because the column is and because a request filed
+             * under nothing cannot be matched against inventory — "is there a
+             * laptop free" is the first question the chain asks.
+             */
+            'category'    => ['required', 'string', 'max:80'],
+            'quantity'    => ['required', 'integer', 'min:1', 'max:500'],
+            'urgency'     => ['required', 'in:low,normal,high'],
+            'reason'      => ['required', 'string', 'max:1000'],
+            /*
+             * Who it is for, which is not always who is typing. HR raising a
+             * request on somebody's behalf is ordinary; defaulting to the
+             * caller keeps the common case one field shorter.
+             */
+            'employee_id' => ['nullable', 'integer', 'exists:employees,id'],
+        ]);
+
+        $employeeId = $data['employee_id'] ?? $request->user()?->employeeId();
+
+        abort_if(
+            $employeeId === null,
+            422,
+            'Say who this is for — your account is not linked to an employee record.',
+        );
+
+        $employee = Employee::findOrFail($employeeId);
+
+        // The same tenancy check assignment carries: `exists` knows nothing
+        // about which organisation an employee belongs to.
+        abort_unless(
+            (int) $employee->primary_organization_id === (int) app('current.organization_id'),
+            422,
+            'That employee is not in the current organization.',
+        );
+
+        $organizationId = (int) app('current.organization_id');
+
+        $created = DB::transaction(function () use ($data, $employeeId, $organizationId) {
+            /*
+             * Numbered per organisation, inside the transaction and behind a
+             * lock. Two people asking at the same moment would otherwise be
+             * handed the same reference and one of them would lose to the
+             * unique index — with a 500 rather than anything explaining it.
+             */
+            $year = now()->format('Y');
+
+            $last = AssetRequest::withoutGlobalScope('organization')
+                ->where('organization_id', $organizationId)
+                ->where('request_number', 'like', "AR-{$year}-%")
+                ->lockForUpdate()
+                ->orderByDesc('request_number')
+                ->value('request_number');
+
+            $next = $last ? ((int) substr($last, -4)) + 1 : 1;
+
+            return AssetRequest::create($data + [
+                'organization_id' => $organizationId,
+                'employee_id'     => $employeeId,
+                'request_number'  => sprintf('AR-%s-%04d', $year, $next),
+                'status'          => AssetRequest::STATUS_PENDING,
+            ]);
+        });
+
+        return response()->json([
+            'data' => [
+                'id'        => $created->id,
+                'reference' => $created->request_number,
+                'status'    => $created->status,
+            ],
+            'message' => "Raised as {$created->request_number}. It goes to HR first.",
+        ], 201);
     }
 
     /** Faults reported against equipment somebody holds. */

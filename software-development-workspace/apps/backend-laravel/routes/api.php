@@ -728,6 +728,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
          * request could be written and never seen by anybody.
          */
         Route::get('/requests',  [AssetRegisterController::class, 'requests']);
+        // The way in. Every stage after this one existed before this did.
+        Route::post('/requests', [AssetRegisterController::class, 'storeRequest']);
         Route::get('/issues',    [AssetRegisterController::class, 'issues']);
         Route::get('/disposals', [AssetRegisterController::class, 'disposals']);
         Route::get('/maintenance', [AssetRegisterController::class, 'maintenance']);

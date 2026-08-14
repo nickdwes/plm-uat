@@ -24,6 +24,9 @@ class AssetResource extends JsonResource
 
             // ── Custody ───────────────────────────────────────────────────
             'assigned_date'   => $this->assigned_date?->toDateString(),
+            'expected_return_date' => $this->expected_return_date?->toDateString(),
+            // What went out with it, so the return screen can tick it back off.
+            'accessories'     => $this->assigned_accessories ?? [],
             'location'        => $this->location,
             'holder'          => $this->whenLoaded('holder', fn () => [
                 'id'              => $this->holder->id,

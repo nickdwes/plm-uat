@@ -24,6 +24,21 @@ class AssignAssetRequest extends FormRequest
         return [
             'employee_id'   => ['required', 'integer', 'exists:employees,id'],
             'assigned_date' => ['nullable', 'date'],
+
+            /*
+             * What goes out with it — charger, mouse, bag. The return form
+             * ticks the same list back off, so this is what makes "did the
+             * charger come back" an answerable question.
+             */
+            'accessories'   => ['nullable', 'array'],
+            'accessories.*' => ['string', 'max:60'],
+
+            /*
+             * Left null when no date was agreed, which is not the same as
+             * "due at the end of employment" and should not be written as
+             * though it were.
+             */
+            'expected_return_date' => ['nullable', 'date', 'after_or_equal:assigned_date'],
         ];
     }
 }
