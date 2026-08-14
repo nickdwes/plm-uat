@@ -29,7 +29,7 @@ async function logout(): Promise<void> {
 // ── Collapsible groups ────────────────────────────────────────────────────────
 // Each group auto-opens when a child route is active
 const employeesOpen  = ref(isActive('employee') || route.name === 'onboard' || isActive('roster') || isActive('payroll') || route.name === 'my-info');
-const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin');
+const leaveOpen      = ref(route.name === 'leave' || isActive('leave-approvals'));
 const performanceOpen = ref(isActive('performance') || isActive('goals') || route.name === 'okr-cycles');
 const travelOpen      = ref(isActive('travel') || isActive('deliver'));
 const trainingOpen   = ref(isActive('training'));
@@ -39,7 +39,7 @@ const orgOpen        = ref(isActive('org'));
 // Re-expand groups when navigating to a child route directly
 watch(() => route.name, () => {
   if (isActive('employee') || route.name === 'onboard' || isActive('roster') || isActive('payroll') || route.name === 'my-info') employeesOpen.value = true;
-  if (route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin') leaveOpen.value = true;
+  if (route.name === 'leave' || isActive('leave-approvals')) leaveOpen.value = true;
   if (isActive('performance') || isActive('goals') || route.name === 'okr-cycles') performanceOpen.value = true;
   if (isActive('training')) trainingOpen.value = true;
   if (isActive('vendor')) vendorOpen.value = true;
@@ -125,7 +125,7 @@ watch(() => route.name, () => {
 
       <!-- ── Leave ──────────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': route.name === 'leave' || isActive('leave-approvals') || route.name === 'leave-admin' }]"
+        :class="['nav-item', 'nav-group-toggle', { 'group-active': route.name === 'leave' || isActive('leave-approvals') }]"
         @click="leaveOpen = !leaveOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -159,12 +159,9 @@ watch(() => route.name, () => {
           </svg>
           Approvals
         </router-link>
-        <router-link :to="{ name: 'leave-admin' }" :class="['nav-item', 'nav-child', { active: route.name === 'leave-admin' }]">
-          <svg viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
-          </svg>
-          Leave Admin
-        </router-link>
+<!-- Leave Admin, Travel Configuration and Connected tenants have moved to
+             the Organisation page. They are configuration, not day-to-day work,
+             and they were three separate places to go looking for settings. -->
       </div>
 
       <!-- ── Performance ────────────────────────────────────────────────────── -->
@@ -359,14 +356,7 @@ watch(() => route.name, () => {
           </svg>
           Deliveries
         </router-link>
-        <router-link :to="{ name: 'travel-settings' }" :class="['nav-item', 'nav-child', { active: route.name === 'travel-settings' }]">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="10" cy="10" r="2.5" />
-            <path d="M10 2v2M10 16v2M18 10h-2M4 10H2M15.7 4.3l-1.4 1.4M5.7 14.3l-1.4 1.4M15.7 15.7l-1.4-1.4M5.7 5.7L4.3 4.3" />
-          </svg>
-          Configuration
-        </router-link>
+
       </div>
       <router-link :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -375,20 +365,7 @@ watch(() => route.name, () => {
         Assets
       </router-link>
 
-      <!--
-        Directly under Assets, because that is the only thing it feeds. Filed
-        away under a general settings menu it would be found by whoever went
-        looking for it and by nobody else.
-      -->
-      <router-link
-        :to="{ name: 'integration-connections' }"
-        :class="['nav-item', { active: isActive('integrations') }]"
-      >
-        <svg viewBox="0 0 20 20" fill="currentColor">
-          <path d="M11.7 3.3a3.5 3.5 0 015 5l-2 2a3.5 3.5 0 01-5 0 1 1 0 011.4-1.4 1.5 1.5 0 002.2 0l2-2a1.5 1.5 0 00-2.2-2.2l-.8.8a1 1 0 11-1.4-1.4l.8-.8zM8.3 16.7a3.5 3.5 0 01-5-5l2-2a3.5 3.5 0 015 0 1 1 0 01-1.4 1.4 1.5 1.5 0 00-2.2 0l-2 2a1.5 1.5 0 002.2 2.2l.8-.8a1 1 0 111.4 1.4l-.8.8z" />
-        </svg>
-        Connected tenants
-      </router-link>
+
 
       <router-link
         :to="{ name: 'licence-statistics' }"

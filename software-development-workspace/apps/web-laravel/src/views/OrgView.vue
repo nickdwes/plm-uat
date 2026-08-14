@@ -850,9 +850,16 @@ async function saveReminder(): Promise<void> {
       <button :class="['tab', { active: tab === 'categories' }]"    @click="tab = 'categories'">Job Categories</button>
       <button :class="['tab', { active: tab === 'asset-categories' }]" @click="tab = 'asset-categories'; loadAssetCategories()">Asset Categories</button>
 
-      <button class="tab" @click="$router.push('/org/benefit-plans')">Benefit Plans</button>
-      <button class="tab" @click="$router.push('/leave/admin')">Leave Admin</button>
-      <button class="tab" @click="$router.push('/org/payroll-config')">Payroll Config</button>
+      <!--
+        These leave the page rather than switching a panel, so they are marked.
+        Styled identically to the tabs beside them they read as in-page, and the
+        back button then goes somewhere nobody expected.
+      -->
+      <button class="tab tab-away" @click="$router.push('/org/benefit-plans')">Benefit Plans <span aria-hidden="true">↗</span></button>
+      <button class="tab tab-away" @click="$router.push('/leave/admin')">Leave Admin <span aria-hidden="true">↗</span></button>
+      <button class="tab tab-away" @click="$router.push('/org/payroll-config')">Payroll Config <span aria-hidden="true">↗</span></button>
+      <button class="tab tab-away" @click="$router.push('/travel/settings')">Travel Config <span aria-hidden="true">↗</span></button>
+      <button class="tab tab-away" @click="$router.push('/integrations/connections')">Connected Tenants <span aria-hidden="true">↗</span></button>
     </div>
 
     <!-- ── PROFILE ──────────────────────────────────────────────────────────── -->
