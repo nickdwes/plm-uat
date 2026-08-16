@@ -199,6 +199,14 @@ class OrgManagementController extends Controller
             ],
             'description' => ['nullable', 'string', 'max:255'],
             'sort_order'  => ['nullable', 'integer', 'min:0', 'max:999'],
+            /*
+             * How this kind of thing is held: carried by a person, looked after
+             * by one, or consumed as seats. Absent before, so every category
+             * created on this screen silently defaulted to "carried" — and a
+             * new core-switch category would then have appeared in the assign
+             * picker, putting racked equipment on a leaver's checklist.
+             */
+            'custody_model' => ['nullable', Rule::in(AssetCategory::CUSTODY_MODELS)],
         ]);
 
         $category = AssetCategory::create($data + ['organization_id' => $orgId]);
@@ -215,6 +223,9 @@ class OrgManagementController extends Controller
             'description' => ['nullable', 'string', 'max:255'],
             'is_active'   => ['sometimes', 'boolean'],
             'sort_order'  => ['sometimes', 'integer', 'min:0', 'max:999'],
+            // Changeable after the fact: the 56 categories currently marked
+            // custodian were set by a migration, and nobody could correct one.
+            'custody_model' => ['sometimes', Rule::in(AssetCategory::CUSTODY_MODELS)],
         ]));
 
         return response()->json(['data' => $assetCategory->fresh()]);

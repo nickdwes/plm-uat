@@ -43,6 +43,16 @@ const searched = ref(false);
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 
+/*
+ * Set while `choose()` writes the name into the box.
+ *
+ * Without it the write trips the `term` watcher, which reopens the list and
+ * searches again for the name just picked — leaving "No active employee matches
+ * that" sitting under a successful selection whenever the full name is not
+ * itself a hit. The box being filled by a choice is not somebody typing.
+ */
+let selecting = false;
+
 async function run(q: string) {
   if (!currentOrgSlug.value) return;
   loading.value = true;
@@ -64,6 +74,7 @@ async function run(q: string) {
 
 // Debounced so a typed name is one request, not one per keystroke.
 watch(term, (q) => {
+  if (selecting) { selecting = false; return; }
   if (timer) clearTimeout(timer);
   if (chosen.value && q !== chosen.value.full_name) clear();
   if (q.trim().length < 2) { results.value = []; searched.value = false; return; }
@@ -72,9 +83,11 @@ watch(term, (q) => {
 });
 
 function choose(m: Match) {
+  selecting = true;
   chosen.value = m;
   term.value = m.full_name;
   open.value = false;
+  searched.value = false;
   emit("update:modelValue", m.id);
 }
 

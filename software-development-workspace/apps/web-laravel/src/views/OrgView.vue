@@ -25,16 +25,46 @@ const jobCategories = ref<JobCategory[]>([]);
 interface AssetCategory {
   id: number; asset_class: string; name: string;
   description: string | null; is_active: boolean;
+  /* assignee | custodian | none — see CUSTODY_MODELS. */
+  custody_model?: string;
 }
 
 const ASSET_CLASSES = [
   { key: "physical",     label: "Physical" },
   { key: "software",     label: "Software" },
   { key: "subscription", label: "Subscription" },
+  // Added when the cloud class was, and missed here — which left forty-four
+  // seeded categories invisible on the only screen that can edit them.
+  { key: "cloud",        label: "Cloud" },
+];
+
+/*
+ * Whether this kind of thing is carried by a person, looked after by one, or
+ * consumed as seats. Set per category because "cloud gets a custodian, physical
+ * gets an assignee" is wrong in both directions — a switch is physical and
+ * nobody takes it home.
+ */
+const CUSTODY_MODELS = [
+  { key: "assignee",  label: "Carried by a person", hint: "Handed over, signed for, returned when they leave." },
+  { key: "custodian", label: "Looked after",         hint: "Somebody is answerable; nothing is handed over." },
+  { key: "none",      label: "Seats",                hint: "Bought in quantity and allocated." },
 ];
 
 const assetCategories = ref<AssetCategory[]>([]);
-const acForm  = ref({ asset_class: "physical", name: "", description: "" });
+const acForm  = ref({ asset_class: "physical", name: "", description: "", custody_model: "assignee" });
+
+/*
+ * A sensible default for the class, still overridable.
+ *
+ * Cloud resources are looked after and seats are consumed; physical things are
+ * usually carried, and the exceptions — switches, servers, UPS units — are what
+ * the field is there to correct.
+ */
+function custodyDefaultFor(cls: string): string {
+  if (cls === "cloud") return "custodian";
+  if (cls === "software" || cls === "subscription") return "none";
+  return "assignee";
+}
 
 /**
  * What a particular kind of thing is worth capturing.
@@ -127,6 +157,19 @@ async function addAssetCategory(): Promise<void> {
 }
 
 /** Switching one off leaves history readable and takes it out of the picker. */
+/** Change how this kind of thing is held. */
+async function setCustody(c: AssetCategory, model: string) {
+  acError.value = "";
+  try {
+    await api("PUT", `/api/v1/org/asset-categories/${c.id}`, {
+      org: org(), body: { custody_model: model },
+    });
+    await loadAssetCategories();
+  } catch (e) {
+    acError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not change that.";
+  }
+}
+
 async function toggleAssetCategory(c: AssetCategory): Promise<void> {
   await api("PUT", `/api/v1/org/asset-categories/${c.id}`, {
     org: org(), body: { is_active: !c.is_active },
@@ -1024,11 +1067,20 @@ async function saveReminder(): Promise<void> {
           registers a monitor is how a register gets filled in wrongly.
         </p>
         <div class="form-row">
-          <select v-model="acForm.asset_class" class="input">
+          <select v-model="acForm.asset_class" class="input"
+                  @change="acForm.custody_model = custodyDefaultFor(acForm.asset_class)">
             <option v-for="c in ASSET_CLASSES" :key="c.key" :value="c.key">{{ c.label }}</option>
           </select>
           <input v-model="acForm.name" type="text" placeholder="Category name" class="input" />
           <input v-model="acForm.description" type="text" placeholder="What belongs here (optional)" class="input" />
+          <!--
+            Without this every category created here defaulted to "carried", so
+            a new core-switch category would have appeared in the assign picker
+            and put racked equipment on somebody's leaver checklist.
+          -->
+          <select v-model="acForm.custody_model" class="input" :title="CUSTODY_MODELS.find(m => m.key === acForm.custody_model)?.hint">
+            <option v-for="m in CUSTODY_MODELS" :key="m.key" :value="m.key">{{ m.label }}</option>
+          </select>
           <button class="btn btn-primary btn-sm" :disabled="saving || !acForm.name.trim()" @click="addAssetCategory">Add</button>
         </div>
         <p v-if="acError" class="ov-hint" style="color:var(--color-danger-text)">{{ acError }}</p>
@@ -1039,12 +1091,18 @@ async function saveReminder(): Promise<void> {
         <p v-if="!assetCategoriesIn(cls.key).length" class="ov-hint">Nothing configured for this class.</p>
         <table v-else class="ov-cat-table">
           <thead>
-            <tr><th>Category</th><th>What belongs here</th><th>In the picker</th><th></th></tr>
+            <tr><th>Category</th><th>What belongs here</th><th>Custody</th><th>In the picker</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="c in assetCategoriesIn(cls.key)" :key="c.id" :style="c.is_active ? '' : 'opacity:.55'">
               <td>{{ c.name }}</td>
               <td class="ov-cat-desc">{{ c.description ?? '—' }}</td>
+              <td>
+                <select class="input input-sm" :value="c.custody_model ?? 'assignee'"
+                        @change="setCustody(c, ($event.target as HTMLSelectElement).value)">
+                  <option v-for="m in CUSTODY_MODELS" :key="m.key" :value="m.key">{{ m.label }}</option>
+                </select>
+              </td>
               <td>
                 <!-- Switched off rather than deleted, so assets already filed
                      under it still read correctly. -->
