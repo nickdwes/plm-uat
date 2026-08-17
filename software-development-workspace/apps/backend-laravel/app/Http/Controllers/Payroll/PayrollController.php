@@ -6,7 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\PayrollPeriod;
 use App\Services\Payroll\PayrollService;
 use Illuminate\Http\JsonResponse;
+use App\Services\Payroll\PayslipPdf;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 
 class PayrollController extends Controller
 {
@@ -78,6 +80,37 @@ class PayrollController extends Controller
         $this->authorize('view', PayrollPeriod::class);
         $run = $this->service->getSlip($payrollPeriod, $employee);
         return response()->json($run);
+    }
+
+    /**
+     * The payslip as a PDF, always encrypted.
+     *
+     * There is no unprotected variant and no flag to request one — see
+     * PayslipPdf for why. A download and an email attachment are the same
+     * bytes from the same door.
+     */
+    public function slipPdf(int $payrollPeriod, int $employee, PayslipPdf $pdf): Response
+    {
+        $this->authorize('view', PayrollPeriod::class);
+
+        $run = $this->service->getSlip($payrollPeriod, $employee);
+
+        try {
+            $document = $pdf->render($run);
+        } catch (\RuntimeException $e) {
+            // Names the person and what is missing, because that is a record
+            // somebody can correct rather than a failure they must investigate.
+            abort(422, $e->getMessage());
+        }
+
+        return response($document['content'], 200, [
+            'Content-Type'        => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="' . $document['filename'] . '"',
+            // The hint travels in a header so a client can tell the recipient
+            // what to type without the password itself ever being sent.
+            'X-Payslip-Password-Hint' => $document['password_hint'],
+            'X-Content-Type-Options'  => 'nosniff',
+        ]);
     }
 
     // ── P9 ────────────────────────────────────────────────────────────────────

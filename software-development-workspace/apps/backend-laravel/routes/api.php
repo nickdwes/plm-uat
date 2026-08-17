@@ -879,11 +879,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{payrollPeriod}/approve',             [PayrollController::class, 'approve']);
         Route::post('/{payrollPeriod}/mark-paid',           [PayrollController::class, 'markPaid']);
         Route::get('/{payrollPeriod}/slip/{employee}',      [PayrollController::class, 'slip']);
+        // Always encrypted; there is no unprotected route to these bytes.
+        Route::get('/{payrollPeriod}/slip/{employee}/pdf',  [PayrollController::class, 'slipPdf']);
     });
 
     // ── Payroll Configuration ─────────────────────────────────────────────────
     Route::prefix('payroll-config')->group(function () {
         Route::get('/',                                         [PayrollConfigController::class, 'index']);
+        // How payslips are locked. There is no switch for whether.
+        Route::get('/document-settings',                        [PayrollConfigController::class, 'documentSettings']);
+        Route::put('/document-settings',                        [PayrollConfigController::class, 'updateDocumentSettings']);
         Route::put('/tax-bands',                                [PayrollConfigController::class, 'updateTaxBands']);
         Route::put('/statutory-rates',                          [PayrollConfigController::class, 'updateStatutoryRates']);
         Route::post('/earning-codes',                           [PayrollConfigController::class, 'storeEarningCode']);

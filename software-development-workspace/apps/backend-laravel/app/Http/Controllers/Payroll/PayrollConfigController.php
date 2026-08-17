@@ -7,7 +7,10 @@ use App\Models\PayrollPeriod;
 use App\Models\PayrollConfigStatutoryRate;
 use App\Models\PayrollConfigTaxBand;
 use App\Models\PayrollDeductionCode;
+use App\Models\PayrollDocumentSetting;
 use App\Models\PayrollEarningCode;
+use App\Models\Employee;
+use App\Services\Payroll\PayslipPdf;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -22,6 +25,77 @@ class PayrollConfigController extends Controller
     // ── GET /api/v1/payroll-config ────────────────────────────────────────────
     // Returns full config for the current org. If no config exists, returns
     // the built-in Kenya 2025/2026 defaults so the UI can pre-populate.
+
+    /**
+     * How payslips are locked, and with what.
+     *
+     * There is deliberately no "protected" switch to return: the only question
+     * this answers is what the password is derived from.
+     */
+    public function documentSettings(): JsonResponse
+    {
+        $this->authorizeConfig();
+
+        $settings = PayrollDocumentSetting::forOrganization(app('current.organization_id'));
+
+        return response()->json([
+            'data'    => $settings,
+            'sources' => PayrollDocumentSetting::SOURCES,
+            'cases'   => PayrollDocumentSetting::CASES,
+            'summary' => $settings->describe(),
+            /*
+             * Who could not be sent one today. Answered here rather than at
+             * send time so a missing ID is a row somebody fixes now, not a run
+             * that stops halfway with half the company paid and half not.
+             */
+            'unreachable' => $this->unreachable($settings),
+        ]);
+    }
+
+    public function updateDocumentSettings(Request $request, PayslipPdf $pdf): JsonResponse
+    {
+        $this->authorizeConfig();
+
+        $sources = array_keys(PayrollDocumentSetting::SOURCES);
+
+        $data = $request->validate([
+            'password_source'          => ['required', Rule::in($sources)],
+            // Null is allowed: an organisation may insist on one source and
+            // would rather a payslip be held back than sent under another.
+            'password_fallback_source' => ['nullable', Rule::in($sources)],
+            'password_prefix'          => ['nullable', 'string', 'max:16'],
+            'password_suffix'          => ['nullable', 'string', 'max:16'],
+            'password_case'            => ['required', Rule::in(PayrollDocumentSetting::CASES)],
+            'allow_print'              => ['boolean'],
+            'allow_copy'               => ['boolean'],
+        ]);
+
+        $settings = PayrollDocumentSetting::forOrganization(app('current.organization_id'));
+        $settings->update($data);
+
+        return response()->json([
+            'data'        => $settings->fresh(),
+            'summary'     => $settings->fresh()->describe(),
+            'unreachable' => $this->unreachable($settings->fresh()),
+        ]);
+    }
+
+    /** Active employees for whom no password could be built under these settings. */
+    private function unreachable(PayrollDocumentSetting $settings): array
+    {
+        $pdf = app(PayslipPdf::class);
+
+        return Employee::withoutGlobalScope('organization')
+            ->where('primary_organization_id', $settings->organization_id)
+            ->where('status', 'active')
+            ->get(['id', 'first_name', 'last_name', 'employee_number', 'national_id', 'tax_id', 'date_of_birth'])
+            ->reject(fn (Employee $e) => $pdf->canDeriveFor($e, $settings))
+            ->map(fn (Employee $e) => [
+                'id'              => $e->id,
+                'name'            => $e->full_name,
+                'employee_number' => $e->employee_number,
+            ])->values()->all();
+    }
 
     public function index(): JsonResponse
     {

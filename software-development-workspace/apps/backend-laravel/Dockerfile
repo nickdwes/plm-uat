@@ -53,7 +53,11 @@ COPY composer.json composer.lock ./
 RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
     && php composer-setup.php --install-dir=/usr/local/bin --filename=composer \
     && rm composer-setup.php \
-    && composer install --no-dev --no-scripts --no-autoloader --prefer-dist
+    # `auto` rather than `--prefer-dist`: the latter explicitly disables source
+    # fallback, so a rate-limited dist download from GitHub fails the whole
+    # build instead of cloning the package instead. That is how adding one
+    # dependency broke every image build until the limit cleared.
+    && composer install --no-dev --no-scripts --no-autoloader --prefer-install=auto
 
 # Copy application source
 COPY . .
