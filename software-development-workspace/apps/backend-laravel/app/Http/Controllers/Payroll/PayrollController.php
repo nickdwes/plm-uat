@@ -45,7 +45,12 @@ class PayrollController extends Controller
     {
         $this->authorize('view', PayrollPeriod::class);
         $period = $this->service->getPeriod($payrollPeriod);
-        return response()->json($period);
+
+        return response()->json([
+            // Built from the configuration the period was computed under, so a
+            // payslip can never describe a calculation nobody performed.
+            'rates' => $this->service->rateLabelsFor($period),
+        ] + $period->toArray());
     }
 
     /** POST /api/v1/payroll/{payrollPeriod}/process */

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { api, ApiError } from "../lib/api";
-import { currentOrgSlug } from "../stores/auth";
+import { currentOrgSlug, getToken } from "../stores/auth";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Period {
@@ -60,6 +60,52 @@ const actionError = ref("");
 const showSlip = ref(false);
 const slipRun  = ref<Run | null>(null);
 
+/*
+ * Deduction labels, built server-side from the rates the period was computed
+ * under. They used to be typed into the template — "first KES 7,000", "next
+ * KES 29,000" — and the moment the NSSF limits were corrected the payslip
+ * described a calculation nobody had performed.
+ */
+const rates = ref<Record<string, any>>({});
+const slipDownloading = ref(false);
+const slipError = ref("");
+
+/**
+ * The PDF, which is encrypted before it exists.
+ *
+ * Fetched rather than linked so the 422 naming an employee with no ID on file
+ * is shown here, instead of the browser opening a blank tab.
+ */
+async function downloadSlip(): Promise<void> {
+  if (!slipRun.value || !selectedPeriod.value) return;
+  slipDownloading.value = true; slipError.value = "";
+  try {
+    const res = await fetch(
+      `${import.meta.env.VITE_LARAVEL_API_URL ?? ""}/api/v1/payroll/${selectedPeriod.value.id}`
+      + `/slip/${slipRun.value.employee_id}/pdf?org=${org() ?? ""}`,
+      { headers: { Authorization: `Bearer ${getToken() ?? ""}`, "X-Organization": org() ?? "" } },
+    );
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      slipError.value = body.message ?? "Could not build the payslip.";
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Payslip-${slipRun.value.employee?.full_name ?? "employee"}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    slipError.value = "Could not reach the server.";
+  } finally {
+    slipDownloading.value = false;
+  }
+}
+
 function org(): string | null { return currentOrgSlug.value; }
 
 // ── Formatting ─────────────────────────────────────────────────────────────────
@@ -94,7 +140,11 @@ async function loadPeriods(page = 1): Promise<void> {
 async function loadDetail(id: number): Promise<void> {
   detailLoading.value = true;
   try {
-    selectedPeriod.value = await api<PeriodDetail>("GET", `/api/v1/payroll/${id}`, { org: org() });
+    const detail = await api<PeriodDetail & { rates?: Record<string, any> }>(
+      "GET", `/api/v1/payroll/${id}`, { org: org() },
+    );
+    selectedPeriod.value = detail;
+    rates.value = detail.rates ?? {};
   } catch { /* silent */ }
   finally { detailLoading.value = false; }
 }
@@ -152,7 +202,9 @@ async function doAction(url: string, msg: string): Promise<void> {
   } catch (e) { actionError.value = e instanceof Error ? e.message : "Failed."; }
 }
 
-function openSlip(run: Run): void { slipRun.value = run; showSlip.value = true; }
+function openSlip(run: Run): void {
+  slipRun.value = run; showSlip.value = true; slipError.value = "";
+}
 
 // ── Summary ────────────────────────────────────────────────────────────────────
 const runsSummary = computed(() => {
@@ -186,7 +238,7 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
     <div class="pr-header">
       <div>
         <h2 class="pr-title">Payroll</h2>
-        <p class="pr-subtitle">Kenya statutory deductions — PAYE · SHIF · NSSF · Housing Levy · NITA</p>
+        <p class="pr-subtitle">Kenya statutory deductions — PAYE · SHIF · NSSF · Housing Levy</p>
       </div>
       <button class="btn btn-primary btn-sm" @click="showCreate = !showCreate">
         {{ showCreate ? "✕ Cancel" : "+ New Period" }}
@@ -314,7 +366,6 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
                 <th class="text-right">NSSF T1</th>
                 <th class="text-right">NSSF T2</th>
                 <th class="text-right">Hsg Levy</th>
-                <th class="text-right">NITA</th>
                 <th class="text-right">Net Pay</th>
                 <th>Status</th>
                 <th></th>
@@ -334,7 +385,6 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
                 <td class="text-right pr-num pr-deduct">{{ fmt(r.nssf_tier1) }}</td>
                 <td class="text-right pr-num pr-deduct">{{ fmt(r.nssf_tier2) }}</td>
                 <td class="text-right pr-num pr-deduct">{{ fmt(r.housing_levy) }}</td>
-                <td class="text-right pr-num pr-deduct">{{ fmt(r.nita) }}</td>
                 <td class="text-right pr-num pr-net">{{ fmt(r.net_pay) }}</td>
                 <td><span :class="['badge', statusBadge(r.status)]">{{ r.status }}</span></td>
                 <td>
@@ -499,11 +549,19 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
                   </td>
                   <td class="text-right">{{ fmt(slipRun.paye_payable) }}</td>
                 </tr>
-                <tr><td>SHIF (2.75% of gross)</td><td class="text-right">{{ fmt(slipRun.shif) }}</td></tr>
-                <tr><td>NSSF Tier I (6% of first KES 7,000)</td><td class="text-right">{{ fmt(slipRun.nssf_tier1) }}</td></tr>
-                <tr><td>NSSF Tier II (6% of next KES 29,000)</td><td class="text-right">{{ fmt(slipRun.nssf_tier2) }}</td></tr>
-                <tr><td>Affordable Housing Levy (1.5%)</td><td class="text-right">{{ fmt(slipRun.housing_levy) }}</td></tr>
-                <tr><td>NITA</td><td class="text-right">{{ fmt(slipRun.nita) }}</td></tr>
+                <tr><td>{{ rates.shif ?? 'SHIF' }}</td><td class="text-right">{{ fmt(slipRun.shif) }}</td></tr>
+                <tr><td>{{ rates.nssf_tier1 ?? 'NSSF Tier I' }}</td><td class="text-right">{{ fmt(slipRun.nssf_tier1) }}</td></tr>
+                <tr v-if="Number(slipRun.nssf_tier2) > 0">
+                  <td>{{ rates.nssf_tier2 ?? 'NSSF Tier II' }}</td><td class="text-right">{{ fmt(slipRun.nssf_tier2) }}</td></tr>
+                <tr><td>{{ rates.housing_levy ?? 'Affordable Housing Levy' }}</td><td class="text-right">{{ fmt(slipRun.housing_levy) }}</td></tr>
+                <!--
+                  NITA appears only where the organisation has chosen to pass it
+                  on. It is the employer's levy, and a line for money the
+                  employee did not pay starts an argument it cannot settle.
+                -->
+                <tr v-if="rates.nita_on_employee">
+                  <td>NITA training levy</td><td class="text-right">{{ fmt(slipRun.nita) }}</td>
+                </tr>
                 <tr class="pr-slip-total">
                   <td>Total Deductions</td><td class="text-right">KES {{ fmt(slipRun.total_deductions) }}</td>
                 </tr>
@@ -513,6 +571,23 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
             <div class="pr-slip-net">
               <span>NET PAY</span>
               <span>KES {{ fmt(slipRun.net_pay) }}</span>
+            </div>
+
+            <!-- Employer cost, kept clear of the deductions above: it is what
+                 the statutory returns are filed on, not money off this payslip. -->
+            <p v-if="!rates.nita_on_employee && Number(slipRun.nita) > 0" class="pr-slip-meta" style="margin-top:10px">
+              {{ rates.nita ?? 'NITA training levy (employer)' }}: KES {{ fmt(slipRun.nita) }} —
+              paid by the company, not deducted from this payslip.
+            </p>
+
+            <p v-if="slipError" class="error" style="margin-top:12px">{{ slipError }}</p>
+
+            <div class="pr-slip-actions">
+              <button class="btn btn-primary btn-sm" :disabled="slipDownloading" @click="downloadSlip">
+                {{ slipDownloading ? "Preparing…" : "Download PDF" }}
+              </button>
+              <!-- Says what to type, never the password itself. -->
+              <span class="pr-slip-meta">Opens with the employee's national ID.</span>
             </div>
           </div>
         </div>
@@ -533,6 +608,8 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
 
 /* Card */
 .pr-card { background: #fff; border-radius: 10px; border: 1px solid var(--color-border); padding: 20px; }
+.pr-slip-actions { display: flex; align-items: center; gap: 12px; margin-top: 18px;
+  padding-top: 14px; border-top: 1px solid var(--color-border); }
 .pr-card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0 0 14px; }
 .req { color: var(--red); }
 

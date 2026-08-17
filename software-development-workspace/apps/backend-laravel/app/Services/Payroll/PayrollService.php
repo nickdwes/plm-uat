@@ -50,6 +50,41 @@ class PayrollService extends BaseService
         ])->findOrFail($periodId);
     }
 
+    /**
+     * The rates this period was computed under, described for a payslip.
+     *
+     * The screen used to spell them out by hand — "first KES 7,000", "next KES
+     * 29,000" — and the moment the limits were corrected the payslip described
+     * a calculation nobody had performed. A number typed into a label is a
+     * number that goes stale silently, so the labels are built from the same
+     * configuration the arithmetic used.
+     */
+    public function rateLabelsFor(PayrollPeriod $period): array
+    {
+        $config = $this->loadPayrollConfig($period->organization_id, $period);
+
+        $money = fn ($v) => number_format((float) $v, 0);
+        $pct   = fn ($v) => rtrim(rtrim(number_format((float) $v, 2), '0'), '.');
+
+        $tier1 = (float) ($config['nssf_tier1_ceiling'] ?? 8000);
+        $tier2 = (float) ($config['nssf_tier2_ceiling'] ?? 72000);
+        $nssf  = (float) ($config['nssf_employee_rate'] ?? 6);
+
+        return [
+            'shif'         => 'SHIF (' . $pct($config['shif_rate'] ?? 2.75) . '% of gross)',
+            'nssf_tier1'   => 'NSSF Tier I (' . $pct($nssf) . '% of first KES ' . $money($tier1) . ')',
+            'nssf_tier2'   => 'NSSF Tier II (' . $pct($nssf) . '% of the next KES ' . $money($tier2 - $tier1) . ')',
+            'housing_levy' => 'Affordable Housing Levy (' . $pct($config['housing_levy_employee_rate'] ?? 1.5) . '%)',
+            /*
+             * Shown apart from the deductions because it is not one. The levy
+             * is the employer's, and a payslip line for money the employee did
+             * not pay starts an argument it cannot settle.
+             */
+            'nita'         => 'NITA training levy (employer)',
+            'nita_on_employee' => (int) ($config['nita_on_employee'] ?? 0) === 1,
+        ];
+    }
+
     // ── Process ───────────────────────────────────────────────────────────────
 
     /**
@@ -187,7 +222,14 @@ class PayrollService extends BaseService
                 ],
                 'months'           => $empRuns->count(),
                 'gross_pay'        => (float) $empRuns->sum('gross_pay'),
-                'taxable_income'   => (float) $empRuns->sum(fn ($r) => $r->gross_pay - $r->nssf_tier1 - $r->nssf_tier2),
+                /*
+                 * The figure the tax was charged on. Older runs predate the
+                 * column and fall back to the arithmetic in force when they
+                 * were computed, which is what their PAYE was derived from.
+                 */
+                'taxable_income'   => (float) $empRuns->sum(
+                    fn ($r) => $r->taxable_income ?? ($r->gross_pay - $r->nssf_tier1 - $r->nssf_tier2),
+                ),
                 'paye'             => (float) $empRuns->sum('paye'),
                 'personal_relief'  => (float) $empRuns->sum('personal_relief'),
                 'insurance_relief' => (float) $empRuns->sum('insurance_relief'),
@@ -244,6 +286,10 @@ class PayrollService extends BaseService
         $netPay = max(0, $gross - $totalDeductions);
 
         $attributes = [
+            // Stored, not recomputed: the P9 used to derive its own and drifted
+            // from the PAYE beside it the moment the rules changed.
+            'taxable_income'       => $stat['taxable_income'],
+            'allowable_deductions' => $stat['allowable_deductions'],
             'basic_salary'      => $basic,
             'house_allowance'   => $house,
             'transport_allowance' => $transport,

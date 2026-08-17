@@ -20,6 +20,10 @@ class PayrollRun extends Model
         'transport_allowance',
         'other_earnings',
         'gross_pay',
+        // Written once by the engine and read everywhere after — the P9 used
+        // to derive its own and drifted from the PAYE beside it.
+        'taxable_income',
+        'allowable_deductions',
         'paye',
         'shif',
         'nssf_tier1',
