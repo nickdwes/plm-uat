@@ -34,7 +34,7 @@ class PayrollConfigController extends Controller
      */
     public function documentSettings(): JsonResponse
     {
-        $this->authorizeConfig();
+        $this->authorize('viewConfig', PayrollPeriod::class);
 
         $settings = PayrollDocumentSetting::forOrganization(app('current.organization_id'));
 
@@ -52,9 +52,9 @@ class PayrollConfigController extends Controller
         ]);
     }
 
-    public function updateDocumentSettings(Request $request, PayslipPdf $pdf): JsonResponse
+    public function updateDocumentSettings(Request $request): JsonResponse
     {
-        $this->authorizeConfig();
+        $this->authorize('manageConfig', PayrollPeriod::class);
 
         $sources = array_keys(PayrollDocumentSetting::SOURCES);
 
@@ -119,13 +119,24 @@ class PayrollConfigController extends Controller
             ->get()
             ->keyBy('param_key');
 
-        // Build rate map — DB values override defaults
+        /*
+         * Build the rate map — configured values over defaults.
+         *
+         * The lookups tolerate a missing entry rather than throwing. Three
+         * parallel lists have to agree here — PARAM_KEYS, DEFAULTS and
+         * DESCRIPTIONS — and nothing enforces that they do: adding a key to one
+         * and not the others is exactly what took this screen down with
+         * "Undefined array key". A rate with no description is a cosmetic
+         * problem; a 500 on the configuration page is not.
+         */
         $rates = [];
         foreach (PayrollConfigStatutoryRate::PARAM_KEYS as $key) {
             $rates[$key] = [
                 'param_key'      => $key,
-                'value'          => isset($rateRows[$key]) ? (float) $rateRows[$key]->value : PayrollConfigStatutoryRate::DEFAULTS[$key],
-                'description'    => PayrollConfigStatutoryRate::DESCRIPTIONS[$key],
+                'value'          => isset($rateRows[$key])
+                    ? (float) $rateRows[$key]->value
+                    : (float) (PayrollConfigStatutoryRate::DEFAULTS[$key] ?? 0),
+                'description'    => PayrollConfigStatutoryRate::DESCRIPTIONS[$key] ?? $key,
                 'effective_date' => isset($rateRows[$key]) ? $rateRows[$key]->effective_date?->toDateString() : null,
                 'from_db'        => isset($rateRows[$key]),
             ];

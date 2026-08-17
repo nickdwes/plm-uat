@@ -48,13 +48,25 @@ class PayrollConfigStatutoryRate extends Model
         'shif_rate'                   => 2.75,  // percent
         'shif_min'                    => 0,
         'shif_max'                    => 0,     // 0 = no cap
-        'nssf_tier1_ceiling'          => 7000,
-        'nssf_tier2_ceiling'          => 36000,
+        // NSSF Act 2013 as in force from February 2025. The old 7,000 and
+        // 36,000 were the year-two limits and sat here two years out of date.
+        'nssf_tier1_ceiling'          => 8000,
+        'nssf_tier2_ceiling'          => 72000,
         'nssf_employee_rate'          => 6,     // percent
         'nssf_employer_rate'          => 6,     // percent
         'housing_levy_employee_rate'  => 1.5,   // percent
         'housing_levy_employer_rate'  => 1.5,   // percent
         'nita_amount'                 => 50,
+        /*
+         * The training levy is the employer's, so nought. Every key in
+         * PARAM_KEYS needs an entry here — the configuration screen reads both
+         * lists together, and adding to one without the other is what made it
+         * 500 on "Undefined array key".
+         */
+        'nita_on_employee'            => 0,
+        'pension_relief_max'          => 30000,
+        'post_retirement_medical_max' => 15000,
+        'mortgage_interest_max'       => 30000,
     ];
 
     public const DESCRIPTIONS = [
@@ -71,7 +83,11 @@ class PayrollConfigStatutoryRate extends Model
         'housing_levy_employee_rate'  => 'Housing Levy employee rate (%)',
         'housing_levy_employer_rate'  => 'Housing Levy employer rate (%)',
         'nita_amount'                 => 'NITA flat levy per employee per month (KES)',
-    ];
+            'nita_on_employee'            => 'Pass the NITA levy on to the employee (1 = yes, 0 = employer pays)',
+        'pension_relief_max'          => 'Pension contribution allowed before PAYE, monthly cap (KES)',
+        'post_retirement_medical_max' => 'Post-retirement medical fund allowed before PAYE, monthly cap (KES)',
+        'mortgage_interest_max'       => 'Mortgage interest allowed before PAYE, monthly cap (KES)',
+];
 
     protected $fillable = [
         'organization_id',

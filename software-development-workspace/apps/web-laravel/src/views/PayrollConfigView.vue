@@ -8,11 +8,58 @@ const router = useRouter();
 const org = () => currentOrgSlug.value!;
 
 // ── UI State ─────────────────────────────────────────────────────────────────
-const tab     = ref<"bands" | "rates" | "earnings" | "deductions">("bands");
+const tab     = ref<"bands" | "rates" | "earnings" | "deductions" | "documents">("bands");
 const loading = ref(false);
 const saving  = ref(false);
 const error   = ref("");
 const success  = ref("");
+
+const docs        = ref<DocumentSettings | null>(null);
+const docSources  = ref<Record<string, string>>({});
+const docCases    = ref<string[]>([]);
+const docSummary  = ref("");
+/*
+ * Employees for whom no password could be built. Answered here rather than at
+ * send time, because a missing ID is a record somebody fixes in a minute — and
+ * finding out mid-run means half the company paid and half not.
+ */
+const unreachable = ref<{ id: number; name: string; employee_number: string }[]>([]);
+
+async function loadDocuments(): Promise<void> {
+  try {
+    const res = await api<{
+      data: DocumentSettings; sources: Record<string, string>; cases: string[];
+      summary: string; unreachable: typeof unreachable.value;
+    }>("GET", "/api/v1/payroll-config/document-settings", { org: org() });
+    docs.value = res.data;
+    docSources.value = res.sources;
+    docCases.value = res.cases;
+    docSummary.value = res.summary;
+    unreachable.value = res.unreachable ?? [];
+  } catch (e) {
+    error.value = "Could not load payslip security settings.";
+  }
+}
+
+async function saveDocuments(): Promise<void> {
+  if (!docs.value) return;
+  saving.value = true; error.value = "";
+  try {
+    const res = await api<{ data: DocumentSettings; summary: string; unreachable: typeof unreachable.value }>(
+      "PUT", "/api/v1/payroll-config/document-settings", { org: org(), body: docs.value },
+    );
+    docs.value = res.data;
+    docSummary.value = res.summary;
+    unreachable.value = res.unreachable ?? [];
+    showSuccess("Payslip security saved.");
+  } catch (e) {
+    error.value = "Could not save. Check the fields and try again.";
+  } finally { saving.value = false; }
+}
+
+const caseLabels: Record<string, string> = {
+  upper: "Capitals", lower: "Lower case", as_recorded: "Exactly as recorded",
+};
 
 function showSuccess(msg: string) {
   success.value = msg;
@@ -27,6 +74,20 @@ interface TaxBand {
 interface StatutoryRate {
   param_key: string; value: number; description: string; effective_date: string | null; from_db: boolean;
 }
+/*
+ * How payslips are locked. There is deliberately no "protected" switch: the
+ * only question is what the password is derived from.
+ */
+interface DocumentSettings {
+  password_source: string;
+  password_fallback_source: string | null;
+  password_prefix: string | null;
+  password_suffix: string | null;
+  password_case: string;
+  allow_print: boolean;
+  allow_copy: boolean;
+}
+
 interface EarningCode {
   id?: number; code: string; name: string;
   is_taxable: boolean; is_pensionable: boolean; is_shif_applicable: boolean; is_nssf_applicable: boolean; is_active: boolean;
@@ -69,7 +130,7 @@ async function load() {
   }
 }
 
-onMounted(load);
+onMounted(() => { void load(); void loadDocuments(); });
 
 // ── Seed Defaults ─────────────────────────────────────────────────────────────
 const seeding = ref(false);
@@ -268,6 +329,7 @@ function formatRate(r: StatutoryRate) {
         <button :class="['pc-tab', { active: tab === 'rates' }]"      @click="tab = 'rates'">Statutory Rates</button>
         <button :class="['pc-tab', { active: tab === 'earnings' }]"   @click="tab = 'earnings'">Earning Codes</button>
         <button :class="['pc-tab', { active: tab === 'deductions' }]" @click="tab = 'deductions'">Check-off Codes</button>
+        <button :class="['pc-tab', { active: tab === 'documents' }]"  @click="tab = 'documents'">Payslip Security</button>
       </div>
 
       <!-- ══ PAYE TAX BANDS ══ -->
@@ -366,6 +428,104 @@ function formatRate(r: StatutoryRate) {
 
         <div class="pc-table-footer" style="margin-top:24px">
           <button class="btn-primary" :disabled="saving" @click="saveRates">{{ saving ? "Saving…" : "Save Statutory Rates" }}</button>
+        </div>
+      </div>
+
+      <!-- ══ PAYSLIP SECURITY ══ -->
+      <div v-if="tab === 'documents' && docs" class="pc-card">
+        <div class="pc-card-header">
+          <div>
+            <h2 class="pc-card-title">Payslip Security</h2>
+            <!--
+              No "protect payslips" switch, on purpose. A payslip carries a
+              salary, a tax number and bank details, goes to a personal address
+              and is forwarded from there — so the only question is what the
+              password is, never whether there is one.
+            -->
+            <p class="pc-card-sub">
+              Every payslip PDF is encrypted, whether downloaded or emailed. These settings
+              decide what opens it. Where no password can be built the payslip is held back
+              rather than sent unlocked.
+            </p>
+          </div>
+        </div>
+
+        <div class="pc-rate-grid">
+          <div class="pc-rate-item">
+            <label class="pc-rate-label">Password from</label>
+            <p class="pc-rate-desc">Something the employee already knows without being told.</p>
+            <select v-model="docs.password_source" class="pc-input">
+              <option v-for="(label, key) in docSources" :key="key" :value="key">{{ label }}</option>
+            </select>
+          </div>
+
+          <div class="pc-rate-item">
+            <label class="pc-rate-label">If that is missing</label>
+            <p class="pc-rate-desc">
+              Records are incomplete in practice. Leave blank to hold the payslip back
+              instead of falling to a second source.
+            </p>
+            <select v-model="docs.password_fallback_source" class="pc-input">
+              <option :value="null">Hold the payslip back</option>
+              <option v-for="(label, key) in docSources" :key="key" :value="key">{{ label }}</option>
+            </select>
+          </div>
+
+          <div class="pc-rate-item">
+            <label class="pc-rate-label">Prefix</label>
+            <p class="pc-rate-desc">Optional, e.g. KNS-</p>
+            <input v-model="docs.password_prefix" type="text" maxlength="16" class="pc-input" />
+          </div>
+
+          <div class="pc-rate-item">
+            <label class="pc-rate-label">Suffix</label>
+            <p class="pc-rate-desc">Optional.</p>
+            <input v-model="docs.password_suffix" type="text" maxlength="16" class="pc-input" />
+          </div>
+
+          <div class="pc-rate-item">
+            <label class="pc-rate-label">Letter case</label>
+            <p class="pc-rate-desc">People type what they were told, so pick one and keep it.</p>
+            <select v-model="docs.password_case" class="pc-input">
+              <option v-for="c in docCases" :key="c" :value="c">{{ caseLabels[c] ?? c }}</option>
+            </select>
+          </div>
+
+          <div class="pc-rate-item">
+            <label class="pc-rate-label">Once open, they may</label>
+            <p class="pc-rate-desc">
+              A payslip goes to landlords and banks, so printing is usually wanted;
+              copying text out of it usually is not.
+            </p>
+            <label class="pc-check"><input v-model="docs.allow_print" type="checkbox" /> Print it</label>
+            <label class="pc-check"><input v-model="docs.allow_copy" type="checkbox" /> Copy text from it</label>
+          </div>
+        </div>
+
+        <!-- What a covering email may say. Never the password itself. -->
+        <p class="pc-summary">
+          Payslips will open with: <strong>{{ docSummary }}</strong>
+        </p>
+
+        <!--
+          The list worth having. A payslip that cannot be built is a record
+          somebody corrects now, not a run that stops halfway.
+        -->
+        <div v-if="unreachable.length" class="pc-warn">
+          <strong>{{ unreachable.length }}</strong>
+          {{ unreachable.length === 1 ? "employee has" : "employees have" }}
+          nothing to build a password from and would be held back:
+          <ul class="pc-warn-list">
+            <li v-for="u in unreachable" :key="u.id">{{ u.name }} ({{ u.employee_number }})</li>
+          </ul>
+          Add the missing detail on their record before sending.
+        </div>
+        <p v-else class="pc-ok">Every active employee can be sent a payslip.</p>
+
+        <div class="pc-table-footer" style="margin-top:24px">
+          <button class="btn-primary" :disabled="saving" @click="saveDocuments">
+            {{ saving ? "Saving…" : "Save Payslip Security" }}
+          </button>
         </div>
       </div>
 
