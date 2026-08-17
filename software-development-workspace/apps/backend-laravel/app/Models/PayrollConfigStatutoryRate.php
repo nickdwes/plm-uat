@@ -27,6 +27,17 @@ class PayrollConfigStatutoryRate extends Model
         'housing_levy_employee_rate',
         'housing_levy_employer_rate',
         'nita_amount',
+        /*
+         * 1 to take the industrial training levy off the employee, 0 to leave
+         * it as the employer's — which is what the law says and the default.
+         * A flag rather than a word because `value` is a decimal column, and
+         * bending it to hold text would break every other reader.
+         */
+        'nita_on_employee',
+        // Monthly caps on what may be set against income before PAYE.
+        'pension_relief_max',
+        'post_retirement_medical_max',
+        'mortgage_interest_max',
     ];
 
     // Kenya 2025/2026 defaults (used if no DB config exists)

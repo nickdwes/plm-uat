@@ -232,14 +232,14 @@ class PayrollService extends BaseService
         $gross += $adhocEarnings;
 
         // Run Kenya statutory engine with org-specific config (falls back to hardcoded defaults if none set)
-        $stat = KenyaStatutoryEngine::compute($gross, $insurance, $this->loadPayrollConfig($period->organization_id));
+        $stat = KenyaStatutoryEngine::compute($gross, $insurance, $this->loadPayrollConfig($period->organization_id, $period));
 
-        $totalDeductions = $stat['paye_payable']
-            + $stat['shif']
-            + $stat['nssf_total']
-            + $stat['housing_levy']
-            + $stat['nita']
-            + $adhocDeductions;
+        /*
+         * The engine decides what comes off the payslip — NITA is the
+         * employer's unless configured otherwise, and adding it here was what
+         * made every net pay fifty shillings light.
+         */
+        $totalDeductions = $stat['employee_deductions'] + $adhocDeductions;
 
         $netPay = max(0, $gross - $totalDeductions);
 
@@ -290,27 +290,47 @@ class PayrollService extends BaseService
      * Load org-specific payroll config from DB for the engine.
      * Returns [] if no config is set, so the engine uses its hardcoded Kenya defaults.
      */
-    private function loadPayrollConfig(int $organizationId): array
+    /**
+     * The rates in force for the month being run.
+     *
+     * Both selections used to ignore the period entirely: statutory rates were
+     * loaded with `get()->keyBy('param_key')`, which silently keeps whichever
+     * row the database returned last once a key has more than one dated
+     * version — and having more than one is the entire point of the table.
+     * Tax bands were chosen by `now()`, so reprocessing a January period in
+     * March taxed it at March's bands.
+     *
+     * Rates are picked by the period's start date instead. A correction made
+     * today therefore applies to the months it was made for and leaves earlier
+     * payslips alone, which is the only behaviour that survives an audit.
+     */
+    private function loadPayrollConfig(int $organizationId, ?PayrollPeriod $period = null): array
     {
+        $asOf = $period?->start_date ?? now();
         $config = [];
 
         $rates = PayrollConfigStatutoryRate::where('organization_id', $organizationId)
-            ->get()->keyBy('param_key');
+            ->whereDate('effective_date', '<=', $asOf)
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhereDate('expires_at', '>=', $asOf))
+            // Latest effective row first, so the first one seen for a key wins.
+            ->orderByDesc('effective_date')
+            ->get();
 
-        foreach (PayrollConfigStatutoryRate::PARAM_KEYS as $key) {
-            if (isset($rates[$key])) {
-                $config[$key] = (float) $rates[$key]->value;
+        foreach ($rates as $rate) {
+            if (! array_key_exists($rate->param_key, $config)) {
+                $config[$rate->param_key] = is_numeric($rate->value)
+                    ? (float) $rate->value
+                    : $rate->value;
             }
         }
 
-        $year = (int) now()->format('Y');
         $taxBands = PayrollConfigTaxBand::where('organization_id', $organizationId)
-            ->where('tax_year', $year)
+            ->where('tax_year', (int) \Carbon\CarbonImmutable::parse($asOf)->format('Y'))
             ->orderBy('band_order')
             ->get();
 
         if ($taxBands->isNotEmpty()) {
-            $config['tax_bands'] = $taxBands->map(fn($b) => [
+            $config['tax_bands'] = $taxBands->map(fn ($b) => [
                 'lower_limit' => (float) $b->lower_limit,
                 'upper_limit' => $b->upper_limit !== null ? (float) $b->upper_limit : null,
                 'rate'        => (float) $b->rate,
