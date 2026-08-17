@@ -8,7 +8,7 @@
     "require": {
         "php": "^8.2",
         "azure-oss/storage-blob-flysystem": "^2.2",
-        "laravel/framework": "^11.31",
+        "laravel/framework": "^12.61.1",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^2.9",
         "mpdf/mpdf": "^8.3",
