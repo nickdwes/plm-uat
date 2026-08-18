@@ -12,6 +12,9 @@ interface Run {
   id: number; employee_id: number; status: string;
   basic_salary: number; house_allowance: number; transport_allowance: number;
   other_earnings: number; gross_pay: number; total_deductions: number;
+  // Paid, but outside the statutory base — kept apart so gross_pay stays the
+  // figure the engine taxed and the P9 reports.
+  non_taxable_earnings: number;
   paye: number; shif: number; nssf_tier1: number; nssf_tier2: number;
   housing_levy: number; nita: number; personal_relief: number;
   insurance_relief: number; paye_payable: number; net_pay: number;
@@ -267,6 +270,129 @@ async function doAction(url: string, msg: string): Promise<void> {
   } catch (e) { actionError.value = e instanceof Error ? e.message : "Failed."; }
 }
 
+/*
+ * Ad-hoc lines on one person's run.
+ *
+ * The table they live in has existed since April and nothing could write to it,
+ * so every run was a straight function of standing salary. This is the screen
+ * that fixes that: overtime, a bonus, an advance recovery — and every write
+ * recomputes the run server-side, so the figures in the row behind this drawer
+ * move with it rather than waiting for somebody to re-process.
+ */
+interface RunItem {
+  id: number; type: "earning" | "deduction"; label: string;
+  amount: number; is_taxable: boolean; note: string | null;
+  earning_code_id: number | null; deduction_code_id: number | null;
+}
+interface Code { id: number; code: string; name: string; is_taxable?: boolean }
+
+const showItems  = ref(false);
+const itemsRun   = ref<Run | null>(null);
+const items      = ref<RunItem[]>([]);
+const itemsBusy  = ref(false);
+const itemsError = ref("");
+const itemsOpenForEdit = ref(true);
+const codes = ref<{ earnings: Code[]; deductions: Code[] }>({ earnings: [], deductions: [] });
+
+const draft = ref<{ type: "earning" | "deduction"; label: string; amount: string; note: string; code_id: string }>(
+  { type: "earning", label: "", amount: "", note: "", code_id: "" },
+);
+
+/*
+ * Shown before saving, because whether a payment is taxed is the thing most
+ * likely to be got wrong here and the least likely to be noticed afterwards.
+ * The server decides it from the code regardless — this only says so early.
+ */
+const draftTaxable = computed(() => {
+  if (draft.value.type === "deduction") return null;
+  const code = codes.value.earnings.find((c) => String(c.id) === draft.value.code_id);
+  return code ? code.is_taxable !== false : true;
+});
+
+async function openItems(run: Run): Promise<void> {
+  itemsRun.value = run; showItems.value = true; itemsError.value = "";
+  resetDraft();
+  await Promise.all([loadItems(), loadCodes()]);
+}
+
+function resetDraft(): void {
+  draft.value = { type: "earning", label: "", amount: "", note: "", code_id: "" };
+}
+
+async function loadItems(): Promise<void> {
+  if (!itemsRun.value) return;
+  itemsBusy.value = true;
+  try {
+    const res = await api<{ data: RunItem[]; editable: boolean }>(
+      "GET", `/api/v1/payroll/runs/${itemsRun.value.id}/items`, { org: org() },
+    );
+    items.value = res.data;
+    itemsOpenForEdit.value = res.editable;
+  } catch (e) {
+    itemsError.value = e instanceof Error ? e.message : "Could not load the adjustments.";
+  } finally { itemsBusy.value = false; }
+}
+
+async function loadCodes(): Promise<void> {
+  try {
+    codes.value = await api("GET", "/api/v1/payroll/run-item-codes", { org: org() });
+  } catch { codes.value = { earnings: [], deductions: [] }; }
+}
+
+/** Picking a code names the line, so nobody types "Bonus" three different ways. */
+function codePicked(): void {
+  const list = draft.value.type === "earning" ? codes.value.earnings : codes.value.deductions;
+  const code = list.find((c) => String(c.id) === draft.value.code_id);
+  if (code && !draft.value.label) draft.value.label = code.name;
+}
+
+async function addItem(): Promise<void> {
+  if (!itemsRun.value) return;
+  itemsBusy.value = true; itemsError.value = "";
+  try {
+    await api("POST", `/api/v1/payroll/runs/${itemsRun.value.id}/items`, {
+      org: org(),
+      body: {
+        type: draft.value.type,
+        label: draft.value.label,
+        amount: Number(draft.value.amount),
+        note: draft.value.note || null,
+        payroll_earning_code_id: draft.value.type === "earning" && draft.value.code_id
+          ? Number(draft.value.code_id) : null,
+        payroll_deduction_code_id: draft.value.type === "deduction" && draft.value.code_id
+          ? Number(draft.value.code_id) : null,
+      },
+    });
+    resetDraft();
+    await loadItems();
+    // The run behind the drawer has just changed; reload so the row agrees.
+    if (selectedPeriod.value) await loadDetail(selectedPeriod.value.id);
+    syncItemsRun();
+  } catch (e) {
+    itemsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add the line.";
+  } finally { itemsBusy.value = false; }
+}
+
+async function removeItem(item: RunItem): Promise<void> {
+  if (!itemsRun.value) return;
+  itemsBusy.value = true; itemsError.value = "";
+  try {
+    await api("DELETE", `/api/v1/payroll/runs/${itemsRun.value.id}/items/${item.id}`, { org: org() });
+    await loadItems();
+    if (selectedPeriod.value) await loadDetail(selectedPeriod.value.id);
+    syncItemsRun();
+  } catch (e) {
+    itemsError.value = e instanceof Error ? e.message : "Could not remove the line.";
+  } finally { itemsBusy.value = false; }
+}
+
+/** Re-point the drawer at the reloaded run so its totals are the new ones. */
+function syncItemsRun(): void {
+  const id = itemsRun.value?.id;
+  const fresh = selectedPeriod.value?.runs?.find((r: Run) => r.id === id);
+  if (fresh) itemsRun.value = fresh;
+}
+
 function openSlip(run: Run): void {
   slipRun.value = run; showSlip.value = true; slipError.value = "";
 }
@@ -474,8 +600,9 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
                 <td class="text-right pr-num pr-deduct">{{ fmt(r.housing_levy) }}</td>
                 <td class="text-right pr-num pr-net">{{ fmt(r.net_pay) }}</td>
                 <td><span :class="['badge', statusBadge(r.status)]">{{ r.status }}</span></td>
-                <td>
+                <td class="pr-row-actions">
                   <button class="btn btn-ghost btn-sm" style="font-size:0.75rem" @click="openSlip(r)">Payslip</button>
+                  <button class="btn btn-ghost btn-sm" style="font-size:0.75rem" @click="openItems(r)">Adjust</button>
                 </td>
               </tr>
             </tbody>
@@ -729,6 +856,130 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
         </div>
       </div>
 
+      <!--
+        Ad-hoc adjustments. Deliberately a drawer off the run rather than a
+        screen of its own: the number somebody is about to change is the one in
+        the row behind it, and the two disagreeing is the whole failure mode.
+      -->
+      <div v-if="showItems && itemsRun" class="comp-overlay" @click.self="showItems = false">
+        <div class="pr-slip" role="dialog" aria-modal="true">
+          <div class="pr-slip-header">
+            <div>
+              <h3 class="pr-slip-title">Adjustments</h3>
+              <p class="pr-slip-sub">{{ itemsRun.employee?.full_name ?? `Employee #${itemsRun.employee_id}` }}</p>
+              <p class="pr-slip-meta">Overtime, bonuses, advance recoveries — anything not on the standing salary.</p>
+            </div>
+            <button class="comp-popup-close" @click="showItems = false">✕</button>
+          </div>
+
+          <div class="pr-slip-body">
+            <p v-if="itemsError" class="error">{{ itemsError }}</p>
+
+            <!--
+              Once approved the payslips may be in inboxes and the P9 is built
+              from these figures, so the run stops moving. Said plainly rather
+              than by greying a button nobody can explain.
+            -->
+            <p v-if="!itemsOpenForEdit" class="pr-locked">
+              This period has been approved. Payslips may already have gone out, and a run
+              changed underneath one leaves somebody holding a document this system no
+              longer agrees with.
+            </p>
+
+            <table v-if="items.length" class="pr-slip-table">
+              <thead>
+                <tr><th>Line</th><th class="text-right">Amount</th><th v-if="itemsOpenForEdit"></th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="i in items" :key="i.id">
+                  <td>
+                    <span>{{ i.label }}</span>
+                    <span class="pr-item-tag">
+                      {{ i.type === "deduction" ? "Deduction" : (i.is_taxable ? "Taxable" : "Not taxed") }}
+                    </span>
+                    <span v-if="i.note" class="pr-emp-sub">{{ i.note }}</span>
+                  </td>
+                  <td class="text-right" :class="i.type === 'deduction' ? 'pr-deduct' : ''">
+                    {{ i.type === "deduction" ? "−" : "+" }}{{ fmt(i.amount) }}
+                  </td>
+                  <td v-if="itemsOpenForEdit" class="text-right">
+                    <button class="btn btn-ghost btn-sm" style="font-size:0.72rem"
+                            :disabled="itemsBusy" @click="removeItem(i)">Remove</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else-if="!itemsBusy" class="empty">Nothing adjusted — this run is the standing salary.</p>
+
+            <!-- What the run now says, so the effect of a line is visible here. -->
+            <table class="pr-slip-table" style="margin-top:12px">
+              <tbody>
+                <tr><td>Gross pay (taxed)</td><td class="text-right">{{ fmt(itemsRun.gross_pay) }}</td></tr>
+                <tr v-if="Number(itemsRun.non_taxable_earnings) > 0">
+                  <td>Non-taxable pay</td><td class="text-right">{{ fmt(itemsRun.non_taxable_earnings) }}</td>
+                </tr>
+                <tr><td>Total deductions</td><td class="text-right pr-deduct">{{ fmt(itemsRun.total_deductions) }}</td></tr>
+                <tr class="pr-slip-total"><td>Net pay</td><td class="text-right">KES {{ fmt(itemsRun.net_pay) }}</td></tr>
+              </tbody>
+            </table>
+
+            <template v-if="itemsOpenForEdit">
+              <h4 class="pr-add-title">Add a line</h4>
+              <div class="pr-add">
+                <label class="field"><span>Type</span>
+                  <select v-model="draft.type" class="control" @change="draft.code_id = ''">
+                    <option value="earning">Earning</option>
+                    <option value="deduction">Deduction</option>
+                  </select>
+                </label>
+
+                <label class="field"><span>Code</span>
+                  <select v-model="draft.code_id" class="control" @change="codePicked">
+                    <option value="">Uncoded one-off</option>
+                    <option v-for="c in (draft.type === 'earning' ? codes.earnings : codes.deductions)"
+                            :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+                  </select>
+                </label>
+
+                <label class="field"><span>Description</span>
+                  <input v-model="draft.label" class="control" placeholder="Overtime — 12 hrs" />
+                </label>
+
+                <label class="field"><span>Amount (KES)</span>
+                  <input v-model="draft.amount" class="control" type="number" min="0.01" step="0.01" />
+                </label>
+
+                <label class="field pr-add-wide"><span>Note</span>
+                  <input v-model="draft.note" class="control" placeholder="Why, for whoever asks in six months" />
+                </label>
+              </div>
+
+              <!--
+                Stated before saving. Whether a payment is taxed is the thing
+                most likely to be got wrong here and least likely to be noticed
+                afterwards; the server decides it from the code either way.
+              -->
+              <p v-if="draftTaxable !== null" class="pr-tax-note">
+                <template v-if="draftTaxable">
+                  This will be taxed — it goes into gross pay and PAYE recalculates.
+                </template>
+                <template v-else>
+                  Not taxed — paid in full, and it stays out of gross pay and the P9.
+                </template>
+              </p>
+
+              <div class="pr-add-actions">
+                <button class="btn btn-primary btn-sm"
+                        :disabled="itemsBusy || !draft.label || !Number(draft.amount)"
+                        @click="addItem">
+                  {{ itemsBusy ? "Saving…" : "Add line" }}
+                </button>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
       <div v-if="showSlip && slipRun" class="comp-overlay" @click.self="showSlip = false">
         <div class="pr-slip" role="dialog" aria-modal="true">
           <div class="pr-slip-header">
@@ -907,4 +1158,21 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
 .pr-slip-total td { font-weight: 700; background: #f8fafc; font-size: 0.88rem; }
 .pr-slip-relief { font-size: 0.72rem; color: #94a3b8; margin-left: 4px; }
 .pr-slip-net { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; padding: 14px 12px; background: var(--color-brand-base); color: #fff; border-radius: 8px; font-weight: 700; font-size: 1.05rem; }
+
+.pr-row-actions { display: flex; gap: 4px; white-space: nowrap; }
+
+.pr-locked { font-size: .82rem; padding: 10px 12px; border-radius: 8px;
+  background: var(--color-warning-light); color: #7C2D12; margin-bottom: 12px; }
+
+.pr-item-tag { display: inline-block; margin-left: 8px; font-size: .68rem;
+  padding: 1px 6px; border-radius: 999px; background: var(--color-surface-sunken);
+  color: var(--color-text-light); vertical-align: middle; }
+
+.pr-add-title { font-size: .82rem; font-weight: 600; margin: 20px 0 8px; color: var(--color-text); }
+.pr-add { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.pr-add-wide { grid-column: 1 / -1; }
+@media (max-width: 560px) { .pr-add { grid-template-columns: 1fr; } }
+.pr-add-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+.pr-tax-note { font-size: .78rem; color: var(--color-text-light); margin: 10px 0 0; }
 </style>
