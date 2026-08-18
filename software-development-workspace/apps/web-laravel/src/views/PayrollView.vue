@@ -67,6 +67,13 @@ const slipRun  = ref<Run | null>(null);
  * described a calculation nobody had performed.
  */
 const rates = ref<Record<string, any>>({});
+
+/*
+ * What has already gone out for this period. Without it the screen reads the
+ * same before and after a send, and the natural answer to "did that work?" is
+ * to press it again.
+ */
+const delivery = ref<{ sent: number; held: number; failed: number; last_sent: string | null } | null>(null);
 const slipDownloading = ref(false);
 const slipError = ref("");
 
@@ -140,11 +147,12 @@ async function loadPeriods(page = 1): Promise<void> {
 async function loadDetail(id: number): Promise<void> {
   detailLoading.value = true;
   try {
-    const detail = await api<PeriodDetail & { rates?: Record<string, any> }>(
+    const detail = await api<PeriodDetail & { rates?: Record<string, any>; delivery?: any }>(
       "GET", `/api/v1/payroll/${id}`, { org: org() },
     );
     selectedPeriod.value = detail;
     rates.value = detail.rates ?? {};
+    delivery.value = detail.delivery ?? null;
   } catch { /* silent */ }
   finally { detailLoading.value = false; }
 }
@@ -345,11 +353,22 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
             and an emailed payslip cannot, so the button is not offered before
             the figures are settled.
           -->
-          <router-link
-            v-if="['approved','paid'].includes(selectedPeriod.status)"
-            class="btn btn-primary btn-sm"
-            :to="{ name: 'payroll-send', params: { id: selectedPeriod.id } }"
-          >Send Payslips</router-link>
+          <div v-if="['approved','paid'].includes(selectedPeriod.status)" class="pr-send">
+            <!--
+              Reads "sent" once any have gone, so pressing it again is a
+              deliberate act rather than the obvious next thing to try.
+            -->
+            <router-link
+              :class="['btn', 'btn-sm', delivery?.sent ? 'pr-btn-teal' : 'btn-primary']"
+              :to="{ name: 'payroll-send', params: { id: selectedPeriod.id } }"
+            >{{ delivery?.sent ? "Pay-slips sent" : "Send Payslips" }}</router-link>
+
+            <span v-if="delivery?.sent" class="pr-send-note">
+              {{ delivery.sent }} sent{{ delivery.last_sent ? ` · ${delivery.last_sent.slice(0, 16)}` : "" }}
+              <template v-if="delivery.held">· {{ delivery.held }} held</template>
+              <template v-if="delivery.failed">· {{ delivery.failed }} failed</template>
+            </span>
+          </div>
           <span v-else class="pr-subtitle">Approve the period to send payslips.</span>
         </div>
         <p v-if="detailLoading" class="status">Loading runs…</p>
@@ -621,6 +640,8 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
 .pr-card { background: #fff; border-radius: 10px; border: 1px solid var(--color-border); padding: 20px; }
 .pr-slip-actions { display: flex; align-items: center; gap: 12px; margin-top: 18px;
   padding-top: 14px; border-top: 1px solid var(--color-border); }
+.pr-send { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.pr-send-note { font-size: 0.74rem; color: var(--color-text-muted); }
 .pr-card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0 0 14px; }
 .req { color: var(--red); }
 

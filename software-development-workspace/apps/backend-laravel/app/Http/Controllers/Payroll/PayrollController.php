@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PayrollPeriod;
 use App\Services\Payroll\PayrollService;
 use Illuminate\Http\JsonResponse;
+use App\Models\P9Report;
 use App\Models\PayslipDelivery;
 use App\Services\Payroll\PayslipDeliveryService;
 use App\Services\Payroll\PayslipPdf;
@@ -48,10 +49,27 @@ class PayrollController extends Controller
         $this->authorize('view', PayrollPeriod::class);
         $period = $this->service->getPeriod($payrollPeriod);
 
+        /*
+         * What has already gone out.
+         *
+         * Without it the period screen looks identical before and after a send,
+         * and the natural answer to "did that work?" is to press it again —
+         * which puts a second copy of a salary in everybody's inbox.
+         */
+        $deliveries = PayslipDelivery::where('payroll_period_id', $period->id)
+            ->where('channel', PayslipDelivery::CHANNEL_EMAIL)
+            ->get(['status', 'sent_at']);
+
         return response()->json([
             // Built from the configuration the period was computed under, so a
             // payslip can never describe a calculation nobody performed.
-            'rates' => $this->service->rateLabelsFor($period),
+            'rates'    => $this->service->rateLabelsFor($period),
+            'delivery' => [
+                'sent'      => $deliveries->where('status', PayslipDelivery::STATUS_SENT)->count(),
+                'held'      => $deliveries->where('status', PayslipDelivery::STATUS_HELD)->count(),
+                'failed'    => $deliveries->where('status', PayslipDelivery::STATUS_FAILED)->count(),
+                'last_sent' => $deliveries->max('sent_at')?->toDateTimeString(),
+            ],
         ] + $period->toArray());
     }
 
@@ -177,12 +195,97 @@ class PayrollController extends Controller
 
     // ── P9 ────────────────────────────────────────────────────────────────────
 
+    /** The years, as records with a state rather than a query somebody ran. */
+    public function p9Reports(): JsonResponse
+    {
+        $this->authorize('view', PayrollPeriod::class);
+
+        $orgId = app('current.organization_id');
+
+        /*
+         * Every year that has payroll behind it gets a row, created on sight.
+         * A year with approved runs and no P9 record is not "nothing to see" —
+         * it is a P9 nobody has started, which is the thing worth showing.
+         */
+        $years = PayrollPeriod::withoutGlobalScope('organization')
+            ->where('organization_id', $orgId)
+            ->whereIn('status', [PayrollPeriod::STATUS_APPROVED, PayrollPeriod::STATUS_PAID])
+            ->selectRaw('distinct extract(year from start_date)::int as y')
+            ->pluck('y');
+
+        foreach ($years as $year) {
+            P9Report::forYear($orgId, (int) $year);
+        }
+
+        return response()->json([
+            'data' => P9Report::withoutGlobalScope('organization')
+                ->where('organization_id', $orgId)
+                ->orderByDesc('tax_year')
+                ->get()
+                ->map(fn (P9Report $r) => [
+                    'id'             => $r->id,
+                    'reference'      => $r->reference,
+                    'tax_year'       => $r->tax_year,
+                    'employee_count' => $r->employee_count,
+                    'status'         => $r->status,
+                    'generated_at'   => $r->generated_at?->toDateTimeString(),
+                    'last_updated'   => $r->updated_at?->toDateTimeString(),
+                ]),
+        ]);
+    }
+
+    /** One employee's year, month by month — the shape of the actual P9A form. */
+    public function p9Months(Request $request, int $employee): JsonResponse
+    {
+        $this->authorize('view', PayrollPeriod::class);
+
+        $year  = $request->integer('year', now()->year);
+        $orgId = app('current.organization_id');
+
+        return response()->json([
+            'year'   => $year,
+            'months' => $this->service->getP9Months($orgId, $year, $employee),
+        ]);
+    }
+
+    /**
+     * Mark a year's P9 finished.
+     *
+     * Not a lock — the figures still come from the payroll runs and would change
+     * if a period were ever reopened. It records that somebody has checked it,
+     * which is what the status on the designs means and all it can mean.
+     */
+    public function completeP9(Request $request, int $year): JsonResponse
+    {
+        $this->authorize('update', PayrollPeriod::class);
+
+        $record = P9Report::forYear(app('current.organization_id'), $year);
+        $record->update([
+            'status'       => P9Report::STATUS_COMPLETED,
+            'completed_at' => now(),
+            'completed_by' => $request->user()?->employeeId(),
+        ]);
+
+        return response()->json(['data' => $record->fresh()]);
+    }
+
     /** GET /api/v1/payroll/p9?year=2025 */
     public function p9(Request $request): JsonResponse
     {
         $year  = $request->integer('year', now()->year);
         $orgId = app('current.organization_id');
         $data  = $this->service->getP9Report($orgId, $year);
+
+        /*
+         * Reading it counts as generating it: the figures are computed fresh
+         * every time, so "last generated" and "last read" are the same moment.
+         */
+        $record = P9Report::forYear($orgId, $year);
+        $record->update([
+            'employee_count' => count($data),
+            'generated_at'   => now(),
+            'generated_by'   => request()->user()?->id,
+        ]);
         return response()->json(['year' => $year, 'employees' => $data]);
     }
 

@@ -191,6 +191,62 @@ class PayrollService extends BaseService
             ->paginate($perPage);
     }
 
+    /**
+     * The year's P9, month by month, for one employee.
+     *
+     * This is the shape of the actual KRA P9A: a row per month with basic pay,
+     * benefits and value of quarters, their total, and what was set against it.
+     * The annual report sums these; nobody files a sum.
+     *
+     * The data has been here since the first payroll ran — one run per month —
+     * and was never exposed, so the P9 could only ever be read as a year.
+     */
+    public function getP9Months(int $orgId, int $year, int $employeeId): array
+    {
+        $runs = PayrollRun::whereHas('period', fn ($q) => $q
+                ->where('organization_id', $orgId)
+                ->whereYear('start_date', $year)
+                ->whereIn('status', [PayrollPeriod::STATUS_APPROVED, PayrollPeriod::STATUS_PAID]))
+            ->where('employee_id', $employeeId)
+            ->with('period')
+            ->get()
+            ->sortBy(fn ($r) => $r->period->start_date)
+            ->values();
+
+        return $runs->map(function (PayrollRun $r) {
+            $basic    = (float) $r->basic_salary;
+            /*
+             * Column B on the form. Allowances that are not basic pay: house,
+             * transport and anything else earned. Grouped because the form asks
+             * for one figure, not the breakdown the payslip shows.
+             */
+            $benefits = (float) $r->house_allowance + (float) $r->transport_allowance + (float) $r->other_earnings;
+
+            return [
+                'month'          => $r->period->start_date?->format('F'),
+                'period'         => $r->period->name,
+                'basic_pay'      => round($basic, 2),
+                'benefits'       => round($benefits, 2),
+                // Housing provided by the employer. Not modelled yet, and shown
+                // as nought rather than omitted: the form has the column, and a
+                // missing column reads as an error rather than an absence.
+                'value_of_quarters' => 0.0,
+                'gross_pay'      => round((float) $r->gross_pay, 2),
+                'defined_contribution' => round((float) $r->nssf_tier1 + (float) $r->nssf_tier2, 2),
+                'taxable_income' => round(
+                    (float) ($r->taxable_income ?? ($r->gross_pay - $r->nssf_tier1 - $r->nssf_tier2)), 2,
+                ),
+                'paye'             => round((float) $r->paye, 2),
+                'personal_relief'  => round((float) $r->personal_relief, 2),
+                'insurance_relief' => round((float) $r->insurance_relief, 2),
+                'paye_payable'     => round((float) $r->paye_payable, 2),
+                'shif'             => round((float) $r->shif, 2),
+                'housing_levy'     => round((float) $r->housing_levy, 2),
+                'net_pay'          => round((float) $r->net_pay, 2),
+            ];
+        })->all();
+    }
+
     // ── P9 annual report ──────────────────────────────────────────────────────
 
     /**
