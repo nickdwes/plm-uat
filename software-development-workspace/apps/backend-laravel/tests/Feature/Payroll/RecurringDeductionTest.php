@@ -189,6 +189,25 @@ class RecurringDeductionTest extends TestCase
         $this->assertSame(EmployeeRecurringDeduction::STATUS_COMPLETED, $schedule->fresh()->status);
     }
 
+    /**
+     * A loan that finished in December must not read "active" until somebody
+     * runs January. The stored flag is flipped by the next run; what is shown
+     * follows the balance immediately.
+     */
+    public function test_a_settled_loan_reads_completed_before_the_next_run(): void
+    {
+        $schedule = $this->schedule(['instalment' => 10000, 'principal' => 10000]);
+
+        $jan = $this->period('Jan', '2026-01-01', '2026-01-31');
+        $this->runFor($jan);
+        $jan->update(['status' => PayrollPeriod::STATUS_APPROVED]);
+
+        $fresh = $schedule->fresh();
+
+        $this->assertSame(0.0, $fresh->outstanding());
+        $this->assertSame(EmployeeRecurringDeduction::STATUS_COMPLETED, $fresh->effectiveStatus());
+    }
+
     /** A check-off with no principal runs until somebody stops it. */
     public function test_an_open_ended_check_off_keeps_running(): void
     {

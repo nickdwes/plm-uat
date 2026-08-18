@@ -32,7 +32,7 @@ interface P9Row {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
-type Tab = "periods" | "history" | "p9";
+type Tab = "periods" | "history" | "p9" | "deductions";
 const tab = ref<Tab>("periods");
 
 const periods        = ref<Period[]>([]);
@@ -397,6 +397,132 @@ function openSlip(run: Run): void {
   slipRun.value = run; showSlip.value = true; slipError.value = "";
 }
 
+// ── Standing orders ────────────────────────────────────────────────────────────
+/*
+ * SACCO check-offs, HELB, salary advances, court orders. Set up once here and
+ * recovered by every run after, rather than retyped into the adjustments drawer
+ * each month — which is how somebody gets recovered twice in March and not at
+ * all in April.
+ *
+ * Outstanding is never sent to the server and never edited. It is the principal
+ * less what has actually come off approved payroll, so this screen and the
+ * payslips behind it cannot tell different stories.
+ */
+interface Standing {
+  id: number; employee_id: number; employee: string | null;
+  code: string | null; code_id: number; label: string;
+  instalment: number; principal: number | null;
+  recovered: number; outstanding: number | null;
+  starts_on: string; ends_on: string | null;
+  status: string; priority: number; reference: string | null; note: string | null;
+}
+
+const standing        = ref<Standing[]>([]);
+const standingCodes   = ref<{ id: number; name: string; priority: number }[]>([]);
+const standingStaff   = ref<{ id: number; full_name: string; employee_number: string }[]>([]);
+const standingBusy    = ref(false);
+const standingError   = ref("");
+const standingMsg     = ref("");
+const showStandingAdd = ref(false);
+
+const standingDraft = ref({
+  employee_id: "", payroll_deduction_code_id: "", label: "",
+  instalment: "", principal: "", starts_on: new Date().toISOString().slice(0, 10),
+  ends_on: "", reference: "", note: "",
+});
+
+async function loadStanding(): Promise<void> {
+  standingBusy.value = true; standingError.value = "";
+  try {
+    const [list, codes] = await Promise.all([
+      api<{ data: Standing[] }>("GET", "/api/v1/payroll/recurring-deductions", { org: org() }),
+      api<{ data: any[] }>("GET", "/api/v1/payroll/recurring-deduction-codes", { org: org() }),
+    ]);
+    standing.value = list.data;
+    standingCodes.value = codes.data;
+  } catch (e) {
+    standingError.value = e instanceof Error ? e.message : "Could not load the standing orders.";
+  } finally { standingBusy.value = false; }
+}
+
+async function loadStandingStaff(): Promise<void> {
+  if (standingStaff.value.length) return;
+  try {
+    const res = await api<{ data: any[] }>("GET", "/api/v1/employees?per_page=500", { org: org() });
+    standingStaff.value = (res.data ?? []).map((e: any) => ({
+      id: e.id, full_name: e.full_name, employee_number: e.employee_number,
+    }));
+  } catch { standingStaff.value = []; }
+}
+
+/** Picking a code names the line, so nobody types "Sacco" three ways. */
+function standingCodePicked(): void {
+  const code = standingCodes.value.find((c) => String(c.id) === standingDraft.value.payroll_deduction_code_id);
+  if (code && !standingDraft.value.label) standingDraft.value.label = code.name;
+}
+
+async function saveStanding(): Promise<void> {
+  standingBusy.value = true; standingError.value = ""; standingMsg.value = "";
+  try {
+    await api("POST", "/api/v1/payroll/recurring-deductions", {
+      org: org(),
+      body: {
+        employee_id: Number(standingDraft.value.employee_id),
+        payroll_deduction_code_id: Number(standingDraft.value.payroll_deduction_code_id),
+        label: standingDraft.value.label || null,
+        instalment: Number(standingDraft.value.instalment),
+        // Blank means a check-off that runs until stopped, not a loan.
+        principal: standingDraft.value.principal ? Number(standingDraft.value.principal) : null,
+        starts_on: standingDraft.value.starts_on,
+        ends_on: standingDraft.value.ends_on || null,
+        reference: standingDraft.value.reference || null,
+        note: standingDraft.value.note || null,
+      },
+    });
+    showStandingAdd.value = false;
+    standingDraft.value = {
+      employee_id: "", payroll_deduction_code_id: "", label: "",
+      instalment: "", principal: "", starts_on: new Date().toISOString().slice(0, 10),
+      ends_on: "", reference: "", note: "",
+    };
+    standingMsg.value = "Added — it will be recovered from the next run.";
+    await loadStanding();
+    setTimeout(() => { standingMsg.value = ""; }, 4000);
+  } catch (e) {
+    standingError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { standingBusy.value = false; }
+}
+
+async function setStandingStatus(row: Standing, status: string): Promise<void> {
+  standingBusy.value = true; standingError.value = "";
+  try {
+    await api("PUT", `/api/v1/payroll/recurring-deductions/${row.id}`, { org: org(), body: { status } });
+    await loadStanding();
+  } catch (e) {
+    standingError.value = e instanceof Error ? e.message : "Could not change it.";
+  } finally { standingBusy.value = false; }
+}
+
+async function stopStanding(row: Standing): Promise<void> {
+  standingBusy.value = true; standingError.value = "";
+  try {
+    const res = await api<{ message?: string }>(
+      "DELETE", `/api/v1/payroll/recurring-deductions/${row.id}`, { org: org() },
+    );
+    // Suspended rather than deleted where money has already been recovered —
+    // said out loud, because the row not disappearing looks like a failure.
+    if (res?.message) standingMsg.value = res.message;
+    await loadStanding();
+  } catch (e) {
+    standingError.value = e instanceof Error ? e.message : "Could not stop it.";
+  } finally { standingBusy.value = false; }
+}
+
+function progress(row: Standing): number {
+  if (!row.principal) return 0;
+  return Math.min(100, Math.round((row.recovered / row.principal) * 100));
+}
+
 // ── Summary ────────────────────────────────────────────────────────────────────
 const runsSummary = computed(() => {
   const runs = selectedPeriod.value?.runs ?? [];
@@ -419,7 +545,10 @@ function init(): void {
 }
 onMounted(init);
 watch(currentOrgSlug, init);
-watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
+watch(tab, (t) => {
+  if (t === "p9") void loadP9Reports();
+  if (t === "deductions") { void loadStanding(); void loadStandingStaff(); }
+});
 </script>
 
 <template>
@@ -468,6 +597,7 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
       <button :class="['tab', { active: tab === 'periods' }]"  @click="tab = 'periods'">📅 Payroll Periods</button>
       <button :class="['tab', { active: tab === 'history' }]"  @click="tab = 'history'">🧾 My Pay History</button>
       <button :class="['tab', { active: tab === 'p9' }]"       @click="tab = 'p9'">📋 P9 Report</button>
+      <button :class="['tab', { active: tab === 'deductions' }]" @click="tab = 'deductions'">💳 Standing Orders</button>
     </div>
 
     <p v-if="actionMsg"   class="pr-success">{{ actionMsg }}</p>
@@ -649,6 +779,151 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
     </template>
 
     <!-- ── P9 TAB ──────────────────────────────────────────────────────────── -->
+    <!--
+      Standing orders. The list leads with what is left to repay rather than
+      what was agreed: "38,000 outstanding" is the number somebody is asked
+      about, and it is derived from the payslips rather than kept beside them.
+    -->
+    <template v-if="tab === 'deductions'">
+      <div class="pr-p9-toolbar">
+        <div>
+          <h3 class="pr-card-title" style="margin:0">Standing Orders</h3>
+          <p class="pr-subtitle" style="margin:0">
+            Sacco check-offs, HELB, salary advances, court orders — recovered automatically by every run.
+          </p>
+        </div>
+        <button class="btn btn-primary btn-sm" @click="showStandingAdd = !showStandingAdd">
+          {{ showStandingAdd ? "Cancel" : "New standing order" }}
+        </button>
+      </div>
+
+      <p v-if="standingError" class="error">{{ standingError }}</p>
+      <p v-if="standingMsg" class="pr-ok">{{ standingMsg }}</p>
+
+      <div v-if="showStandingAdd" class="pr-card" style="margin-bottom:14px">
+        <div class="pr-add">
+          <label class="field"><span>Employee</span>
+            <select v-model="standingDraft.employee_id" class="control">
+              <option value="">Choose…</option>
+              <option v-for="e in standingStaff" :key="e.id" :value="String(e.id)">
+                {{ e.full_name }} · {{ e.employee_number }}
+              </option>
+            </select>
+          </label>
+
+          <label class="field"><span>Deduction</span>
+            <select v-model="standingDraft.payroll_deduction_code_id" class="control" @change="standingCodePicked">
+              <option value="">Choose…</option>
+              <option v-for="c in standingCodes" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+            </select>
+          </label>
+
+          <label class="field"><span>Description</span>
+            <input v-model="standingDraft.label" class="control" placeholder="Sacco Loan — car" />
+          </label>
+
+          <label class="field"><span>Monthly instalment (KES)</span>
+            <input v-model="standingDraft.instalment" class="control" type="number" min="0.01" step="0.01" />
+          </label>
+
+          <label class="field"><span>Total to repay (KES)</span>
+            <input v-model="standingDraft.principal" class="control" type="number" min="0.01" step="0.01"
+                   placeholder="Leave blank for an ongoing check-off" />
+          </label>
+
+          <label class="field"><span>First recovered from</span>
+            <input v-model="standingDraft.starts_on" class="control" type="date" />
+          </label>
+
+          <label class="field"><span>Reference</span>
+            <input v-model="standingDraft.reference" class="control" placeholder="Loan or member number" />
+          </label>
+
+          <label class="field"><span>Stop after (optional)</span>
+            <input v-model="standingDraft.ends_on" class="control" type="date" />
+          </label>
+        </div>
+
+        <!--
+          Both halves said plainly. A blank total is the difference between a
+          loan that stops itself and a check-off that runs forever, and it is
+          the field most likely to be left empty by accident.
+        -->
+        <p class="pr-tax-note">
+          Leave the total blank for an ongoing check-off such as union dues. Give a total for
+          anything that ends — recovery stops on its own when it is met, and the last instalment
+          is the remainder rather than the full amount.
+        </p>
+        <p class="pr-tax-note">
+          Deductions can never exceed two thirds of pay. Where they would, the higher-priority
+          order is taken first and the shortfall is written on the payslip.
+        </p>
+
+        <div class="pr-add-actions">
+          <button class="btn btn-primary btn-sm"
+                  :disabled="standingBusy || !standingDraft.employee_id
+                             || !standingDraft.payroll_deduction_code_id || !Number(standingDraft.instalment)"
+                  @click="saveStanding">
+            {{ standingBusy ? "Saving…" : "Add standing order" }}
+          </button>
+        </div>
+      </div>
+
+      <div class="pr-card table-scroll">
+        <table class="pr-table">
+          <thead>
+            <tr>
+              <th>Employee</th><th>Deduction</th>
+              <th class="text-right">Instalment</th>
+              <th class="text-right">Recovered</th>
+              <th class="text-right">Outstanding</th>
+              <th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="d in standing" :key="d.id">
+              <td>
+                <div class="pr-emp-cell">
+                  <span class="pr-emp-name">{{ d.employee ?? `Employee #${d.employee_id}` }}</span>
+                  <span v-if="d.reference" class="pr-emp-sub">Ref {{ d.reference }}</span>
+                </div>
+              </td>
+              <td>
+                <span>{{ d.label }}</span>
+                <span class="pr-item-tag">Priority {{ d.priority }}</span>
+              </td>
+              <td class="text-right pr-num">{{ fmt(d.instalment) }}</td>
+              <td class="text-right pr-num">
+                {{ fmt(d.recovered) }}
+                <span v-if="d.principal" class="pr-emp-sub">{{ progress(d) }}% of {{ fmt(d.principal) }}</span>
+              </td>
+              <td class="text-right pr-num">
+                <template v-if="d.outstanding !== null">{{ fmt(d.outstanding) }}</template>
+                <span v-else class="pr-emp-sub">Ongoing</span>
+              </td>
+              <td>
+                <span :class="['badge', d.status === 'active' ? 'badge-green'
+                               : d.status === 'completed' ? 'badge-blue' : 'badge-amber']">
+                  {{ d.status }}
+                </span>
+              </td>
+              <td class="pr-row-actions">
+                <button v-if="d.status === 'active'" class="btn btn-ghost btn-sm" style="font-size:0.72rem"
+                        :disabled="standingBusy" @click="stopStanding(d)">Stop</button>
+                <button v-else-if="d.status === 'suspended'" class="btn btn-ghost btn-sm" style="font-size:0.72rem"
+                        :disabled="standingBusy" @click="setStandingStatus(d, 'active')">Resume</button>
+              </td>
+            </tr>
+            <tr v-if="!standing.length && !standingBusy">
+              <td colspan="7" class="empty">
+                No standing orders. Add one and it is recovered from the next run onwards.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
     <template v-if="tab === 'p9'">
       <!--
         The years first, as records. A year with approved payroll and no P9 is
@@ -1173,6 +1448,9 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
 .pr-add-wide { grid-column: 1 / -1; }
 @media (max-width: 560px) { .pr-add { grid-template-columns: 1fr; } }
 .pr-add-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+
+.pr-ok { font-size: .84rem; padding: 8px 12px; border-radius: 8px;
+  background: var(--color-success-light); color: var(--color-success); margin-bottom: 10px; }
 
 .pr-tax-note { font-size: .78rem; color: var(--color-text-light); margin: 10px 0 0; }
 </style>

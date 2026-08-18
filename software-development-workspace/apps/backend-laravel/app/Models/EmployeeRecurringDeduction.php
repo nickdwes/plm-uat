@@ -147,6 +147,24 @@ class EmployeeRecurringDeduction extends Model
         return round(max(0, min($instalment, $available)), 2);
     }
 
+    /**
+     * The status to show, which follows the balance rather than waiting.
+     *
+     * The stored flag is flipped by the applier, and the applier only runs when
+     * the next payroll does — so a loan that finished paying itself off in
+     * December reads "active, nothing outstanding" until somebody runs January.
+     * That looks like it is still recovering, which is the one thing the person
+     * repaying it will ask about.
+     */
+    public function effectiveStatus(): string
+    {
+        if ($this->status === self::STATUS_SUSPENDED) {
+            return self::STATUS_SUSPENDED;
+        }
+
+        return $this->isSettled() ? self::STATUS_COMPLETED : $this->status;
+    }
+
     public function isSettled(): bool
     {
         return $this->principal !== null && $this->outstanding() <= 0;

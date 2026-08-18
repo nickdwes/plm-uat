@@ -164,7 +164,8 @@ class RecurringDeductionController extends Controller
             'outstanding' => $outstanding,
             'starts_on'   => $d->starts_on?->toDateString(),
             'ends_on'     => $d->ends_on?->toDateString(),
-            'status'      => $d->status,
+            // Follows the balance: a settled loan does not read "active".
+            'status'      => $d->effectiveStatus(),
             'priority'    => $d->priority,
             'reference'   => $d->reference,
             'note'        => $d->note,
