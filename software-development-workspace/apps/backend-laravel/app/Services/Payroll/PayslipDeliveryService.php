@@ -8,6 +8,7 @@ use App\Models\PayrollDocumentSetting;
 use App\Models\PayrollPeriod;
 use App\Models\PayrollRun;
 use App\Models\PayslipDelivery;
+use App\Services\NotificationService;
 use Illuminate\Support\Facades\Mail;
 use Throwable;
 
@@ -30,7 +31,10 @@ use Throwable;
  */
 class PayslipDeliveryService
 {
-    public function __construct(private readonly PayslipPdf $pdf) {}
+    public function __construct(
+        private readonly PayslipPdf $pdf,
+        private readonly NotificationService $notifications,
+    ) {}
 
     /**
      * Who could be sent one, and where it would go.
@@ -106,6 +110,16 @@ class PayslipDeliveryService
             }
 
             $results[] = $this->deliverOne($run, $employee, $settings, $period, $org, $options, $actorId);
+
+            /*
+             * A note in the portal, where the payslip can be opened without an
+             * email at all. Recorded on its own channel: somebody can be
+             * reachable in the portal and not by email, and a single "sent"
+             * would hide which.
+             */
+            if (($options['portal'] ?? false) && $employee->user_id) {
+                $this->notifyInPortal($period, $employee, $actorId);
+            }
         }
 
         return [
@@ -114,6 +128,41 @@ class PayslipDeliveryService
             'failed'  => collect($results)->where('status', PayslipDelivery::STATUS_FAILED)->count(),
             'results' => $results,
         ];
+    }
+
+    private function notifyInPortal(PayrollPeriod $period, Employee $employee, ?int $actorId): void
+    {
+        try {
+            $this->notifications->create(
+                organizationId: (string) $period->organization_id,
+                userId:         $employee->user_id,
+                type:           'payslip',
+                title:          "Your payslip for {$period->name} is ready",
+                message:        'Open it from Payroll — My Pay History.',
+                data:           ['payroll_period_id' => $period->id],
+            );
+
+            $status = PayslipDelivery::STATUS_SENT;
+            $detail = null;
+        } catch (Throwable $e) {
+            $status = PayslipDelivery::STATUS_FAILED;
+            $detail = substr($e->getMessage(), 0, 480);
+        }
+
+        PayslipDelivery::updateOrCreate(
+            [
+                'payroll_period_id' => $period->id,
+                'employee_id'       => $employee->id,
+                'channel'           => PayslipDelivery::CHANNEL_PORTAL,
+            ],
+            [
+                'status'    => $status,
+                'recipient' => null,
+                'detail'    => $detail,
+                'sent_at'   => $status === PayslipDelivery::STATUS_SENT ? now() : null,
+                'sent_by'   => $actorId,
+            ],
+        );
     }
 
     private function deliverOne(

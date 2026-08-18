@@ -340,6 +340,17 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
             </h3>
             <p class="pr-subtitle">{{ selectedPeriod.start_date }} → {{ selectedPeriod.end_date }}</p>
           </div>
+          <!--
+            Only once the period is approved. A draft can still be recomputed
+            and an emailed payslip cannot, so the button is not offered before
+            the figures are settled.
+          -->
+          <router-link
+            v-if="['approved','paid'].includes(selectedPeriod.status)"
+            class="btn btn-primary btn-sm"
+            :to="{ name: 'payroll-send', params: { id: selectedPeriod.id } }"
+          >Send Payslips</router-link>
+          <span v-else class="pr-subtitle">Approve the period to send payslips.</span>
         </div>
         <p v-if="detailLoading" class="status">Loading runs…</p>
 

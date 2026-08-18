@@ -17,6 +17,7 @@ import LeaveApprovalsView  from "../views/LeaveApprovalsView.vue";
 import LeaveAdminView      from "../views/LeaveAdminView.vue";
 import PayrollView         from "../views/PayrollView.vue";
 import PayrollConfigView   from "../views/PayrollConfigView.vue";
+import SendPayslipsView    from "../views/Payroll/SendPayslipsView.vue";
 import OrgView             from "../views/OrgView.vue";
 import OrgProfileView      from "../views/OrgProfileView.vue";
 import PerformanceView     from "../views/PerformanceView.vue";
@@ -137,6 +138,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/leave/approvals", name: "leave-approvals",  component: LeaveApprovalsView },
   { path: "/leave/admin",     name: "leave-admin",      component: LeaveAdminView },
   { path: "/payroll",         name: "payroll",          component: PayrollView },
+  { path: "/payroll/:id/send", name: "payroll-send",    component: SendPayslipsView, props: true },
   { path: "/org",             name: "org",              component: OrgView },
   { path: "/org/profile/:slug", name: "org-profile",    component: OrgProfileView, props: true },
   { path: "/org/benefit-plans",    name: "benefit-plans",    component: BenefitPlansView },

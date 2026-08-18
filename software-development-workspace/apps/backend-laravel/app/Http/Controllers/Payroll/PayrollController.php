@@ -150,6 +150,9 @@ class PayrollController extends Controller
             'employee_ids.*' => ['integer'],
             'subject'        => ['nullable', 'string', 'max:200'],
             'message'        => ['nullable', 'string', 'max:2000'],
+            // A note in the portal as well as the email. Only reaches employees
+            // whose record is linked to a login.
+            'portal'         => ['boolean'],
         ]);
 
         $period = $this->service->getPeriod($payrollPeriod);
@@ -163,7 +166,11 @@ class PayrollController extends Controller
         return response()->json($delivery->send(
             $period,
             $data['employee_ids'],
-            ['subject' => $data['subject'] ?? null, 'message' => $data['message'] ?? null],
+            [
+                'subject' => $data['subject'] ?? null,
+                'message' => $data['message'] ?? null,
+                'portal'  => (bool) ($data['portal'] ?? false),
+            ],
             $request->user()?->id,
         ));
     }
