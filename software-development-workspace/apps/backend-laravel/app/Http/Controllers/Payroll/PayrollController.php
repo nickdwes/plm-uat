@@ -8,6 +8,7 @@ use App\Services\Payroll\PayrollService;
 use Illuminate\Http\JsonResponse;
 use App\Models\P9Report;
 use App\Models\PayslipDelivery;
+use App\Services\Payroll\P9DeliveryService;
 use App\Services\Payroll\PayslipDeliveryService;
 use App\Services\Payroll\PayslipPdf;
 use Illuminate\Http\Request;
@@ -147,7 +148,8 @@ class PayrollController extends Controller
 
         return response()->json([
             'recipients' => $delivery->recipients($period),
-            'sent'       => PayslipDelivery::where('payroll_period_id', $period->id)
+            'sent'       => PayslipDelivery::where('document_type', PayslipDelivery::TYPE_PAYSLIP)
+                ->where('payroll_period_id', $period->id)
                 ->get(['employee_id', 'status', 'recipient', 'sent_at', 'detail']),
         ]);
     }
@@ -217,6 +219,16 @@ class PayrollController extends Controller
             P9Report::forYear($orgId, (int) $year);
         }
 
+        $sent = PayslipDelivery::where('document_type', PayslipDelivery::TYPE_P9)
+            ->where('status', PayslipDelivery::STATUS_SENT)
+            ->where('channel', PayslipDelivery::CHANNEL_EMAIL)
+            ->whereIn('employee_id', function ($q) use ($orgId) {
+                $q->select('id')->from('employees')->where('primary_organization_id', $orgId);
+            })
+            ->selectRaw('tax_year, count(*) as c')
+            ->groupBy('tax_year')
+            ->pluck('c', 'tax_year');
+
         return response()->json([
             'data' => P9Report::withoutGlobalScope('organization')
                 ->where('organization_id', $orgId)
@@ -230,8 +242,72 @@ class PayrollController extends Controller
                     'status'         => $r->status,
                     'generated_at'   => $r->generated_at?->toDateTimeString(),
                     'last_updated'   => $r->updated_at?->toDateTimeString(),
+                    // How many people actually have it. The count, not a flag:
+                    // "sent" over a part-finished year is the misleading answer.
+                    'sent_count'     => $sent[$r->tax_year] ?? 0,
                 ]),
         ]);
+    }
+
+    /**
+     * Who has a P9 for this year, and who has already had it.
+     *
+     * Same shape as the payslip endpoint, because the send screen is the same
+     * screen: it takes a list of people, a note about a locked attachment, and
+     * a record of what happened last time.
+     */
+    public function p9Recipients(int $year, P9DeliveryService $delivery): JsonResponse
+    {
+        $this->authorize('view', PayrollPeriod::class);
+
+        $orgId = app('current.organization_id');
+
+        return response()->json([
+            'recipients' => $delivery->recipients($orgId, $year),
+            'sent'       => PayslipDelivery::where('document_type', PayslipDelivery::TYPE_P9)
+                ->where('tax_year', $year)
+                ->whereIn('employee_id', function ($q) use ($orgId) {
+                    $q->select('id')->from('employees')->where('primary_organization_id', $orgId);
+                })
+                ->get(['employee_id', 'status', 'recipient', 'sent_at', 'detail']),
+        ]);
+    }
+
+    /**
+     * Send them.
+     *
+     * Not guarded on the report being marked completed. "Completed" is a note
+     * somebody leaves for the next person, not a lock — and a P9 that has to be
+     * reissued because a record was corrected is the normal case, not an
+     * exception to work around.
+     */
+    public function sendP9(Request $request, int $year, P9DeliveryService $delivery): JsonResponse
+    {
+        $this->authorize('update', PayrollPeriod::class);
+
+        $data = $request->validate([
+            'employee_ids'   => ['required', 'array', 'min:1'],
+            'employee_ids.*' => ['integer'],
+            'subject'        => ['nullable', 'string', 'max:200'],
+            'message'        => ['nullable', 'string', 'max:2000'],
+            'portal'         => ['boolean'],
+        ]);
+
+        $orgId = app('current.organization_id');
+
+        $result = $delivery->send($orgId, $year, $data['employee_ids'], [
+            'subject' => $data['subject'] ?? null,
+            'message' => $data['message'] ?? null,
+            'portal'  => (bool) ($data['portal'] ?? false),
+        ], $request->user()?->id);
+
+        // The year's record carries when it last went out, so the reports list
+        // can say so without counting rows every time it loads.
+        if ($result['sent'] > 0) {
+            P9Report::forYear($orgId, $year)->forceFill(['generated_at' => now()])->save();
+        }
+
+        return response()->json($result);
     }
 
     /** One employee's year, month by month — the shape of the actual P9A form. */

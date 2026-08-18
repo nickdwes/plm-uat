@@ -60,6 +60,9 @@ const p9Data    = ref<P9Row[]>([]);
 interface P9ReportRow {
   id: number; reference: string; tax_year: number; employee_count: number;
   status: string; generated_at: string | null; last_updated: string | null;
+  // How many people actually have theirs. A count rather than a flag: "sent"
+  // over a part-finished year is the answer that gets somebody in trouble.
+  sent_count: number;
 }
 const p9Reports = ref<P9ReportRow[]>([]);
 const p9Open    = ref<P9ReportRow | null>(null);
@@ -534,7 +537,7 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
         </div>
         <table class="pr-table">
           <thead>
-            <tr><th>Ref ID</th><th>Year</th><th class="text-right">Employees</th><th>P9 Status</th><th>Last Updated</th><th></th></tr>
+            <tr><th>Ref ID</th><th>Year</th><th class="text-right">Employees</th><th>P9 Status</th><th>Sent</th><th>Last Updated</th><th></th></tr>
           </thead>
           <tbody>
             <tr v-for="r in p9Reports" :key="r.id">
@@ -546,11 +549,17 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
                   {{ r.status === "completed" ? "Completed" : "In Progress" }}
                 </span>
               </td>
+              <td>
+                <span v-if="r.sent_count" class="badge badge-green">
+                  {{ r.sent_count === r.employee_count ? "Sent" : `${r.sent_count} of ${r.employee_count} sent` }}
+                </span>
+                <span v-else class="pr-subtitle">Not sent</span>
+              </td>
               <td class="pr-dates">{{ r.last_updated?.slice(0, 16) ?? "—" }}</td>
               <td><button class="link" @click="openP9Year(r)">View</button></td>
             </tr>
             <tr v-if="!p9Reports.length">
-              <td colspan="6" class="empty">No approved payroll yet, so there is nothing to report on.</td>
+              <td colspan="7" class="empty">No approved payroll yet, so there is nothing to report on.</td>
             </tr>
           </tbody>
         </table>
@@ -566,7 +575,10 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
               {{ p9Open.status === "completed" ? "Completed" : "In Progress" }}
             </span>
           </h3>
-          <p class="pr-subtitle" style="margin:0">Annual PAYE summary for KRA compliance</p>
+          <p class="pr-subtitle" style="margin:0">
+            Annual PAYE summary for KRA compliance<template v-if="p9Open.sent_count">
+              &middot; {{ p9Open.sent_count }} sent</template>
+          </p>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <button class="btn btn-secondary btn-sm" :disabled="p9Loading" @click="loadP9">
@@ -577,9 +589,18 @@ watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
             move if a period were ever reopened; this records that somebody has
             checked it, which is all the status on the designs can mean.
           -->
-          <button v-if="p9Open.status !== 'completed'" class="btn btn-primary btn-sm" @click="completeP9">
+          <button v-if="p9Open.status !== 'completed'" class="btn btn-secondary btn-sm" @click="completeP9">
             Mark completed
           </button>
+          <!--
+            The same wizard as the payslip send, given a year instead of a
+            period. Deliberately not gated on "completed": a P9 reissued after a
+            record was corrected is the normal case, not an exception.
+          -->
+          <router-link class="btn btn-primary btn-sm"
+                       :to="{ name: 'payroll-p9-send', params: { year: p9Open.tax_year } }">
+            Send P9 Forms
+          </router-link>
         </div>
       </div>
       <p v-if="p9Error" class="error">{{ p9Error }}</p>

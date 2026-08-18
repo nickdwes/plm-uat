@@ -5,10 +5,19 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-/** One attempt to get one payslip to one person by one channel. */
+/**
+ * One attempt to get one payroll document to one person by one channel.
+ *
+ * Payslips and P9s both live here. They are the same act — a locked PDF to a
+ * personal address — and the question asked afterwards is the same one, so
+ * answering it from two tables would eventually answer it two ways.
+ */
 class PayslipDelivery extends Model
 {
     protected $table = 'payroll_payslip_deliveries';
+
+    public const TYPE_PAYSLIP = 'payslip';
+    public const TYPE_P9      = 'p9';
 
     public const CHANNEL_EMAIL  = 'email';
     public const CHANNEL_PORTAL = 'portal';
@@ -24,11 +33,13 @@ class PayslipDelivery extends Model
     public const STATUS_HELD = 'held';
 
     protected $fillable = [
-        'payroll_period_id', 'employee_id', 'channel',
+        'document_type', 'payroll_period_id', 'tax_year', 'employee_id', 'channel',
         'status', 'recipient', 'detail', 'sent_at', 'sent_by',
     ];
 
-    protected $casts = ['sent_at' => 'datetime'];
+    protected $casts = ['sent_at' => 'datetime', 'tax_year' => 'integer'];
+
+    protected $attributes = ['document_type' => self::TYPE_PAYSLIP];
 
     public function period(): BelongsTo
     {

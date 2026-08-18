@@ -18,6 +18,7 @@ import LeaveAdminView      from "../views/LeaveAdminView.vue";
 import PayrollView         from "../views/PayrollView.vue";
 import PayrollConfigView   from "../views/PayrollConfigView.vue";
 import SendPayslipsView    from "../views/Payroll/SendPayslipsView.vue";
+import SendP9View          from "../views/Payroll/SendP9View.vue";
 import OrgView             from "../views/OrgView.vue";
 import OrgProfileView      from "../views/OrgProfileView.vue";
 import PerformanceView     from "../views/PerformanceView.vue";
@@ -139,6 +140,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/leave/admin",     name: "leave-admin",      component: LeaveAdminView },
   { path: "/payroll",         name: "payroll",          component: PayrollView },
   { path: "/payroll/:id/send", name: "payroll-send",    component: SendPayslipsView, props: true },
+  { path: "/payroll/p9/:year/send", name: "payroll-p9-send", component: SendP9View, props: true },
   { path: "/org",             name: "org",              component: OrgView },
   { path: "/org/profile/:slug", name: "org-profile",    component: OrgProfileView, props: true },
   { path: "/org/benefit-plans",    name: "benefit-plans",    component: BenefitPlansView },

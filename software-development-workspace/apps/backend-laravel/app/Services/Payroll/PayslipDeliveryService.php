@@ -151,7 +151,9 @@ class PayslipDeliveryService
 
         PayslipDelivery::updateOrCreate(
             [
+                'document_type'     => PayslipDelivery::TYPE_PAYSLIP,
                 'payroll_period_id' => $period->id,
+                'tax_year'          => null,
                 'employee_id'       => $employee->id,
                 'channel'           => PayslipDelivery::CHANNEL_PORTAL,
             ],
@@ -236,7 +238,9 @@ class PayslipDeliveryService
     ): array {
         PayslipDelivery::updateOrCreate(
             [
+                'document_type'     => PayslipDelivery::TYPE_PAYSLIP,
                 'payroll_period_id' => $period->id,
+                'tax_year'          => null,
                 'employee_id'       => $employee->id,
                 'channel'           => PayslipDelivery::CHANNEL_EMAIL,
             ],

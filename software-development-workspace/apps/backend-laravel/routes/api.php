@@ -876,6 +876,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/p9/reports',                           [PayrollController::class, 'p9Reports']);
         Route::get('/p9/employee/{employee}',               [PayrollController::class, 'p9Months']);
         Route::post('/p9/{year}/complete',                  [PayrollController::class, 'completeP9']);
+        Route::get('/p9/{year}/delivery/recipients',        [PayrollController::class, 'p9Recipients']);
+        Route::post('/p9/{year}/delivery/send',             [PayrollController::class, 'sendP9']);
         Route::get('/',                                     [PayrollController::class, 'index']);
         Route::post('/',                                    [PayrollController::class, 'store']);
         Route::get('/{payrollPeriod}',                      [PayrollController::class, 'show']);
