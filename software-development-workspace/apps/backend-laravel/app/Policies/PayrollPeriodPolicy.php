@@ -51,6 +51,26 @@ class PayrollPeriodPolicy extends BasePolicy
     }
 
     /**
+     * Changing what is in a period: ad-hoc lines, sending its documents,
+     * marking its P9 checked.
+     *
+     * This method did not exist, and nothing supplies a default, so every
+     * caller of authorize('update', PayrollPeriod::class) denied — silently,
+     * for everybody. Sending payslips has never been possible through the
+     * endpoint; the delivery tests exercised the service directly and passed
+     * either way.
+     *
+     * Mapped to PAYROLL_PROCESS rather than PAYROLL_APPROVE deliberately. The
+     * money was authorised at approval; this is the preparation and
+     * distribution around it, and folding it into approve would mean the only
+     * person who can email a payslip is the one who signs off the run.
+     */
+    public function update(User $user): bool
+    {
+        return $this->can($user, Permission::PAYROLL_PROCESS);
+    }
+
+    /**
      * Releasing a payroll run.
      *
      * Deliberately its own permission. Whoever holds this authorises money

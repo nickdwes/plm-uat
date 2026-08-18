@@ -17,6 +17,7 @@ use App\Http\Controllers\HR\PreboardingController;
 use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
+use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\PayrollConfigController;
 use App\Http\Controllers\OKR\OkrController;
 use App\Http\Controllers\Recruitment\ApplicationController;
@@ -880,6 +881,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/p9/{year}/delivery/send',             [PayrollController::class, 'sendP9']);
         Route::get('/',                                     [PayrollController::class, 'index']);
         Route::post('/',                                    [PayrollController::class, 'store']);
+        // Ad-hoc lines on one person's run — overtime, a bonus, an advance
+        // recovery. Every write recomputes the run; a line that does not move
+        // the net pay is decoration.
+        Route::get('/run-item-codes',                       [PayrollRunItemController::class, 'codes']);
+        Route::get('/runs/{run}/items',                     [PayrollRunItemController::class, 'index']);
+        Route::post('/runs/{run}/items',                    [PayrollRunItemController::class, 'store']);
+        Route::put('/runs/{run}/items/{item}',              [PayrollRunItemController::class, 'update']);
+        Route::delete('/runs/{run}/items/{item}',           [PayrollRunItemController::class, 'destroy']);
+
         Route::get('/{payrollPeriod}',                      [PayrollController::class, 'show']);
         Route::post('/{payrollPeriod}/process',             [PayrollController::class, 'process']);
         Route::post('/{payrollPeriod}/approve',             [PayrollController::class, 'approve']);

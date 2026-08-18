@@ -130,6 +130,40 @@ class PayrollScopingTest extends TestCase
         $this->postJson($this->url("/{$theirs->id}/approve"))->assertNotFound();
     }
 
+    /**
+     * The send endpoint answers at all.
+     *
+     * It called authorize('update', PayrollPeriod::class) against a policy with
+     * no update() method and no default, so it denied for everybody — silently,
+     * since the delivery tests drive the service directly and pass either way.
+     * This asserts the door is open before asserting anything about what comes
+     * through it.
+     */
+    public function test_sending_payslips_is_not_refused_outright(): void
+    {
+        $this->signIn([Permission::PAYROLL_PROCESS, Permission::PAYROLL_VIEW]);
+
+        $mine = $this->period($this->mine);
+        $mine->update(['status' => PayrollPeriod::STATUS_APPROVED]);
+
+        // 422 on an empty recipient list is the validator answering, which
+        // means authorization let it through. 403 would mean it never ran.
+        $this->postJson($this->url("/{$mine->id}/delivery/send"), ['employee_ids' => []])
+            ->assertStatus(422);
+    }
+
+    /** And the same door, closed to somebody without the permission. */
+    public function test_sending_payslips_still_needs_the_permission(): void
+    {
+        $this->signIn([Permission::PAYROLL_VIEW]);
+
+        $mine = $this->period($this->mine);
+        $mine->update(['status' => PayrollPeriod::STATUS_APPROVED]);
+
+        $this->postJson($this->url("/{$mine->id}/delivery/send"), ['employee_ids' => [1]])
+            ->assertForbidden();
+    }
+
     /** Our own is reachable, so the tests above are proving scope not breakage. */
     public function test_our_own_period_is_reachable(): void
     {

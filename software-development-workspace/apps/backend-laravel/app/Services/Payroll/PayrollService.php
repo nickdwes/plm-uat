@@ -7,6 +7,7 @@ use App\Models\PayrollConfigStatutoryRate;
 use App\Models\PayrollConfigTaxBand;
 use App\Models\PayrollPeriod;
 use App\Models\PayrollRun;
+use App\Models\PayrollRunItem;
 use App\Repositories\Payroll\PayrollRepository;
 use App\Services\BaseService;
 use Illuminate\Pagination\LengthAwarePaginator;
@@ -318,16 +319,37 @@ class PayrollService extends BaseService
             ->where('employee_id', $employee->id)
             ->first();
 
-        $adhocEarnings   = 0.0;
+        /*
+         * Ad-hoc lines split three ways, because they are not one thing. A
+         * bonus is taxed; a per diem is paid and not taxed; an advance recovery
+         * comes off the bottom. Adding them all to gross — which is what this
+         * did before anything could write one — charges PAYE on a per diem,
+         * which is money taken from somebody that KRA never asked for.
+         */
+        $adhocTaxable    = 0.0;
+        $adhocNonTaxable = 0.0;
         $adhocDeductions = 0.0;
+
         if ($existingRun) {
             foreach ($existingRun->items ?? [] as $item) {
-                if ($item->type === 'earning')    $adhocEarnings   += (float) $item->amount;
-                if ($item->type === 'deduction')  $adhocDeductions += (float) $item->amount;
+                if ($item->type === PayrollRunItem::TYPE_DEDUCTION) {
+                    $adhocDeductions += (float) $item->amount;
+                    continue;
+                }
+
+                if ($item->type === PayrollRunItem::TYPE_EARNING) {
+                    if ($item->is_taxable) {
+                        $adhocTaxable += (float) $item->amount;
+                    } else {
+                        $adhocNonTaxable += (float) $item->amount;
+                    }
+                }
             }
         }
 
-        $gross += $adhocEarnings;
+        // Only the taxable part reaches the engine: gross_pay is the statutory
+        // base and what column A+B+C of the P9 reports.
+        $gross += $adhocTaxable;
 
         // Run Kenya statutory engine with org-specific config (falls back to hardcoded defaults if none set)
         $stat = KenyaStatutoryEngine::compute($gross, $insurance, $this->loadPayrollConfig($period->organization_id, $period));
@@ -339,7 +361,9 @@ class PayrollService extends BaseService
          */
         $totalDeductions = $stat['employee_deductions'] + $adhocDeductions;
 
-        $netPay = max(0, $gross - $totalDeductions);
+        // Non-taxable earnings are paid without passing through the statutory
+        // base, so they are added after the deductions rather than before.
+        $netPay = max(0, $gross - $totalDeductions + $adhocNonTaxable);
 
         $attributes = [
             // Stored, not recomputed: the P9 used to derive its own and drifted
@@ -349,8 +373,9 @@ class PayrollService extends BaseService
             'basic_salary'      => $basic,
             'house_allowance'   => $house,
             'transport_allowance' => $transport,
-            'other_earnings'    => $medical + $other + $adhocEarnings,
+            'other_earnings'    => $medical + $other + $adhocTaxable,
             'gross_pay'         => $stat['gross_pay'],
+            'non_taxable_earnings' => round($adhocNonTaxable, 2),
             'paye'              => $stat['paye'],
             'shif'              => $stat['shif'],
             'nssf_tier1'        => $stat['nssf_tier1'],
@@ -368,7 +393,8 @@ class PayrollService extends BaseService
                 'transport' => $transport,
                 'medical'   => $medical,
                 'other'     => $other,
-                'adhoc'     => $adhocEarnings,
+                'adhoc'     => $adhocTaxable,
+                'adhoc_non_taxable' => $adhocNonTaxable,
             ],
             'deductions'        => [
                 'paye'          => $stat['paye_payable'],

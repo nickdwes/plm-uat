@@ -22,29 +22,67 @@ class PayslipTemplate
         $e = fn ($v) => htmlspecialchars((string) $v, ENT_QUOTES);
         $m = fn ($v) => number_format((float) $v, 2);
 
-        $earnings = $this->rows([
+        $items = $run->items ?? collect();
+
+        /*
+         * Ad-hoc lines are named individually rather than folded into "other
+         * earnings". A bonus buried in a lump sum is the single most common
+         * reason somebody walks to the payroll desk, and the answer is always
+         * the same sentence that could have been printed here.
+         */
+        $adhocEarnings = collect($items)
+            ->filter(fn ($i) => $i->type === 'earning' && $i->is_taxable)
+            ->map(fn ($i) => [$i->label, $i->amount])
+            ->all();
+
+        $nonTaxable = collect($items)
+            ->filter(fn ($i) => $i->type === 'earning' && ! $i->is_taxable)
+            ->map(fn ($i) => [$i->label . ' (not taxed)', $i->amount])
+            ->all();
+
+        $adhocDeductions = collect($items)
+            ->filter(fn ($i) => $i->type === 'deduction')
+            ->map(fn ($i) => [$i->label, $i->amount])
+            ->all();
+
+        $earnings = $this->rows(array_merge([
             ['Basic salary', $run->basic_salary],
             ['House allowance', $run->house_allowance],
             ['Transport allowance', $run->transport_allowance],
-            ['Other earnings', $run->other_earnings],
-        ], $m);
+        ], $adhocEarnings, [
+            // What is left after the named lines are pulled out of it.
+            ['Other earnings', (float) $run->other_earnings - collect($adhocEarnings)->sum(fn ($r) => (float) $r[1])],
+        ]), $m);
 
         /*
          * Only what actually came off. NITA is the employer's and does not
          * appear here — showing a line the employee did not pay is how a
          * payslip starts an argument it cannot settle.
          */
-        $deductions = $this->rows([
+        $deductions = $this->rows(array_merge([
             ['PAYE (after personal relief of ' . $m($run->personal_relief) . ')', $run->paye_payable],
             ['SHIF (2.75% of gross)', $run->shif],
             ['NSSF Tier I', $run->nssf_tier1],
             ['NSSF Tier II', $run->nssf_tier2],
             ['Affordable Housing Levy (1.5%)', $run->housing_levy],
-        ], $m);
+        ], $adhocDeductions), $m);
 
-        $gross = $m($run->gross_pay);
-        $total = $m($run->total_deductions);
-        $net   = $m($run->net_pay);
+        $gross      = $m($run->gross_pay);
+        $total      = $m($run->total_deductions);
+        $net        = $m($run->net_pay);
+        $nonTaxSum  = (float) ($run->non_taxable_earnings ?? 0);
+
+        /*
+         * Shown as its own section rather than inside gross. It is paid, so it
+         * has to appear or the net does not add up; it is not taxed, so putting
+         * it in gross would contradict the PAYE printed underneath.
+         */
+        $nonTaxBlock = $nonTaxSum > 0
+            ? '<h2>Non-taxable payments</h2><table class="lines">'
+              . $this->rows($nonTaxable, $m)
+              . '<tr class="total"><td>Total non-taxable</td><td class="amt">' . $m($nonTaxSum) . '</td></tr>'
+              . '</table>'
+            : '';
 
         return <<<HTML
 <!DOCTYPE html>
@@ -88,6 +126,8 @@ class PayslipTemplate
     {$deductions}
     <tr class="total"><td>Total deductions</td><td class="amt">{$total}</td></tr>
   </table>
+
+  {$nonTaxBlock}
 
   <table class="lines" style="margin-top:14px">
     <tr class="net"><td>Net pay</td><td class="amt">{$net}</td></tr>
