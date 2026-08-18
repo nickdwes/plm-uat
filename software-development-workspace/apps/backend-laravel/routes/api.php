@@ -18,6 +18,7 @@ use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
+use App\Http\Controllers\Payroll\RecurringDeductionController;
 use App\Http\Controllers\Payroll\PayrollConfigController;
 use App\Http\Controllers\OKR\OkrController;
 use App\Http\Controllers\Recruitment\ApplicationController;
@@ -884,6 +885,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Ad-hoc lines on one person's run — overtime, a bonus, an advance
         // recovery. Every write recomputes the run; a line that does not move
         // the net pay is decoration.
+        // Standing orders against pay — set up once, recovered by every run
+        // after. Balances are derived from what came off approved payroll and
+        // are never accepted from the client.
+        Route::get('/recurring-deductions',                 [RecurringDeductionController::class, 'index']);
+        Route::get('/recurring-deduction-codes',            [RecurringDeductionController::class, 'codes']);
+        Route::post('/recurring-deductions',                [RecurringDeductionController::class, 'store']);
+        Route::put('/recurring-deductions/{recurringDeduction}',    [RecurringDeductionController::class, 'update']);
+        Route::delete('/recurring-deductions/{recurringDeduction}', [RecurringDeductionController::class, 'destroy']);
+
         Route::get('/run-item-codes',                       [PayrollRunItemController::class, 'codes']);
         Route::get('/runs/{run}/items',                     [PayrollRunItemController::class, 'index']);
         Route::post('/runs/{run}/items',                    [PayrollRunItemController::class, 'store']);

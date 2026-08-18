@@ -21,6 +21,10 @@ class PayrollRunItem extends Model
     protected $fillable = [
         'payroll_run_id', 'type', 'label', 'amount',
         'payroll_earning_code_id', 'payroll_deduction_code_id',
+        // Which standing order wrote this line. Left out of $fillable it is
+        // silently dropped, the link is lost, and every derived balance reads
+        // nought while the money still comes off.
+        'employee_recurring_deduction_id',
         'is_taxable', 'note', 'created_by',
     ];
 

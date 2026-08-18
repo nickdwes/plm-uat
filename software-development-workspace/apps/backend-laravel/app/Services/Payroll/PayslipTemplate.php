@@ -40,9 +40,16 @@ class PayslipTemplate
             ->map(fn ($i) => [$i->label . ' (not taxed)', $i->amount])
             ->all();
 
+        /*
+         * The note rides on the line. Where a recovery was trimmed to keep
+         * deductions under two thirds of pay, the person reading this is the
+         * one whose loan is now a month longer — "Sacco Loan 4,000" where they
+         * expected 12,000 is a question somebody answers either way, and it is
+         * cheaper answered here.
+         */
         $adhocDeductions = collect($items)
             ->filter(fn ($i) => $i->type === 'deduction')
-            ->map(fn ($i) => [$i->label, $i->amount])
+            ->map(fn ($i) => [$i->note ? "{$i->label} — {$i->note}" : $i->label, $i->amount])
             ->all();
 
         $earnings = $this->rows(array_merge([

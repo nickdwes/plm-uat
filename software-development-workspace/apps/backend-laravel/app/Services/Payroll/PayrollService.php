@@ -15,8 +15,10 @@ use Illuminate\Support\Facades\DB;
 
 class PayrollService extends BaseService
 {
-    public function __construct(PayrollRepository $repository)
-    {
+    public function __construct(
+        PayrollRepository $repository,
+        private readonly RecurringDeductionApplier $recurring = new RecurringDeductionApplier(),
+    ) {
         parent::__construct($repository);
     }
 
@@ -333,7 +335,16 @@ class PayrollService extends BaseService
         if ($existingRun) {
             foreach ($existingRun->items ?? [] as $item) {
                 if ($item->type === PayrollRunItem::TYPE_DEDUCTION) {
-                    $adhocDeductions += (float) $item->amount;
+                    /*
+                     * Lines a standing order wrote are counted by the applier
+                     * below, which is the only thing that knows what this month
+                     * was actually due. Adding them here as well recovers
+                     * everybody's loan twice.
+                     */
+                    if ($item->employee_recurring_deduction_id === null) {
+                        $adhocDeductions += (float) $item->amount;
+                    }
+
                     continue;
                 }
 
@@ -408,10 +419,37 @@ class PayrollService extends BaseService
             'status'            => PayrollRun::STATUS_DRAFT,
         ];
 
-        return PayrollRun::updateOrCreate(
+        $run = PayrollRun::updateOrCreate(
             ['payroll_period_id' => $period->id, 'employee_id' => $employee->id],
             $attributes,
         );
+
+        /*
+         * Standing orders are applied after the run exists, because their lines
+         * hang off it, and the totals are then restated. Two writes rather than
+         * one: the alternative is computing the recoveries twice, once to size
+         * them and once to record them, which is how the two figures start to
+         * disagree.
+         */
+        $recurring = $this->recurring->apply(
+            run:                  $run,
+            period:               $period,
+            grossPay:             (float) $stat['gross_pay'],
+            statutoryDeductions:  (float) $stat['employee_deductions'],
+            otherDeductions:      $adhocDeductions,
+        );
+
+        if ($recurring > 0 || (float) $run->recurring_deductions !== 0.0) {
+            $withRecurring = round($totalDeductions + $recurring, 2);
+
+            $run->update([
+                'recurring_deductions' => $recurring,
+                'total_deductions'     => $withRecurring,
+                'net_pay'              => round(max(0, $gross - $withRecurring + $adhocNonTaxable), 2),
+            ]);
+        }
+
+        return $run->fresh();
     }
 
     /**

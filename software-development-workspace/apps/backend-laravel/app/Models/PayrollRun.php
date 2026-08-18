@@ -23,6 +23,9 @@ class PayrollRun extends Model
         // Paid, but outside the statutory base — kept apart so gross_pay stays
         // the figure the engine taxed and the P9 reports.
         'non_taxable_earnings',
+        // What standing orders took this month. Stored beside total_deductions
+        // so a payslip can say which part of the total was a loan repayment.
+        'recurring_deductions',
         // Written once by the engine and read everywhere after — the P9 used
         // to derive its own and drifted from the PAYE beside it.
         'taxable_income',
