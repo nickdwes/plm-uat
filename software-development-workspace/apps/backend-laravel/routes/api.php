@@ -17,6 +17,7 @@ use App\Http\Controllers\HR\PreboardingController;
 use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
+use App\Http\Controllers\Payroll\PaymentFileController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\RecurringDeductionController;
 use App\Http\Controllers\Payroll\PayrollConfigController;
@@ -910,6 +911,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Sending them out. Recipients first, because the point of showing who
         // cannot be sent one is to find them while it is still cheap.
+        // The payroll as a file a bank will accept. Preview first: the whole
+        // risk of a payment file is that it looks complete.
+        Route::get('/{payrollPeriod}/payment-file',      [PaymentFileController::class, 'preview']);
+        Route::post('/{payrollPeriod}/payment-file',     [PaymentFileController::class, 'download']);
+
         Route::get('/{payrollPeriod}/delivery/recipients',  [PayrollController::class, 'deliveryRecipients']);
         Route::post('/{payrollPeriod}/delivery/send',       [PayrollController::class, 'sendPayslips']);
     });

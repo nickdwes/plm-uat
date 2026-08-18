@@ -26,6 +26,10 @@ class Employee extends Model
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
+        // Where pay actually goes. Left out of $fillable these are silently
+        // dropped on save and the payment file quietly excludes everybody.
+        'payment_method', 'bank_name', 'bank_code', 'branch_code',
+        'bank_account_number', 'bank_account_name', 'mobile_money_number',
         'employee_number',
         'user_id',
         'primary_organization_id',

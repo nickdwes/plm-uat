@@ -397,6 +397,89 @@ function openSlip(run: Run): void {
   slipRun.value = run; showSlip.value = true; slipError.value = "";
 }
 
+// ── Bank payment file ──────────────────────────────────────────────────────────
+/*
+ * The preview exists so the excluded list is read before the file is made, not
+ * after it is uploaded. A payment file's whole risk is that it looks complete:
+ * the bank pays what it is given and reports success, and the person who was
+ * left out finds out on payday.
+ */
+interface PayFilePreview {
+  payable: number; total: number;
+  rows: { employee_number: string; name: string; account_name: string;
+          account_number: string; bank_name: string; amount: number }[];
+  excluded: { employee_number: string; name: string; amount: number; reason: string }[];
+  excluded_total: number;
+  formats: Record<string, string>;
+  ready: boolean;
+  batches: { id: number; reference: string; format: string; record_count: number;
+             total_amount: string; excluded_count: number; created_at: string }[];
+}
+
+const showPayFile  = ref(false);
+const payFile      = ref<PayFilePreview | null>(null);
+const payFileBusy  = ref(false);
+const payFileError = ref("");
+const payFileFormat = ref("standard");
+
+async function openPayFile(): Promise<void> {
+  if (!selectedPeriod.value) return;
+  showPayFile.value = true; payFileError.value = ""; payFileBusy.value = true;
+  try {
+    payFile.value = await api<PayFilePreview>(
+      "GET", `/api/v1/payroll/${selectedPeriod.value.id}/payment-file`, { org: org() },
+    );
+  } catch (e) {
+    payFileError.value = e instanceof Error ? e.message : "Could not read the payment file.";
+  } finally { payFileBusy.value = false; }
+}
+
+/**
+ * Downloads through fetch rather than a plain link: the endpoint is a POST that
+ * records the batch, and it needs the bearer token and the org header that a
+ * bare href cannot carry.
+ */
+async function downloadPayFile(): Promise<void> {
+  if (!selectedPeriod.value) return;
+  payFileBusy.value = true; payFileError.value = "";
+  try {
+    const res = await fetch(
+      `${import.meta.env.VITE_LARAVEL_API_URL ?? ""}/api/v1/payroll/${selectedPeriod.value.id}/payment-file`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getToken() ?? ""}`,
+          "X-Organization": org() ?? "",
+          "Content-Type": "application/json",
+          Accept: "text/csv",
+        },
+        body: JSON.stringify({ format: payFileFormat.value }),
+      },
+    );
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      payFileError.value = body?.message ?? "The payment file could not be generated.";
+      return;
+    }
+
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = res.headers.get("Content-Disposition")?.match(/filename="?([^"]+)"?/)?.[1]
+      ?? "payment-file.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+
+    // Reload so the batch that was just recorded is on screen — a file
+    // generated and not shown is one somebody generates again.
+    await openPayFile();
+  } catch (e) {
+    payFileError.value = e instanceof Error ? e.message : "The download failed.";
+  } finally { payFileBusy.value = false; }
+}
+
 // ── Standing orders ────────────────────────────────────────────────────────────
 /*
  * SACCO check-offs, HELB, salary advances, court orders. Set up once here and
@@ -676,13 +759,15 @@ watch(tab, (t) => {
               :to="{ name: 'payroll-send', params: { id: selectedPeriod.id } }"
             >{{ delivery?.sent ? "Pay-slips sent" : "Send Payslips" }}</router-link>
 
+            <button class="btn btn-secondary btn-sm" @click="openPayFile">Bank File</button>
+
             <span v-if="delivery?.sent" class="pr-send-note">
               {{ delivery.sent }} sent{{ delivery.last_sent ? ` · ${delivery.last_sent.slice(0, 16)}` : "" }}
               <template v-if="delivery.held">· {{ delivery.held }} held</template>
               <template v-if="delivery.failed">· {{ delivery.failed }} failed</template>
             </span>
           </div>
-          <span v-else class="pr-subtitle">Approve the period to send payslips.</span>
+          <span v-else class="pr-subtitle">Approve the period to send payslips or produce a bank file.</span>
         </div>
         <p v-if="detailLoading" class="status">Loading runs…</p>
 
@@ -1128,6 +1213,135 @@ watch(tab, (t) => {
             Value of quarters is nought throughout — employer-provided housing is
             not recorded in this system.
           </p>
+        </div>
+      </div>
+
+      <!--
+        The bank file. The excluded list is above the download rather than below
+        it: the file's whole risk is looking complete, and a list somebody
+        scrolls past after pressing the button is a list nobody read.
+      -->
+      <div v-if="showPayFile" class="comp-overlay" @click.self="showPayFile = false">
+        <div class="pr-slip" role="dialog" aria-modal="true">
+          <div class="pr-slip-header">
+            <div>
+              <h3 class="pr-slip-title">Bank Payment File</h3>
+              <p class="pr-slip-sub">{{ selectedPeriod?.name }}</p>
+              <p class="pr-slip-meta">Check the excluded list before you upload this anywhere.</p>
+            </div>
+            <button class="comp-popup-close" @click="showPayFile = false">✕</button>
+          </div>
+
+          <div class="pr-slip-body">
+            <p v-if="payFileError" class="error">{{ payFileError }}</p>
+            <p v-if="payFileBusy" class="quiet">Working…</p>
+
+            <template v-if="payFile">
+              <div class="pr-summary-bar" style="margin-bottom:14px">
+                <div class="pr-sum-item">
+                  <span class="pr-sum-label">To be paid</span>
+                  <span class="pr-sum-val">{{ payFile.payable }}</span>
+                </div>
+                <div class="pr-sum-item">
+                  <span class="pr-sum-label">File total</span>
+                  <span class="pr-sum-val">{{ fmt(payFile.total) }}</span>
+                </div>
+                <div class="pr-sum-item">
+                  <span class="pr-sum-label">Not in the file</span>
+                  <span class="pr-sum-val">{{ payFile.excluded.length }}</span>
+                </div>
+              </div>
+
+              <!--
+                The gap stated as an equation. Somebody signing this off is
+                reconciling the payroll total against the batch total, and the
+                difference having a name is the difference between a query and
+                an investigation.
+              -->
+              <p v-if="payFile.excluded.length" class="pr-locked">
+                <strong>{{ payFile.excluded.length }}</strong>
+                {{ payFile.excluded.length === 1 ? "person is" : "people are" }} not in this file,
+                worth {{ fmt(payFile.excluded_total) }}. The bank will report success without them.
+              </p>
+
+              <table v-if="payFile.excluded.length" class="pr-slip-table">
+                <thead><tr><th>Not paid</th><th class="text-right">Amount</th><th>Why</th></tr></thead>
+                <tbody>
+                  <tr v-for="x in payFile.excluded" :key="x.employee_number">
+                    <td>{{ x.name }}</td>
+                    <td class="text-right pr-num">{{ fmt(x.amount) }}</td>
+                    <td class="pr-emp-sub">{{ x.reason }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h4 class="pr-add-title">In the file</h4>
+              <table class="pr-slip-table">
+                <thead><tr><th>Account name</th><th>Account</th><th>Bank</th><th class="text-right">Amount</th></tr></thead>
+                <tbody>
+                  <tr v-for="r in payFile.rows" :key="r.employee_number">
+                    <td>{{ r.account_name }}</td>
+                    <td class="pr-emp-sub">{{ r.account_number }}</td>
+                    <td class="pr-emp-sub">{{ r.bank_name }}</td>
+                    <td class="text-right pr-num">{{ fmt(r.amount) }}</td>
+                  </tr>
+                  <tr v-if="!payFile.rows.length">
+                    <td colspan="4" class="empty">Nobody in this period can be paid by transfer.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h4 v-if="payFile.batches.length" class="pr-add-title">Already generated</h4>
+              <!--
+                Shown because "has this month gone to the bank?" has the same
+                wrong answer available as the payslip question — nobody knows,
+                so do it again — and a payroll file uploaded twice pays
+                everybody twice.
+              -->
+              <table v-if="payFile.batches.length" class="pr-slip-table">
+                <tbody>
+                  <tr v-for="b in payFile.batches" :key="b.id">
+                    <td>
+                      <span>{{ b.reference }}</span>
+                      <span class="pr-emp-sub">{{ b.created_at?.slice(0, 16).replace("T", " ") }}</span>
+                    </td>
+                    <td class="text-right pr-num">{{ b.record_count }} records</td>
+                    <td class="text-right pr-num">{{ fmt(Number(b.total_amount)) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <template v-if="payFile.ready">
+                <label class="field" style="margin-top:16px"><span>Layout</span>
+                  <select v-model="payFileFormat" class="control">
+                    <option v-for="(label, key) in payFile.formats" :key="key" :value="key">{{ label }}</option>
+                  </select>
+                </label>
+
+                <!--
+                  Said rather than implied. These are documented CSV shapes, not
+                  a particular bank's template — a file claiming to be one and
+                  not being it is rejected at best and mispaid at worst.
+                -->
+                <p class="pr-tax-note">
+                  These are generic layouts. If your bank needs its own column order, send me its
+                  bulk-upload spec sheet and it can be added — guessing at one is not worth doing
+                  with a payroll.
+                </p>
+
+                <div class="pr-add-actions">
+                  <button class="btn btn-primary btn-sm" :disabled="payFileBusy || !payFile.payable"
+                          @click="downloadPayFile">
+                    {{ payFileBusy ? "Generating…" : `Generate file · ${fmt(payFile.total)}` }}
+                  </button>
+                </div>
+              </template>
+              <p v-else class="pr-locked" style="margin-top:14px">
+                This period has not been approved. A draft can still be recomputed, and a payment
+                file moves money the moment somebody uploads it.
+              </p>
+            </template>
+          </div>
         </div>
       </div>
 
