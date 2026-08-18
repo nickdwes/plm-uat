@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\PayrollPeriod;
 use App\Services\Payroll\PayrollService;
 use Illuminate\Http\JsonResponse;
+use App\Models\PayslipDelivery;
+use App\Services\Payroll\PayslipDeliveryService;
 use App\Services\Payroll\PayslipPdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -116,6 +118,54 @@ class PayrollController extends Controller
             'X-Payslip-Password-Hint' => $document['password_hint'],
             'X-Content-Type-Options'  => 'nosniff',
         ]);
+    }
+
+    /** Who could be sent a payslip for this period, and who could not. */
+    public function deliveryRecipients(int $payrollPeriod, PayslipDeliveryService $delivery): JsonResponse
+    {
+        $this->authorize('view', PayrollPeriod::class);
+
+        $period = $this->service->getPeriod($payrollPeriod);
+
+        return response()->json([
+            'recipients' => $delivery->recipients($period),
+            'sent'       => PayslipDelivery::where('payroll_period_id', $period->id)
+                ->get(['employee_id', 'status', 'recipient', 'sent_at', 'detail']),
+        ]);
+    }
+
+    /**
+     * Send them.
+     *
+     * Guarded on the period being approved or paid: a draft is a working
+     * document that can still be recomputed, and a payslip somebody has been
+     * emailed cannot be.
+     */
+    public function sendPayslips(Request $request, int $payrollPeriod, PayslipDeliveryService $delivery): JsonResponse
+    {
+        $this->authorize('update', PayrollPeriod::class);
+
+        $data = $request->validate([
+            'employee_ids'   => ['required', 'array', 'min:1'],
+            'employee_ids.*' => ['integer'],
+            'subject'        => ['nullable', 'string', 'max:200'],
+            'message'        => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $period = $this->service->getPeriod($payrollPeriod);
+
+        abort_unless(
+            in_array($period->status, [PayrollPeriod::STATUS_APPROVED, PayrollPeriod::STATUS_PAID], true),
+            422,
+            'Approve the period before sending payslips — a draft can still be recomputed, and an emailed payslip cannot.',
+        );
+
+        return response()->json($delivery->send(
+            $period,
+            $data['employee_ids'],
+            ['subject' => $data['subject'] ?? null, 'message' => $data['message'] ?? null],
+            $request->user()?->id,
+        ));
     }
 
     // ── P9 ────────────────────────────────────────────────────────────────────

@@ -881,6 +881,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/{payrollPeriod}/slip/{employee}',      [PayrollController::class, 'slip']);
         // Always encrypted; there is no unprotected route to these bytes.
         Route::get('/{payrollPeriod}/slip/{employee}/pdf',  [PayrollController::class, 'slipPdf']);
+
+        // Sending them out. Recipients first, because the point of showing who
+        // cannot be sent one is to find them while it is still cheap.
+        Route::get('/{payrollPeriod}/delivery/recipients',  [PayrollController::class, 'deliveryRecipients']);
+        Route::post('/{payrollPeriod}/delivery/send',       [PayrollController::class, 'sendPayslips']);
     });
 
     // ── Payroll Configuration ─────────────────────────────────────────────────
