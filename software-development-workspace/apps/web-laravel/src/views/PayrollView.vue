@@ -51,6 +51,60 @@ const historyLoading = ref(false);
 
 const p9Year    = ref<number>(new Date().getFullYear());
 const p9Data    = ref<P9Row[]>([]);
+
+/*
+ * The years, as records. The P9 used to be a query run against a year typed
+ * into a box; the questions people ask — is it finished, when was it last
+ * touched — belong to the exercise, not to the payroll runs underneath it.
+ */
+interface P9ReportRow {
+  id: number; reference: string; tax_year: number; employee_count: number;
+  status: string; generated_at: string | null; last_updated: string | null;
+}
+const p9Reports = ref<P9ReportRow[]>([]);
+const p9Open    = ref<P9ReportRow | null>(null);
+
+/** One employee's year, in the shape of the actual P9A form. */
+const p9Months     = ref<any[]>([]);
+const p9MonthsFor  = ref<P9Row | null>(null);
+const p9MonthsBusy = ref(false);
+
+async function loadP9Reports(): Promise<void> {
+  try {
+    p9Reports.value = (await api<{ data: P9ReportRow[] }>(
+      "GET", "/api/v1/payroll/p9/reports", { org: org() },
+    )).data ?? [];
+  } catch { p9Reports.value = []; }
+}
+
+async function openP9Year(row: P9ReportRow): Promise<void> {
+  p9Open.value = row;
+  p9Year.value = row.tax_year;
+  await loadP9();
+}
+
+async function openP9Months(row: P9Row): Promise<void> {
+  p9MonthsFor.value = row;
+  p9MonthsBusy.value = true;
+  p9Months.value = [];
+  try {
+    const res = await api<{ months: any[] }>(
+      "GET", `/api/v1/payroll/p9/employee/${row.employee.id}`,
+      { org: org(), params: { year: p9Year.value } },
+    );
+    p9Months.value = res.months ?? [];
+  } catch { p9Months.value = []; }
+  finally { p9MonthsBusy.value = false; }
+}
+
+async function completeP9(): Promise<void> {
+  if (!p9Open.value) return;
+  try {
+    await api("POST", `/api/v1/payroll/p9/${p9Open.value.tax_year}/complete`, { org: org() });
+    await loadP9Reports();
+    p9Open.value = p9Reports.value.find((r) => r.tax_year === p9Year.value) ?? p9Open.value;
+  } catch { /* the list still shows the truth on next load */ }
+}
 const p9Loading = ref(false);
 const p9Error   = ref("");
 
@@ -236,7 +290,7 @@ function init(): void {
 }
 onMounted(init);
 watch(currentOrgSlug, init);
-watch(tab, (t) => { if (t === "p9") void loadP9(); });
+watch(tab, (t) => { if (t === "p9") void loadP9Reports(); });
 </script>
 
 <template>
@@ -466,21 +520,70 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
 
     <!-- ── P9 TAB ──────────────────────────────────────────────────────────── -->
     <template v-if="tab === 'p9'">
-      <div class="pr-p9-toolbar">
+      <!--
+        The years first, as records. A year with approved payroll and no P9 is
+        not "nothing to see" — it is one nobody has started, which is the thing
+        worth showing.
+      -->
+      <div v-if="!p9Open" class="pr-card">
+        <div class="pr-p9-toolbar">
+          <div>
+            <h3 class="pr-card-title" style="margin:0">P9 Reports</h3>
+            <p class="pr-subtitle" style="margin:0">Annual PAYE deduction cards for KRA</p>
+          </div>
+        </div>
+        <table class="pr-table">
+          <thead>
+            <tr><th>Ref ID</th><th>Year</th><th class="text-right">Employees</th><th>P9 Status</th><th>Last Updated</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="r in p9Reports" :key="r.id">
+              <td class="pr-mono">{{ r.reference }}</td>
+              <td>{{ r.tax_year }}</td>
+              <td class="text-right">{{ r.employee_count || "—" }}</td>
+              <td>
+                <span :class="['badge', r.status === 'completed' ? 'badge-green' : 'badge-blue']">
+                  {{ r.status === "completed" ? "Completed" : "In Progress" }}
+                </span>
+              </td>
+              <td class="pr-dates">{{ r.last_updated?.slice(0, 16) ?? "—" }}</td>
+              <td><button class="link" @click="openP9Year(r)">View</button></td>
+            </tr>
+            <tr v-if="!p9Reports.length">
+              <td colspan="6" class="empty">No approved payroll yet, so there is nothing to report on.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div v-else class="pr-p9-toolbar">
         <div>
-          <h3 class="pr-card-title" style="margin:0">P9 Tax Deduction Card</h3>
+          <button class="link" @click="p9Open = null; loadP9Reports()">← P9 Reports</button>
+          <h3 class="pr-card-title" style="margin:2px 0 0">
+            P9 report — {{ p9Open.tax_year }}
+            <span :class="['badge', p9Open.status === 'completed' ? 'badge-green' : 'badge-blue']"
+                  style="margin-left:8px;font-size:0.8rem">
+              {{ p9Open.status === "completed" ? "Completed" : "In Progress" }}
+            </span>
+          </h3>
           <p class="pr-subtitle" style="margin:0">Annual PAYE summary for KRA compliance</p>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
-          <label style="font-size:0.85rem;font-weight:600">Year</label>
-          <input v-model.number="p9Year" type="number" class="input" style="width:90px;padding:6px" min="2020" max="2030" />
-          <button class="btn btn-primary btn-sm" :disabled="p9Loading" @click="loadP9">
-            {{ p9Loading ? "Loading…" : "Generate" }}
+          <button class="btn btn-secondary btn-sm" :disabled="p9Loading" @click="loadP9">
+            {{ p9Loading ? "Loading…" : "Refresh" }}
+          </button>
+          <!--
+            Not a lock. The figures still come from the payroll runs and would
+            move if a period were ever reopened; this records that somebody has
+            checked it, which is all the status on the designs can mean.
+          -->
+          <button v-if="p9Open.status !== 'completed'" class="btn btn-primary btn-sm" @click="completeP9">
+            Mark completed
           </button>
         </div>
       </div>
       <p v-if="p9Error" class="error">{{ p9Error }}</p>
-      <div class="pr-card table-scroll">
+      <div v-if="p9Open" class="pr-card table-scroll">
         <table class="pr-table pr-p9-table">
           <thead>
             <tr>
@@ -499,6 +602,7 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
               <th class="text-right">NSSF (T1+T2)</th>
               <th class="text-right">Hsg Levy</th>
               <th class="text-right">Net Pay</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -523,9 +627,10 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
               <td class="text-right pr-num pr-deduct">{{ fmt(Number(row.nssf_tier1) + Number(row.nssf_tier2)) }}</td>
               <td class="text-right pr-num pr-deduct">{{ fmt(row.housing_levy) }}</td>
               <td class="text-right pr-num pr-net">{{ fmt(row.net_pay) }}</td>
+              <td><button class="link" @click="openP9Months(row)">View Report</button></td>
             </tr>
             <tr v-if="!p9Data.length && !p9Loading">
-              <td colspan="15" class="empty">No approved/paid payroll for {{ p9Year }}. Process and approve periods first.</td>
+              <td colspan="16" class="empty">No approved/paid payroll for {{ p9Year }}. Process and approve periods first.</td>
             </tr>
           </tbody>
         </table>
@@ -534,6 +639,75 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
 
     <!-- ── PAYSLIP MODAL ───────────────────────────────────────────────────── -->
     <Teleport to="body">
+      <!--
+        One employee's year, laid out as the KRA P9A asks for it: a row per
+        month, with the column letters the form uses, because whoever checks
+        this against the paper form is reading down those letters.
+      -->
+      <div v-if="p9MonthsFor" class="comp-overlay" @click.self="p9MonthsFor = null">
+        <div class="pr-p9-months" role="dialog" aria-modal="true">
+          <div class="pr-slip-header">
+            <div>
+              <h3 class="pr-slip-title">P9A — {{ p9Year }}</h3>
+              <p class="pr-slip-sub">{{ p9MonthsFor.employee.full_name }}</p>
+              <p class="pr-slip-meta">
+                KRA: {{ p9MonthsFor.employee.tax_id ?? "—" }} ·
+                NSSF: {{ p9MonthsFor.employee.nssf_number ?? "—" }}
+              </p>
+            </div>
+            <button class="comp-popup-close" @click="p9MonthsFor = null">✕</button>
+          </div>
+
+          <p v-if="p9MonthsBusy" class="status" style="padding:16px">Loading…</p>
+          <p v-else-if="!p9Months.length" class="empty" style="padding:16px">
+            No approved payroll for this employee in {{ p9Year }}.
+          </p>
+
+          <div v-else class="table-scroll">
+            <table class="pr-table pr-p9-table">
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th class="text-right">Basic Pay<br /><small>A</small></th>
+                  <th class="text-right">Benefits<br /><small>B</small></th>
+                  <th class="text-right">Value of Quarters<br /><small>C</small></th>
+                  <th class="text-right">Total<br /><small>A+B+C</small></th>
+                  <th class="text-right">Defined Contribution<br /><small>E1</small></th>
+                  <th class="text-right">Taxable</th>
+                  <th class="text-right">PAYE</th>
+                  <th class="text-right">Relief</th>
+                  <th class="text-right">PAYE Payable</th>
+                  <th class="text-right">Net Pay</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="m in p9Months" :key="m.period">
+                  <td class="pr-name">{{ m.month }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.basic_pay) }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.benefits) }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.value_of_quarters) }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.gross_pay) }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.defined_contribution) }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.taxable_income) }}</td>
+                  <td class="text-right pr-num pr-deduct">{{ fmt(m.paye) }}</td>
+                  <td class="text-right pr-num">{{ fmt(m.personal_relief) }}</td>
+                  <td class="text-right pr-num pr-deduct">{{ fmt(m.paye_payable) }}</td>
+                  <td class="text-right pr-num pr-net">{{ fmt(m.net_pay) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Nought rather than absent: employer-provided housing is not
+               modelled, and a missing column on a statutory form reads as an
+               error rather than as an absence. -->
+          <p class="pr-slip-meta" style="padding:12px 16px">
+            Value of quarters is nought throughout — employer-provided housing is
+            not recorded in this system.
+          </p>
+        </div>
+      </div>
+
       <div v-if="showSlip && slipRun" class="comp-overlay" @click.self="showSlip = false">
         <div class="pr-slip" role="dialog" aria-modal="true">
           <div class="pr-slip-header">
@@ -642,6 +816,9 @@ watch(tab, (t) => { if (t === "p9") void loadP9(); });
   padding-top: 14px; border-top: 1px solid var(--color-border); }
 .pr-send { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .pr-send-note { font-size: 0.74rem; color: var(--color-text-muted); }
+.pr-p9-months { background: var(--color-surface); border-radius: 12px; width: min(1100px, 96vw);
+  max-height: 88vh; overflow: auto; }
+.pr-p9-months thead small { font-weight: 400; color: var(--color-text-muted); }
 .pr-card-title { font-size: 1rem; font-weight: 700; color: var(--color-text); margin: 0 0 14px; }
 .req { color: var(--red); }
 
