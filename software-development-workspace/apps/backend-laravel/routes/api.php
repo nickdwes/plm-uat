@@ -913,6 +913,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // cannot be sent one is to find them while it is still cheap.
         // The payroll as a file a bank will accept. Preview first: the whole
         // risk of a payment file is that it looks complete.
+        // The month's PAYE return. Data rather than KRA's spreadsheet — see
+        // P10Report for why guessing at their template is not worth doing.
+        Route::get('/{payrollPeriod}/p10',               [PaymentFileController::class, 'p10']);
+        Route::get('/{payrollPeriod}/p10.csv',           [PaymentFileController::class, 'p10Csv']);
+
         Route::get('/{payrollPeriod}/payment-file',      [PaymentFileController::class, 'preview']);
         Route::post('/{payrollPeriod}/payment-file',     [PaymentFileController::class, 'download']);
 

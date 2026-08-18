@@ -397,6 +397,66 @@ function openSlip(run: Run): void {
   slipRun.value = run; showSlip.value = true; slipError.value = "";
 }
 
+// ── P10, the monthly PAYE return ───────────────────────────────────────────────
+/*
+ * Data rather than KRA's spreadsheet. The return is filed on iTax by pasting
+ * into their own template, which they revise and which validates on upload — a
+ * hand-built .xlsx claiming to be theirs fails validation at best, and at worst
+ * is accepted with its columns one place out.
+ */
+interface P10Preview {
+  rows: any[];
+  missing: { name: string; kra_pin: string | null; paye_payable: number; reason: string }[];
+  totals: { employees: number; gross_pay: number; chargeable_pay: number; paye_payable: number };
+  excluded_paye: number;
+  due_on: string | null;
+  ready: boolean;
+}
+
+const showP10  = ref(false);
+const p10Data  = ref<P10Preview | null>(null);
+const p10Busy  = ref(false);
+const p10Err   = ref("");
+
+async function openP10(): Promise<void> {
+  if (!selectedPeriod.value) return;
+  showP10.value = true; p10Err.value = ""; p10Busy.value = true;
+  try {
+    p10Data.value = await api<P10Preview>(
+      "GET", `/api/v1/payroll/${selectedPeriod.value.id}/p10`, { org: org() },
+    );
+  } catch (e) {
+    p10Err.value = e instanceof Error ? e.message : "Could not build the return.";
+  } finally { p10Busy.value = false; }
+}
+
+async function downloadP10(): Promise<void> {
+  if (!selectedPeriod.value) return;
+  p10Busy.value = true; p10Err.value = "";
+  try {
+    const res = await fetch(
+      `${import.meta.env.VITE_LARAVEL_API_URL ?? ""}/api/v1/payroll/${selectedPeriod.value.id}/p10.csv`,
+      { headers: { Authorization: `Bearer ${getToken() ?? ""}`, "X-Organization": org() ?? "" } },
+    );
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      p10Err.value = body.message ?? "Could not build the return.";
+      return;
+    }
+
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `P10-${selectedPeriod.value.name.replace(/\s+/g, "-")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    p10Err.value = "Could not reach the server.";
+  } finally { p10Busy.value = false; }
+}
+
 // ── Bank payment file ──────────────────────────────────────────────────────────
 /*
  * The preview exists so the excluded list is read before the file is made, not
@@ -760,6 +820,7 @@ watch(tab, (t) => {
             >{{ delivery?.sent ? "Pay-slips sent" : "Send Payslips" }}</router-link>
 
             <button class="btn btn-secondary btn-sm" @click="openPayFile">Bank File</button>
+            <button class="btn btn-secondary btn-sm" @click="openP10">P10 Return</button>
 
             <span v-if="delivery?.sent" class="pr-send-note">
               {{ delivery.sent }} sent{{ delivery.last_sent ? ` · ${delivery.last_sent.slice(0, 16)}` : "" }}
@@ -1213,6 +1274,108 @@ watch(tab, (t) => {
             Value of quarters is nought throughout — employer-provided housing is
             not recorded in this system.
           </p>
+        </div>
+      </div>
+
+      <!--
+        The P10. Leads with what is remitted and when it is due: those are the
+        two things somebody opened this for, and neither is obvious from a table
+        of per-employee figures.
+      -->
+      <div v-if="showP10" class="comp-overlay" @click.self="showP10 = false">
+        <div class="pr-slip" role="dialog" aria-modal="true">
+          <div class="pr-slip-header">
+            <div>
+              <h3 class="pr-slip-title">P10 — Monthly PAYE Return</h3>
+              <p class="pr-slip-sub">{{ selectedPeriod?.name }}</p>
+              <p v-if="p10Data?.due_on" class="pr-slip-meta">
+                Due by {{ p10Data.due_on }} · 25% penalty on the tax due if filed late
+              </p>
+            </div>
+            <button class="comp-popup-close" @click="showP10 = false">✕</button>
+          </div>
+
+          <div class="pr-slip-body">
+            <p v-if="p10Err" class="error">{{ p10Err }}</p>
+            <p v-if="p10Busy" class="quiet">Working…</p>
+
+            <template v-if="p10Data">
+              <div class="pr-summary-bar" style="margin-bottom:14px">
+                <div class="pr-sum-item">
+                  <span class="pr-sum-label">Employees</span>
+                  <span class="pr-sum-val">{{ p10Data.totals.employees }}</span>
+                </div>
+                <div class="pr-sum-item">
+                  <span class="pr-sum-label">Chargeable pay</span>
+                  <span class="pr-sum-val">{{ fmt(p10Data.totals.chargeable_pay) }}</span>
+                </div>
+                <div class="pr-sum-item">
+                  <span class="pr-sum-label">PAYE to remit</span>
+                  <span class="pr-sum-val">{{ fmt(p10Data.totals.paye_payable) }}</span>
+                </div>
+              </div>
+
+              <!--
+                iTax rejects a sheet with a blank PIN — the whole sheet, not the
+                row — so this is a blocker rather than a note, and it carries
+                the tax sitting outside the return.
+              -->
+              <p v-if="p10Data.missing.length" class="pr-locked">
+                <strong>{{ p10Data.missing.length }}</strong>
+                {{ p10Data.missing.length === 1 ? "employee has" : "employees have" }}
+                no KRA PIN, holding {{ fmt(p10Data.excluded_paye) }} of PAYE out of this return.
+                iTax rejects the whole sheet over a blank PIN, so these have to be filled in first.
+              </p>
+
+              <table v-if="p10Data.missing.length" class="pr-slip-table">
+                <thead><tr><th>No PIN</th><th class="text-right">PAYE not returned</th></tr></thead>
+                <tbody>
+                  <tr v-for="m in p10Data.missing" :key="m.name">
+                    <td>{{ m.name }}</td>
+                    <td class="text-right pr-num">{{ fmt(m.paye_payable) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <h4 class="pr-add-title">In the return</h4>
+              <table class="pr-slip-table">
+                <thead>
+                  <tr>
+                    <th>Employee</th><th>PIN</th>
+                    <th class="text-right">Chargeable</th><th class="text-right">PAYE</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="r in p10Data.rows" :key="r.employee_id">
+                    <td>{{ r.name }}</td>
+                    <td class="pr-emp-sub">{{ r.kra_pin }}</td>
+                    <td class="text-right pr-num">{{ fmt(r.chargeable_pay) }}</td>
+                    <td class="text-right pr-num">{{ fmt(r.paye_payable) }}</td>
+                  </tr>
+                  <tr v-if="!p10Data.rows.length">
+                    <td colspan="4" class="empty">Nobody in this period has a KRA PIN on file.</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <p class="pr-tax-note">
+                This is the return as figures, for pasting into KRA's own P10 template on iTax.
+                It is deliberately not a rebuilt copy of their spreadsheet — KRA revise it and it
+                validates on upload, and a near-miss is accepted with its columns one place out.
+              </p>
+
+              <div v-if="p10Data.ready" class="pr-add-actions">
+                <button class="btn btn-primary btn-sm" :disabled="p10Busy || !p10Data.rows.length"
+                        @click="downloadP10">
+                  {{ p10Busy ? "Building…" : "Download P10 data" }}
+                </button>
+              </div>
+              <p v-else class="pr-locked" style="margin-top:14px">
+                This period has not been approved. Filing a return from figures that can still be
+                recomputed is how the return and the payslips stop agreeing.
+              </p>
+            </template>
+          </div>
         </div>
       </div>
 
