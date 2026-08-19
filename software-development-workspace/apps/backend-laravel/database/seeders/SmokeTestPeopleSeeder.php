@@ -54,56 +54,60 @@ class SmokeTestPeopleSeeder extends Seeder
     ];
 
     /**
-     * key, name, role, job title, reports-to key, department.
+     * key, name, role, job title, reports-to key, department, grade level.
+     *
+     * The grade is explicit rather than derived from the role. A bursar and a
+     * finance officer hold the same role and sit two rungs apart, and inferring
+     * it would quietly get that wrong on exactly the records somebody checks.
      *
      * Grouped by organisation, and ordered so a manager always exists before
      * the people who report to them.
      */
     private const PEOPLE = [
         'konvergenz' => [
-            ['coo',        'Grace Wanjiku',   'operations_executive', 'Chief Operating Officer', null,        'Service Delivery'],
-            ['cfo',        'Peter Otieno',    'finance_executive',    'Chief Financial Officer', 'coo',       'Finance'],
-            ['finance',    'Mary Njeri',      'finance_officer',      'Finance Officer',         'cfo',       'Finance'],
-            ['hr',         'Alice Kamau',     'org_hr',               'HR Manager',              'coo',       'HR'],
-            ['desk_lead',  'David Mwangi',    'service_desk_analyst', 'Service Desk Lead',       'coo',       'Service Delivery'],
-            ['eng_net',    'John Kariuki',    'support_engineer',     'Network Engineer',        'desk_lead', 'Technical'],
-            ['eng_iam',    'Faith Chebet',    'support_engineer',     'Security Engineer',       'desk_lead', 'Technical'],
-            ['manager',    'Samuel Kiprop',   'dept_manager',         'Technical Manager',       'coo',       'Technical'],
-            ['staff_one',  'Brian Omondi',    'employee',             'Support Technician',      'manager',   'Technical'],
-            ['staff_two',  'Ruth Achieng',    'employee',             'Field Technician',        'manager',   'Technical'],
-            ['account',    'Nancy Wairimu',   'account_manager',      'Account Manager',         'coo',       'BFSI'],
-            ['buyer',      'Joseph Maina',    'procurement_officer',  'Procurement Officer',     'coo',       'Service Delivery'],
-            ['groupadmin', 'Esther Nyambura', 'group_admin',          'Group Administrator',     null,        null],
+            ['coo',        'Grace Wanjiku',   'operations_executive', 'Chief Operating Officer', null,        'Service Delivery', 5],
+            ['cfo',        'Peter Otieno',    'finance_executive',    'Chief Financial Officer', 'coo',       'Finance', 5],
+            ['finance',    'Mary Njeri',      'finance_officer',      'Finance Officer',         'cfo',       'Finance', 2],
+            ['hr',         'Alice Kamau',     'org_hr',               'HR Manager',              'coo',       'HR', 3],
+            ['desk_lead',  'David Mwangi',    'service_desk_analyst', 'Service Desk Lead',       'coo',       'Service Delivery', 3],
+            ['eng_net',    'John Kariuki',    'support_engineer',     'Network Engineer',        'desk_lead', 'Technical', 2],
+            ['eng_iam',    'Faith Chebet',    'support_engineer',     'Security Engineer',       'desk_lead', 'Technical', 2],
+            ['manager',    'Samuel Kiprop',   'dept_manager',         'Technical Manager',       'coo',       'Technical', 4],
+            ['staff_one',  'Brian Omondi',    'employee',             'Support Technician',      'manager',   'Technical', 1],
+            ['staff_two',  'Ruth Achieng',    'employee',             'Field Technician',        'manager',   'Technical', 1],
+            ['account',    'Nancy Wairimu',   'account_manager',      'Account Manager',         'coo',       'BFSI', 3],
+            ['buyer',      'Joseph Maina',    'procurement_officer',  'Procurement Officer',     'coo',       'Service Delivery', 2],
+            ['groupadmin', 'Esther Nyambura', 'group_admin',          'Group Administrator',     null,        null, 4],
         ],
 
         'tiberbu' => [
-            ['tb_head',    'Daniel Mutiso',   'operations_executive', 'Managing Director',       null,        'Client Services'],
-            ['tb_hr',      'Lucy Wambui',     'org_hr',               'HR & Admin Manager',      'tb_head',   'People & Culture'],
-            ['tb_clin',    'Dr Susan Adhiambo', 'dept_manager',       'Head of Clinical Systems','tb_head',   'Clinical Systems'],
-            ['tb_analyst', 'Kevin Barasa',    'service_desk_analyst', 'Service Desk Analyst',    'tb_clin',   'Client Services'],
-            ['tb_eng',     'Mercy Wanjiru',   'support_engineer',     'Systems Engineer',        'tb_clin',   'Clinical Systems'],
-            ['tb_hi',      'Paul Ochieng',    'employee',             'Health Records Officer',  'tb_clin',   'Health Information'],
-            ['tb_fin',     'Janet Muthoni',   'finance_officer',      'Finance Officer',         'tb_head',   'Finance'],
-            ['tb_acct',    'Victor Kimani',   'account_manager',      'Client Relationship Lead','tb_head',   'Client Services'],
+            ['tb_head',    'Daniel Mutiso',   'operations_executive', 'Managing Director',       null,        'Client Services', 5],
+            ['tb_hr',      'Lucy Wambui',     'org_hr',               'HR & Admin Manager',      'tb_head',   'People & Culture', 3],
+            ['tb_clin',    'Dr Susan Adhiambo', 'dept_manager',       'Head of Clinical Systems','tb_head',   'Clinical Systems', 4],
+            ['tb_analyst', 'Kevin Barasa',    'service_desk_analyst', 'Service Desk Analyst',    'tb_clin',   'Client Services', 2],
+            ['tb_eng',     'Mercy Wanjiru',   'support_engineer',     'Systems Engineer',        'tb_clin',   'Clinical Systems', 2],
+            ['tb_hi',      'Paul Ochieng',    'employee',             'Health Records Officer',  'tb_clin',   'Health Information', 1],
+            ['tb_fin',     'Janet Muthoni',   'finance_officer',      'Finance Officer',         'tb_head',   'Finance', 2],
+            ['tb_acct',    'Victor Kimani',   'account_manager',      'Client Relationship Lead','tb_head',   'Client Services', 3],
         ],
 
         'visibility' => [
-            ['vs_head',    'Anne Wangari',    'operations_executive', 'General Manager',         null,        'Managed Services'],
-            ['vs_cfo',     'Tom Kiplagat',    'finance_executive',    'Finance Director',        'vs_head',   'Finance & Admin'],
-            ['vs_dev',     'Ian Njoroge',     'dept_manager',         'Engineering Manager',     'vs_head',   'Software Engineering'],
-            ['vs_eng_one', 'Cynthia Auma',    'support_engineer',     'Software Engineer',       'vs_dev',    'Software Engineering'],
-            ['vs_eng_two', 'Dennis Mwaura',   'support_engineer',     'Platform Engineer',       'vs_dev',    'Managed Services'],
-            ['vs_hr',      'Beatrice Nduta',  'org_hr',               'People Lead',             'vs_head',   'Finance & Admin'],
-            ['vs_sales',   'Eric Wafula',     'account_manager',      'Business Development',    'vs_head',   'Commercial'],
+            ['vs_head',    'Anne Wangari',    'operations_executive', 'General Manager',         null,        'Managed Services', 5],
+            ['vs_cfo',     'Tom Kiplagat',    'finance_executive',    'Finance Director',        'vs_head',   'Finance & Admin', 5],
+            ['vs_dev',     'Ian Njoroge',     'dept_manager',         'Engineering Manager',     'vs_head',   'Software Engineering', 4],
+            ['vs_eng_one', 'Cynthia Auma',    'support_engineer',     'Software Engineer',       'vs_dev',    'Software Engineering', 2],
+            ['vs_eng_two', 'Dennis Mwaura',   'support_engineer',     'Platform Engineer',       'vs_dev',    'Managed Services', 3],
+            ['vs_hr',      'Beatrice Nduta',  'org_hr',               'People Lead',             'vs_head',   'Finance & Admin', 3],
+            ['vs_sales',   'Eric Wafula',     'account_manager',      'Business Development',    'vs_head',   'Commercial', 3],
         ],
 
         'teedu' => [
-            ['td_head',    'Prof James Mburu','operations_executive', 'Principal',               null,        'Operations'],
-            ['td_faculty', 'Rose Nekesa',     'dept_manager',         'Head of Faculty',         'td_head',   'Faculty'],
-            ['td_tutor',   'Simon Cheruiyot', 'employee',             'Lecturer',                'td_faculty','Faculty'],
-            ['td_student', 'Winnie Akinyi',   'employee',             'Student Services Officer','td_head',   'Student Services'],
-            ['td_fin',     'Charles Barasa',  'finance_officer',      'Bursar',                  'td_head',   'Finance'],
-            ['td_hr',      'Agnes Chelimo',   'org_hr',               'HR Officer',              'td_head',   'Operations'],
+            ['td_head',    'Prof James Mburu','operations_executive', 'Principal',               null,        'Operations', 5],
+            ['td_faculty', 'Rose Nekesa',     'dept_manager',         'Head of Faculty',         'td_head',   'Faculty', 4],
+            ['td_tutor',   'Simon Cheruiyot', 'employee',             'Lecturer',                'td_faculty','Faculty', 2],
+            ['td_student', 'Winnie Akinyi',   'employee',             'Student Services Officer','td_head',   'Student Services', 1],
+            ['td_fin',     'Charles Barasa',  'finance_officer',      'Bursar',                  'td_head',   'Finance', 3],
+            ['td_hr',      'Agnes Chelimo',   'org_hr',               'HR Officer',              'td_head',   'Operations', 2],
         ],
     ];
 
@@ -124,14 +128,16 @@ class SmokeTestPeopleSeeder extends Seeder
                 app()->instance('current.organization_id', $org->id);
 
                 $departments = $this->departments($org, $slug);
+                $grades      = $this->grades($org);
 
-                foreach ($roster as [$key, $name, $roleName, $title, $managerKey, $departmentName]) {
+                foreach ($roster as [$key, $name, $roleName, $title, $managerKey, $departmentName, $gradeLevel]) {
                     $index++;
 
                     $made[$key] = $this->person(
                         $org, $key, $name, $roleName, $index,
                         $made[$managerKey] ?? null,
                         $departments[$departmentName] ?? null,
+                        $this->designation($org, $title, $gradeLevel, $grades),
                     );
                 }
 
@@ -179,6 +185,78 @@ class SmokeTestPeopleSeeder extends Seeder
         return $existing->all();
     }
 
+    /**
+     * The grade ladder, mirroring the one Konvergenz already uses.
+     *
+     * Matched on code rather than name, because Konvergenz's existing rungs are
+     * named "Senior Engineer / Manager" and "C-Suite" and a fixture that
+     * duplicated them under tidier names would leave two ladders where there
+     * should be one.
+     *
+     * @return array<int, int> level => id
+     */
+    private function grades(Organization $org): array
+    {
+        $ladder = [
+            1 => ['G1', 'Trainee'],
+            2 => ['G2', 'Officer / Engineer'],
+            3 => ['G3', 'Senior / Specialist'],
+            4 => ['G4', 'Manager / Unit Head'],
+            5 => ['G5', 'Executive'],
+        ];
+
+        $out = [];
+
+        foreach ($ladder as $level => [$code, $name]) {
+            $grade = \App\Models\JobGrade::withoutGlobalScope('organization')
+                ->where('organization_id', $org->id)
+                ->where('code', $code)
+                ->first();
+
+            $grade ??= \App\Models\JobGrade::create([
+                'organization_id' => $org->id,
+                'name'            => $name,
+                'code'            => $code,
+                'level'           => $level,
+                'currency'        => 'KES',
+            ]);
+
+            $out[$level] = $grade->id;
+        }
+
+        return $out;
+    }
+
+    /**
+     * A designation for a job title, on the right rung.
+     *
+     * Created per organisation because a "Finance Officer" at the academy is
+     * not the same post as one at the network company — they report to
+     * different people and sit under different grades, and sharing the record
+     * would make the org chart lie.
+     */
+    private function designation(Organization $org, string $title, int $gradeLevel, array $grades): int
+    {
+        $designation = \App\Models\Designation::withoutGlobalScope('organization')
+            ->where('organization_id', $org->id)
+            ->where('title', $title)
+            ->first();
+
+        $designation ??= \App\Models\Designation::create([
+            'organization_id' => $org->id,
+            'title'           => $title,
+            'job_grade_id'    => $grades[$gradeLevel] ?? null,
+        ]);
+
+        // An existing designation with no grade gets one rather than being left
+        // half-configured — the grade is what the salary bands hang off.
+        if ($designation->job_grade_id === null && isset($grades[$gradeLevel])) {
+            $designation->update(['job_grade_id' => $grades[$gradeLevel]]);
+        }
+
+        return $designation->id;
+    }
+
     // ── One person ────────────────────────────────────────────────────────────
 
     private function person(
@@ -189,6 +267,7 @@ class SmokeTestPeopleSeeder extends Seeder
         int $index,
         ?Employee $manager,
         ?int $departmentId,
+        ?int $designationId,
     ): Employee {
         [$first, $last] = explode(' ', $name, 2);
 
@@ -211,6 +290,7 @@ class SmokeTestPeopleSeeder extends Seeder
                 'last_name'       => $last,
                 'work_email'      => $user->email,
                 'department_id'   => $departmentId,
+                'designation_id'  => $designationId,
                 'employment_type' => 'permanent',
                 'status'          => 'active',
                 'date_hired'      => now()->subYears(2)->toDateString(),
