@@ -196,14 +196,24 @@ class ContractRoutingTest extends TestCase
             'organization_id' => $this->org->id, 'business_unit_id' => $bu->id, 'name' => 'Networks',
         ]);
 
-        $this->network->update(['org_practice_id' => $practice->id]);
+        /*
+         * A category of its own, with a practice and no queue named directly.
+         * The seeded categories all point at their own queue, and a direct link
+         * beats the indirect practice route — so the practice path is only
+         * reachable for a category somebody has added without wiring it.
+         */
+        $category = ServiceCategory::create([
+            'organization_id' => $this->org->id,
+            'name' => 'Structured cabling', 'slug' => 'structured-cabling',
+            'org_practice_id' => $practice->id,
+        ]);
 
         $queue = Team::create([
             'organization_id' => $this->org->id, 'name' => 'Network Queue', 'slug' => 'network-queue',
             'org_practice_id' => $practice->id,
         ]);
 
-        $ticket = $this->open(['service_category_id' => $this->network->id])->fresh();
+        $ticket = $this->open(['service_category_id' => $category->id])->fresh();
 
         $this->assertSame($queue->id, $ticket->support_team_id);
     }

@@ -315,6 +315,97 @@ class WorkspaceTest extends TestCase
     }
 
 
+    // ── Queues and the hierarchy ──────────────────────────────────────────────
+
+    /**
+     * The standard queues exist from the first ticket, wired to the categories
+     * they handle. Without this the practice fallback needs an org hierarchy
+     * nobody has built yet, and everything lands on the service desk.
+     */
+    public function test_the_standard_queues_are_created_and_wired_to_categories(): void
+    {
+        $names = Team::pluck('name');
+
+        $this->assertTrue($names->contains('Service Desk'));
+        $this->assertTrue($names->contains('Network Support'));
+        $this->assertTrue($names->contains('Vendor Escalation'));
+
+        $network = \App\Models\Support\ServiceCategory::where('name', 'Network')->firstOrFail();
+
+        $this->assertSame(
+            Team::where('name', 'Network Support')->value('id'),
+            $network->default_team_id,
+        );
+    }
+
+    /** A category's own queue is what routing reaches when no contract applies. */
+    public function test_a_categorised_ticket_reaches_its_queue(): void
+    {
+        $network = \App\Models\Support\ServiceCategory::where('name', 'Network')->firstOrFail();
+
+        $ticket = $this->service()->open($this->org->id, [
+            'subject' => 'Link down', 'service_category_id' => $network->id,
+        ])->fresh();
+
+        $this->assertSame(Team::where('name', 'Network Support')->value('id'), $ticket->support_team_id);
+    }
+
+    /** Vendor escalation is a queue, and it says so rather than being found by name. */
+    public function test_the_vendor_queue_is_marked_as_one(): void
+    {
+        $this->assertTrue(Team::where('name', 'Vendor Escalation')->firstOrFail()->is_vendor_queue);
+    }
+
+    /** Two desk queues would make routing's last resort a matter of insertion order. */
+    public function test_only_one_queue_can_be_the_service_desk(): void
+    {
+        $this->signIn([Permission::SUPPORT_VIEW, Permission::SUPPORT_MANAGE_CONFIG]);
+
+        $other = Team::where('name', 'Network Support')->firstOrFail();
+
+        $this->putJson("/api/v1/support/workspace/teams/{$other->id}",
+            ['is_service_desk' => true], ['X-Organization' => 'alpha'])->assertOk();
+
+        $this->assertSame(1, Team::where('is_service_desk', true)->count());
+        $this->assertSame($other->id, Team::where('is_service_desk', true)->value('id'));
+    }
+
+    /**
+     * The top-up runs on every setup call, so it must not undo an
+     * administrator who deliberately pointed a category somewhere else.
+     */
+    public function test_topping_up_the_queues_does_not_overwrite_a_chosen_queue(): void
+    {
+        $network = \App\Models\Support\ServiceCategory::where('name', 'Network')->firstOrFail();
+        $chosen  = Team::where('name', 'Cloud Support')->firstOrFail();
+
+        $network->update(['default_team_id' => $chosen->id]);
+
+        // Anything that triggers setup again.
+        app(SupportDefaults::class)->ensureFor($this->org->id);
+
+        $this->assertSame($chosen->id, $network->fresh()->default_team_id);
+    }
+
+    // ── Workload ──────────────────────────────────────────────────────────────
+
+    /**
+     * A load report that omits the person carrying fifteen tickets because
+     * nobody filled in their profile is worse than no report.
+     */
+    public function test_the_workload_view_includes_anybody_holding_work(): void
+    {
+        $holder = User::factory()->create(['name' => 'Not set up as an engineer']);
+        $ticket = $this->open();
+        $ticket->update(['assigned_to' => $holder->id]);
+
+        $this->signIn([Permission::SUPPORT_VIEW, Permission::SUPPORT_TRIAGE]);
+
+        $this->getJson('/api/v1/support/workspace/workload', ['X-Organization' => 'alpha'])
+            ->assertOk()
+            ->assertJsonFragment(['user_id' => $holder->id, 'open' => 1]);
+    }
+
     // ── Saved queues ──────────────────────────────────────────────────────────
 
     /** A personal view is one person's; a shared one belongs to the desk. */

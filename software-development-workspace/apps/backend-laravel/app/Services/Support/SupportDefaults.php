@@ -99,6 +99,13 @@ class SupportDefaults
     {
         if (TicketStatus::withoutGlobalScope('organization')
             ->where('organization_id', $organizationId)->exists()) {
+            /*
+             * Already set up — but queues were added after the first
+             * organisations were, so the standard ones are topped up here
+             * rather than left missing for anybody who started earlier.
+             */
+            $this->seedQueues($organizationId);
+
             return;
         }
 
@@ -264,20 +271,60 @@ class SupportDefaults
             ]);
         }
 
-        /*
-         * The desk's own queue, created here so routing always has a last
-         * resort. A ticket nobody can place still has to land somewhere a
-         * person looks — the old module left those unassigned, which is how
-         * things sat untouched for a week.
-         */
-        Team::create([
-            'organization_id' => $organizationId,
-            'name'            => 'Service Desk',
-            'slug'            => 'service-desk',
-            'description'     => 'Everything that has not been placed yet.',
-            'is_service_desk' => true,
-            'is_default'      => true,
-        ]);
+        $this->seedQueues($organizationId);
+    }
+
+    /**
+     * Queues by support responsibility, not one per engineer.
+     *
+     * Each of the technical categories gets the queue that handles it, so the
+     * routing fallback works from the first ticket rather than after somebody
+     * has built out the practice hierarchy. The desk's own queue is the last
+     * resort — a ticket nobody can place still has to land somewhere a person
+     * looks, and the old module left those unassigned, which is how things sat
+     * untouched for a week.
+     */
+    private function seedQueues(int $organizationId): void
+    {
+        $queues = [
+            ['Service Desk',           'Everything that has not been placed yet.', ['is_service_desk' => true, 'is_default' => true], null],
+            ['Network Support',        'Links, routers, circuits and connectivity.', [], 'Network'],
+            ['Infrastructure Support', 'Servers, storage, virtualisation and backup.', [], 'Infrastructure'],
+            ['Cloud Support',          'Azure, Microsoft 365 and hosted services.', [], 'Cloud'],
+            ['Applications Support',   'Line-of-business applications and integrations.', [], 'Applications'],
+            ['IAM and Security',       'Identity, access and security incidents.', [], 'Security and IAM'],
+            ['End-user Support',       'Desktops, laptops and the people using them.', [], 'End-user support'],
+            // Vendor escalation is a queue, not a practice — nobody is a member
+            // of it in the way they belong to a technical team.
+            ['Vendor Escalation',      'Open with a supplier and waiting on them.', ['is_vendor_queue' => true], null],
+        ];
+
+        foreach ($queues as [$name, $description, $flags, $categoryName]) {
+            /*
+             * Idempotent, so an organisation that predates these queues can be
+             * brought up to date by calling this again — and so a half-finished
+             * run leaves something to finish rather than something to unpick.
+             */
+            $team = Team::withoutGlobalScope('organization')->firstOrCreate(
+                ['organization_id' => $organizationId, 'slug' => \Str::slug($name)],
+                array_merge(['name' => $name, 'description' => $description], $flags),
+            );
+
+            /*
+             * Only where nothing is set. This runs on every ensureFor() so that
+             * organisations predating these queues get them, and re-pointing a
+             * category at a different queue is a deliberate choice an
+             * administrator makes — resetting it on the next ticket would
+             * silently undo them.
+             */
+            if ($categoryName) {
+                ServiceCategory::withoutGlobalScope('organization')
+                    ->where('organization_id', $organizationId)
+                    ->where('name', $categoryName)
+                    ->whereNull('default_team_id')
+                    ->update(['default_team_id' => $team->id]);
+            }
+        }
     }
 
     /** Every impact/urgency pair gets an answer, so triage can never fall through. */

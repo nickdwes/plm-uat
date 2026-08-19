@@ -448,6 +448,9 @@ async function runBulk(): Promise<void> {
 // ── Workspace ──────────────────────────────────────────────────────────────────
 interface TeamRow {
   id: number; name: string; description: string | null; is_default: boolean;
+  practice: string | null; practice_id: number | null;
+  business_unit: string | null; business_unit_id: number | null;
+  is_service_desk: boolean; is_vendor_queue: boolean;
   members: { id: number; user_id: number; name: string | null; is_lead: boolean; accepts_assignment: boolean }[];
 }
 interface RuleRow {
@@ -459,6 +462,14 @@ interface CannedRow { id: number; title: string; body: string; support_team_id: 
 interface ViewRow { id: number; name: string; filters: Record<string, string>; user_id: number | null }
 
 const teams  = ref<TeamRow[]>([]);
+const practices = ref<{ id: number; name: string }[]>([]);
+const businessUnits = ref<{ id: number; name: string }[]>([]);
+const staff = ref<{ id: number; name: string }[]>([]);
+const engineers = ref<any[]>([]);
+const workload = ref<any[]>([]);
+const openTeam = ref<number | null>(null);
+const memberDraft = ref({ user_id: "", is_lead: false, accepts_assignment: true });
+const engProfile = ref({ user_id: "", org_practice_id: "", skills: "", accepts_assignment: true });
 const wsRules = ref<RuleRow[]>([]);
 const canned = ref<CannedRow[]>([]);
 const views  = ref<ViewRow[]>([]);
@@ -472,11 +483,14 @@ const ruleDraft2  = ref({ name: "", match_domain: "", match_keyword: "", assign_
 async function loadWorkspace(): Promise<void> {
   wsBusy.value = true; wsError.value = "";
   try {
-    const res = await api<{ teams: TeamRow[]; rules: RuleRow[]; canned: CannedRow[]; views: ViewRow[] }>(
-      "GET", "/api/v1/support/workspace", { org: org() },
-    );
+    const res = await api<any>("GET", "/api/v1/support/workspace", { org: org() });
     teams.value = res.teams; wsRules.value = res.rules;
     canned.value = res.canned; views.value = res.views;
+    practices.value = res.practices ?? [];
+    businessUnits.value = res.business_units ?? [];
+    staff.value = res.staff ?? [];
+    engineers.value = res.engineers ?? [];
+    if (openTeam.value === null && res.teams.length) openTeam.value = res.teams[0].id;
   } catch (e) {
     wsError.value = e instanceof Error ? e.message : "Could not load the workspace.";
   } finally { wsBusy.value = false; }
@@ -561,6 +575,182 @@ async function moveTeam(value: string): Promise<void> {
     await refreshOpen();
   } catch (e) {
     openError.value = e instanceof ApiError ? e.message : "Could not move it.";
+  }
+}
+
+// ── Teams, membership and profiles ─────────────────────────────────────────────
+/*
+ * These four screens existed only as endpoints until now. A queue nobody can be
+ * put into, a contract whose support structure cannot be set and an engineer
+ * whose competency cannot be recorded are the same defect as a record nothing
+ * can read — the routing engine had nothing to read.
+ */
+const currentTeam = computed(() => teams.value.find((t) => t.id === openTeam.value) ?? null);
+
+async function saveTeamDetails(t: TeamRow): Promise<void> {
+  wsBusy.value = true; wsError.value = "";
+  try {
+    await api("PUT", `/api/v1/support/workspace/teams/${t.id}`, {
+      org: org(),
+      body: {
+        description: t.description,
+        org_practice_id: t.practice_id,
+        org_business_unit_id: t.business_unit_id,
+        is_vendor_queue: t.is_vendor_queue,
+      },
+    });
+    await loadWorkspace();
+  } catch (e) {
+    wsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the queue.";
+  } finally { wsBusy.value = false; }
+}
+
+async function addMember(): Promise<void> {
+  if (!openTeam.value || !memberDraft.value.user_id) return;
+  wsBusy.value = true; wsError.value = "";
+  try {
+    await api("POST", `/api/v1/support/workspace/teams/${openTeam.value}/members`, {
+      org: org(),
+      body: {
+        user_id: Number(memberDraft.value.user_id),
+        is_lead: memberDraft.value.is_lead,
+        accepts_assignment: memberDraft.value.accepts_assignment,
+      },
+    });
+    memberDraft.value = { user_id: "", is_lead: false, accepts_assignment: true };
+    await loadWorkspace();
+  } catch (e) {
+    wsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add them.";
+  } finally { wsBusy.value = false; }
+}
+
+/** Somebody on leave stays on the team and stops receiving work. */
+async function setMemberAvailability(m: any, accepts: boolean): Promise<void> {
+  if (!openTeam.value) return;
+  try {
+    await api("POST", `/api/v1/support/workspace/teams/${openTeam.value}/members`, {
+      org: org(),
+      body: { user_id: m.user_id, is_lead: m.is_lead, accepts_assignment: accepts },
+    });
+    await loadWorkspace();
+  } catch (e) { wsError.value = e instanceof Error ? e.message : "Could not change it."; }
+}
+
+async function removeMember(m: any): Promise<void> {
+  if (!openTeam.value) return;
+  try {
+    await api("DELETE", `/api/v1/support/workspace/teams/${openTeam.value}/members/${m.id}`, { org: org() });
+    await loadWorkspace();
+  } catch (e) { wsError.value = e instanceof Error ? e.message : "Could not remove them."; }
+}
+
+async function saveEngineerProfile(): Promise<void> {
+  if (!engProfile.value.user_id) return;
+  wsBusy.value = true; wsError.value = "";
+  try {
+    await api("POST", "/api/v1/support/engineers", {
+      org: org(),
+      body: {
+        user_id: Number(engProfile.value.user_id),
+        org_practice_id: engProfile.value.org_practice_id ? Number(engProfile.value.org_practice_id) : null,
+        // Free-form tags rather than a certification matrix: a matrix is only
+        // more accurate while somebody keeps it current.
+        skills: engProfile.value.skills.split(",").map((x) => x.trim()).filter(Boolean),
+        accepts_assignment: engProfile.value.accepts_assignment,
+      },
+    });
+    engProfile.value = { user_id: "", org_practice_id: "", skills: "", accepts_assignment: true };
+    await loadWorkspace();
+  } catch (e) {
+    wsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the profile.";
+  } finally { wsBusy.value = false; }
+}
+
+async function loadWorkload(teamId?: number): Promise<void> {
+  try {
+    const q = teamId ? `?team=${teamId}` : "";
+    const res = await api<{ data: any[] }>("GET", `/api/v1/support/workspace/workload${q}`, { org: org() });
+    workload.value = res.data;
+  } catch { workload.value = []; }
+}
+
+// ── Contract support structure ─────────────────────────────────────────────────
+const supportDraft = ref({
+  primary_team_id: "", escalation_team_id: "", service_desk_user_id: "",
+  vendor_contact_name: "", vendor_contact_email: "",
+});
+
+watch(currentContract, (c) => {
+  const sup = c?.support ?? {};
+  supportDraft.value = {
+    primary_team_id: sup.primary_team_id ? String(sup.primary_team_id) : "",
+    escalation_team_id: sup.escalation_team_id ? String(sup.escalation_team_id) : "",
+    service_desk_user_id: sup.service_desk_user_id ? String(sup.service_desk_user_id) : "",
+    vendor_contact_name: sup.vendor_contact_name ?? "",
+    vendor_contact_email: sup.vendor_contact_email ?? "",
+  };
+});
+
+async function saveContractSupport(): Promise<void> {
+  if (!openContract.value) return;
+  ctBusy.value = true; ctError.value = "";
+  try {
+    await api("POST", `/api/v1/support/contracts/${openContract.value}/support`, {
+      org: org(),
+      body: {
+        primary_team_id: supportDraft.value.primary_team_id ? Number(supportDraft.value.primary_team_id) : null,
+        escalation_team_id: supportDraft.value.escalation_team_id ? Number(supportDraft.value.escalation_team_id) : null,
+        service_desk_user_id: supportDraft.value.service_desk_user_id ? Number(supportDraft.value.service_desk_user_id) : null,
+        vendor_contact_name: supportDraft.value.vendor_contact_name || null,
+        vendor_contact_email: supportDraft.value.vendor_contact_email || null,
+      },
+    });
+    await loadContracts();
+  } catch (e) {
+    ctError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { ctBusy.value = false; }
+}
+
+// ── Saved queues ───────────────────────────────────────────────────────────────
+const viewName = ref("");
+const viewShared = ref(false);
+
+/** Save the filters currently applied, so a queue can be returned to. */
+async function saveCurrentView(): Promise<void> {
+  if (!viewName.value.trim()) return;
+  try {
+    await api("POST", "/api/v1/support/workspace/views", {
+      org: org(),
+      body: {
+        name: viewName.value,
+        shared: viewShared.value,
+        filters: {
+          state: stateFilter.value, team: teamFilter.value,
+          unassigned: unassignedOnly.value ? "1" : "", all: showAll.value ? "1" : "",
+        },
+      },
+    });
+    viewName.value = ""; viewShared.value = false;
+    await loadWorkspace();
+  } catch (e) {
+    listError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the view.";
+  }
+}
+
+function applyView(v: ViewRow): void {
+  stateFilter.value = v.filters.state ?? "";
+  teamFilter.value = v.filters.team ?? "";
+  unassignedOnly.value = v.filters.unassigned === "1";
+  showAll.value = v.filters.all === "1";
+  void loadList();
+}
+
+async function deleteView(v: ViewRow): Promise<void> {
+  try {
+    await api("DELETE", `/api/v1/support/workspace/views/${v.id}`, { org: org() });
+    await loadWorkspace();
+  } catch (e) {
+    listError.value = e instanceof ApiError ? e.message : "Could not remove it.";
   }
 }
 
@@ -995,7 +1185,7 @@ watch(tab, (t) => {
   if (t === "held") void loadHeld();
   if (t === "settings") void loadSettings();
   if (t === "sla") void loadSla();
-  if (t === "workspace") void loadWorkspace();
+  if (t === "workspace") { void loadWorkspace(); void loadWorkload(); }
   if (t === "desk") void loadDesk();
   if (t === "contracts") void loadContracts();
 });
@@ -1052,6 +1242,24 @@ watch(tab, (t) => {
       <button class="btn btn-secondary btn-sm" :disabled="listBusy" @click="loadList">
         {{ listBusy ? "Loading…" : "Search" }}
       </button>
+    </div>
+
+    <!--
+      Saved queues. The filters somebody works from every morning, kept rather
+      than reapplied — and shareable, because "the overnight queue" is the same
+      queue for everybody on the desk.
+    -->
+    <div v-if="tab === 'queue'" class="sd-views">
+      <button v-for="v in views" :key="v.id" class="sd-view-chip" @click="applyView(v)">
+        {{ v.name }}
+        <span v-if="v.user_id === null" class="sd-view-shared">shared</span>
+        <span class="sd-view-x" title="Remove" @click.stop="deleteView(v)">✕</span>
+      </button>
+      <span class="sd-view-save">
+        <input v-model="viewName" class="control" placeholder="Save these filters as…" />
+        <label class="sd-check"><input v-model="viewShared" type="checkbox" /><span>Share</span></label>
+        <button class="link" :disabled="!viewName.trim()" @click="saveCurrentView">Save</button>
+      </span>
     </div>
 
     <p v-if="listError" class="error">{{ listError }}</p>
@@ -1520,17 +1728,179 @@ watch(tab, (t) => {
 
       <div class="sd-card table-scroll">
         <table class="sd-table">
-          <thead><tr><th>Team</th><th>Members</th><th>Taking work</th></tr></thead>
+          <thead><tr><th>Queue</th><th>Owned by</th><th>Members</th><th>Taking work</th></tr></thead>
           <tbody>
-            <tr v-for="t in teams" :key="t.id">
+            <tr v-for="t in teams" :key="t.id" class="sd-row" @click="openTeam = t.id">
               <td>
                 <span class="sd-subject">{{ t.name }}</span>
                 <span v-if="t.description" class="sd-meta">{{ t.description }}</span>
+                <span v-if="t.is_service_desk" class="sd-pill sd-ok-pill">Service desk</span>
+                <span v-else-if="t.is_vendor_queue" class="sd-pill sd-warn-pill">Vendor</span>
+              </td>
+              <td class="sd-meta">
+                {{ t.practice ?? "—" }}<template v-if="t.business_unit"> · {{ t.business_unit }}</template>
               </td>
               <td>{{ t.members.map(m => m.name).join(", ") || "— nobody yet —" }}</td>
               <td class="sd-mono">{{ t.members.filter(m => m.accepts_assignment).length }} / {{ t.members.length }}</td>
             </tr>
-            <tr v-if="!teams.length"><td colspan="3" class="sd-empty">No teams yet.</td></tr>
+            <tr v-if="!teams.length"><td colspan="4" class="sd-empty">No queues yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!--
+        Membership. Without this a queue exists and nobody can be put in it, so
+        the practice fallback and the suggestion list both have nothing to draw
+        on — the routing engine had nothing to read.
+      -->
+      <div v-if="currentTeam" class="sd-card sd-pad">
+        <h4 class="sd-h4">{{ currentTeam.name }}</h4>
+
+        <div class="sd-grid">
+          <label class="sd-field"><span>Practice</span>
+            <select v-model.number="currentTeam.practice_id" class="control"
+                    @change="saveTeamDetails(currentTeam)">
+              <option :value="null">Not tied to a practice</option>
+              <option v-for="pr in practices" :key="pr.id" :value="pr.id">{{ pr.name }}</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Business unit</span>
+            <select v-model.number="currentTeam.business_unit_id" class="control"
+                    @change="saveTeamDetails(currentTeam)">
+              <option :value="null">Not tied to a business unit</option>
+              <option v-for="b in businessUnits" :key="b.id" :value="b.id">{{ b.name }}</option>
+            </select>
+          </label>
+        </div>
+        <p class="sd-note">
+          The practice is what routing reads when a ticket has a service category and no contract
+          engineer. The business unit is where escalations climb to.
+        </p>
+
+        <table class="sd-table" style="margin-top:12px">
+          <thead><tr><th>Member</th><th>Lead</th><th>Taking work</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="m in currentTeam.members" :key="m.id">
+              <td>{{ m.name }}</td>
+              <td>{{ m.is_lead ? "Lead" : "" }}</td>
+              <td>
+                <!--
+                  Somebody on leave stays on the team and stops receiving work.
+                  Removing them would lose the fact that they belong to it.
+                -->
+                <label class="sd-check">
+                  <input type="checkbox" :checked="m.accepts_assignment"
+                         @change="setMemberAvailability(m, ($event.target as HTMLInputElement).checked)" />
+                  <span>{{ m.accepts_assignment ? "Yes" : "On hold" }}</span>
+                </label>
+              </td>
+              <td class="text-right">
+                <button class="btn btn-ghost btn-sm" style="font-size:.72rem" @click="removeMember(m)">Remove</button>
+              </td>
+            </tr>
+            <tr v-if="!currentTeam.members.length">
+              <td colspan="4" class="sd-empty">Nobody in this queue yet.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="sd-grid" style="margin-top:10px">
+          <label class="sd-field"><span>Add somebody</span>
+            <select v-model="memberDraft.user_id" class="control">
+              <option value="">Choose…</option>
+              <option v-for="u in staff" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+            </select>
+          </label>
+          <label class="sd-check" style="align-self:end">
+            <input v-model="memberDraft.is_lead" type="checkbox" /><span>Team lead</span>
+          </label>
+        </div>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="wsBusy || !memberDraft.user_id"
+                  @click="addMember">Add to queue</button>
+        </div>
+      </div>
+
+      <h3 class="sd-h3">Engineer profiles</h3>
+      <p class="sd-lede">
+        Which practice somebody works in and what they know. Routing uses the practice to find
+        cover when the contract's named engineer is unavailable; the skills are there to inform a
+        human choice, not to make one.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>Engineer</th><th>Practice</th><th>Skills</th><th>Taking work</th></tr></thead>
+          <tbody>
+            <tr v-for="e in engineers" :key="e.id">
+              <td>{{ e.user?.name ?? "—" }}</td>
+              <td>{{ e.practice?.name ?? "—" }}</td>
+              <td class="sd-meta">{{ (e.skills ?? []).join(", ") || "—" }}</td>
+              <td>{{ e.accepts_assignment ? "Yes" : "On hold" }}</td>
+            </tr>
+            <tr v-if="!engineers.length">
+              <td colspan="4" class="sd-empty">
+                Nobody set up. Suggestions will only offer engineers named on a contract.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Set up an engineer</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Person</span>
+            <select v-model="engProfile.user_id" class="control">
+              <option value="">Choose…</option>
+              <option v-for="u in staff" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Practice</span>
+            <select v-model="engProfile.org_practice_id" class="control">
+              <option value="">None</option>
+              <option v-for="pr in practices" :key="pr.id" :value="String(pr.id)">{{ pr.name }}</option>
+            </select>
+          </label>
+          <label class="sd-field sd-add-wide"><span>Skills</span>
+            <input v-model="engProfile.skills" class="control"
+                   placeholder="fortinet, mpls, m365 — comma separated" />
+          </label>
+        </div>
+        <label class="sd-check">
+          <input v-model="engProfile.accepts_assignment" type="checkbox" /><span>Currently taking work</span>
+        </label>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="wsBusy || !engProfile.user_id"
+                  @click="saveEngineerProfile">Save profile</button>
+        </div>
+      </div>
+
+      <h3 class="sd-h3">Who is carrying what</h3>
+      <p class="sd-lede">
+        A lead's view of the week. Anybody holding open work appears, whether or not somebody has
+        filled in their profile — a load report that omits the person carrying fifteen tickets is
+        worse than no report.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead>
+            <tr><th>Engineer</th><th class="text-right">Open</th><th class="text-right">Waiting</th>
+                <th class="text-right">At risk</th><th>Taking work</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="w in workload" :key="w.user_id">
+              <td>{{ w.name }}</td>
+              <td class="text-right sd-mono">{{ w.open }}</td>
+              <td class="text-right sd-mono">{{ w.pending }}</td>
+              <td class="text-right sd-mono">
+                <span v-if="w.at_risk" class="sd-pill sd-clock-bad">{{ w.at_risk }}</span>
+                <span v-else>0</span>
+              </td>
+              <td>{{ w.accepts_assignment ? "Yes" : "On hold" }}</td>
+            </tr>
+            <tr v-if="!workload.length"><td colspan="5" class="sd-empty">Nobody is holding open work.</td></tr>
           </tbody>
         </table>
       </div>
@@ -1758,6 +2128,45 @@ watch(tab, (t) => {
         </label>
 
         <template v-if="currentContract">
+          <!--
+            The rest of the contract's support structure. Routing reads the
+            primary team when no engineer matches, the escalation team when work
+            climbs, and the analyst is who follows the customer without owning
+            the fixes.
+          -->
+          <div class="sd-grid">
+            <label class="sd-field"><span>Primary team</span>
+              <select v-model="supportDraft.primary_team_id" class="control">
+                <option value="">None — fall back to the category's queue</option>
+                <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Escalation team</span>
+              <select v-model="supportDraft.escalation_team_id" class="control">
+                <option value="">None</option>
+                <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Service desk analyst</span>
+              <select v-model="supportDraft.service_desk_user_id" class="control">
+                <option value="">None</option>
+                <option v-for="u in staff" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Vendor contact</span>
+              <input v-model="supportDraft.vendor_contact_name" class="control" placeholder="Who to call at the supplier" />
+            </label>
+            <label class="sd-field"><span>Vendor email</span>
+              <input v-model="supportDraft.vendor_contact_email" class="control" type="email" />
+            </label>
+          </div>
+          <div class="sd-right" style="margin-bottom:14px">
+            <button class="btn btn-secondary btn-sm" :disabled="ctBusy" @click="saveContractSupport">
+              Save support structure
+            </button>
+          </div>
+
+          <h4 class="sd-h4">Named engineers</h4>
           <table class="sd-table">
             <thead><tr><th>Engineer</th><th>Role</th><th>For</th><th></th></tr></thead>
             <tbody>
@@ -2404,4 +2813,16 @@ watch(tab, (t) => {
 .sd-escalations li { display: flex; flex-direction: column; gap: 2px; font-size: .8rem;
   padding: 8px; border-radius: 8px; background: var(--color-warning-light); }
 .sd-done { color: var(--color-success); }
+
+.sd-views { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.sd-view-chip { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  font-size: .8rem; padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-text); }
+.sd-view-chip:hover { border-color: var(--color-brand-base); }
+.sd-view-shared { font-size: .66rem; padding: 0 5px; border-radius: 999px;
+  background: var(--color-surface-sunken); color: var(--color-text-light); }
+.sd-view-x { color: var(--color-text-muted); }
+.sd-view-x:hover { color: var(--color-error); }
+.sd-view-save { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.sd-view-save .control { max-width: 15rem; }
 </style>

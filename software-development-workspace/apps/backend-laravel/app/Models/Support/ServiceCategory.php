@@ -22,7 +22,7 @@ class ServiceCategory extends Model
     protected $table = 'support_service_categories';
 
     protected $fillable = [
-        'organization_id', 'name', 'slug', 'org_practice_id',
+        'organization_id', 'name', 'slug', 'org_practice_id', 'default_team_id',
         'is_technical', 'position', 'is_active',
     ];
 
@@ -37,5 +37,11 @@ class ServiceCategory extends Model
     public function practice(): BelongsTo
     {
         return $this->belongsTo(OrgPractice::class, 'org_practice_id');
+    }
+
+    /** The queue that handles this discipline, where one is named directly. */
+    public function defaultTeam(): BelongsTo
+    {
+        return $this->belongsTo(Team::class, 'default_team_id');
     }
 }

@@ -331,7 +331,19 @@ class RoutingEngine
 
     private function practiceQueue(Ticket $ticket): ?int
     {
-        $practiceId = $ticket->serviceCategory?->org_practice_id;
+        $category = $ticket->serviceCategory;
+
+        /*
+         * The queue named on the category, first. Most organisations take
+         * tickets long before they finish setting their practices up, and
+         * without this the fallback quietly does nothing and everything lands
+         * on the service desk.
+         */
+        if ($category?->default_team_id) {
+            return $category->default_team_id;
+        }
+
+        $practiceId = $category?->org_practice_id;
 
         if (! $practiceId) {
             return null;

@@ -930,6 +930,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Teams, routing, canned answers and saved queues.
         Route::get('/workspace',                [WorkspaceController::class, 'index']);
         Route::post('/workspace/teams',         [WorkspaceController::class, 'storeTeam']);
+        Route::put('/workspace/teams/{team}',   [WorkspaceController::class, 'updateTeam']);
+        Route::get('/workspace/workload',       [WorkspaceController::class, 'workload']);
         Route::post('/workspace/teams/{team}/members', [WorkspaceController::class, 'saveMember']);
         Route::delete('/workspace/teams/{team}/members/{member}', [WorkspaceController::class, 'removeMember']);
         Route::post('/workspace/rules',         [WorkspaceController::class, 'saveRule']);

@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Support;
 use App\Http\Controllers\Controller;
 use App\Models\Support\AssignmentRule;
 use App\Models\Support\CannedResponse;
+use App\Models\Support\Engineer;
 use App\Models\Support\SavedView;
 use App\Models\Support\Team;
 use App\Models\Support\TeamMember;
 use App\Models\Support\Ticket;
 use Illuminate\Http\JsonResponse;
+use App\Services\Support\RoutingEngine;
 use Illuminate\Http\Request;
 
 /**
@@ -28,12 +30,19 @@ class WorkspaceController extends Controller
         $this->authorize('viewAny', Ticket::class);
 
         return response()->json([
-            'teams' => Team::with('members.user:id,name')->orderBy('name')->get()
+            'teams' => Team::with(['members.user:id,name', 'practice:id,name', 'businessUnit:id,name'])
+                ->orderBy('name')->get()
                 ->map(fn (Team $t) => [
                     'id'   => $t->id,
                     'name' => $t->name,
                     'description' => $t->description,
                     'is_default'  => $t->is_default,
+                    'practice'      => $t->practice?->name,
+                    'practice_id'   => $t->org_practice_id,
+                    'business_unit' => $t->businessUnit?->name,
+                    'business_unit_id' => $t->org_business_unit_id,
+                    'is_service_desk'  => $t->is_service_desk,
+                    'is_vendor_queue'  => $t->is_vendor_queue,
                     'members'     => $t->members->map(fn (TeamMember $m) => [
                         'id'      => $m->id,
                         'user_id' => $m->user_id,
@@ -52,6 +61,20 @@ class WorkspaceController extends Controller
              */
             'canned' => CannedResponse::orderByDesc('use_count')->orderBy('title')
                 ->get(['id', 'title', 'body', 'support_team_id', 'use_count']),
+
+            /*
+             * The org hierarchy, so a queue can be tied to the practice and
+             * business unit that owns it rather than restating them.
+             */
+            'practices' => \App\Models\OrgPractice::where('is_active', true)
+                ->orderBy('name')->get(['id', 'name', 'business_unit_id']),
+            'business_units' => \App\Models\OrgBusinessUnit::where('is_active', true)
+                ->orderBy('name')->get(['id', 'name']),
+
+            'engineers' => Engineer::with(['user:id,name', 'practice:id,name'])
+                ->orderBy('id')->get(),
+
+            'staff' => \App\Models\User::orderBy('name')->limit(300)->get(['id', 'name']),
 
             'views' => SavedView::where(fn ($q) => $q->whereNull('user_id')
                     ->orWhere('user_id', $request->user()?->id))
@@ -77,6 +100,85 @@ class WorkspaceController extends Controller
         ]);
 
         return response()->json(['data' => $team], 201);
+    }
+
+    /**
+     * Edit a queue: its description, the practice and business unit it belongs
+     * to, and whether it is the desk or the vendor queue.
+     *
+     * The business unit completes the hierarchy — customer, contract, team,
+     * business unit, engineers — and without it the chain stops one level short
+     * of where escalations actually go.
+     */
+    public function updateTeam(Request $request, int $team): JsonResponse
+    {
+        $this->authorize('manageConfig', Ticket::class);
+
+        $data = $request->validate([
+            'name'                 => ['sometimes', 'string', 'max:120'],
+            'description'          => ['nullable', 'string', 'max:255'],
+            'org_practice_id'      => ['nullable', 'integer', 'exists:org_practices,id'],
+            'org_business_unit_id' => ['nullable', 'integer', 'exists:org_business_units,id'],
+            'is_service_desk'      => ['boolean'],
+            'is_vendor_queue'      => ['boolean'],
+            'is_active'            => ['boolean'],
+        ]);
+
+        $record = Team::findOrFail($team);
+
+        // One desk queue only: routing falls back to it, and two would make
+        // which one a ticket lands in a matter of insertion order.
+        if ($data['is_service_desk'] ?? false) {
+            Team::where('id', '!=', $record->id)->update(['is_service_desk' => false]);
+        }
+
+        $record->update($data);
+
+        return response()->json(['data' => $record->fresh(['practice:id,name', 'businessUnit:id,name'])]);
+    }
+
+    /**
+     * Who is carrying what, across a team or the whole desk.
+     *
+     * A team lead's view. The same figures the assign screen shows against one
+     * ticket, gathered so somebody can see the shape of the week rather than
+     * discovering it one ticket at a time.
+     */
+    public function workload(Request $request, RoutingEngine $routing): JsonResponse
+    {
+        $this->authorize('triage', Ticket::class);
+
+        $orgId = app('current.organization_id');
+
+        $userIds = $request->filled('team')
+            ? (Team::find($request->integer('team'))?->assignableUserIds() ?? [])
+            : Engineer::where('is_active', true)->pluck('user_id')->all();
+
+        /*
+         * Anybody currently holding work is included even if they are not set
+         * up as an engineer. A load report that omits the person carrying
+         * fifteen tickets because nobody filled in their profile is worse than
+         * no report.
+         */
+        $holding = Ticket::whereNotNull('assigned_to')
+            ->whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']))
+            ->distinct()->pluck('assigned_to')->all();
+
+        $userIds = array_values(array_unique(array_merge($userIds, $holding)));
+        $load    = $routing->workload($orgId, $userIds);
+
+        $names = \App\Models\User::whereIn('id', $userIds)->pluck('name', 'id');
+
+        $rows = collect($userIds)->map(fn ($id) => [
+            'user_id' => $id,
+            'name'    => $names[$id] ?? "User {$id}",
+            'open'    => $load[$id]['open'] ?? 0,
+            'pending' => $load[$id]['pending'] ?? 0,
+            'at_risk' => $load[$id]['at_risk'] ?? 0,
+            'accepts_assignment' => Engineer::where('user_id', $id)->value('accepts_assignment') ?? true,
+        ])->sortByDesc(fn ($r) => [$r['at_risk'], $r['open']])->values();
+
+        return response()->json(['data' => $rows]);
     }
 
     public function saveMember(Request $request, int $team): JsonResponse
