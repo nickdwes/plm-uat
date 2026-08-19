@@ -20,6 +20,7 @@ use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
 use App\Http\Controllers\Support\MailWebhookController;
 use App\Http\Controllers\Support\MailboxController;
+use App\Http\Controllers\Support\SlaController;
 use App\Http\Controllers\Support\TicketController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\RecurringDeductionController;
@@ -912,6 +913,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/sender-rules',                 [MailboxController::class, 'rules']);
         Route::post('/sender-rules',                [MailboxController::class, 'storeRule']);
         Route::delete('/sender-rules/{rule}',       [MailboxController::class, 'destroyRule']);
+
+        // Service levels and the calendars they are measured against.
+        Route::get('/sla',                          [SlaController::class, 'index']);
+        Route::post('/sla/calendars',               [SlaController::class, 'storeCalendar']);
+        Route::put('/sla/calendars/{calendar}/windows', [SlaController::class, 'updateWindows']);
+        Route::post('/sla/calendars/{calendar}/holidays', [SlaController::class, 'storeHoliday']);
+        Route::delete('/sla/calendars/{calendar}/holidays/{holiday}', [SlaController::class, 'destroyHoliday']);
+        Route::post('/sla/policies',                [SlaController::class, 'storeSla']);
+        Route::put('/sla/policies/{sla}',           [SlaController::class, 'updateSla']);
+        Route::post('/sla/policies/{sla}/targets',  [SlaController::class, 'saveTarget']);
+        Route::delete('/sla/policies/{sla}/targets/{target}', [SlaController::class, 'destroyTarget']);
     });
 
     Route::prefix('payroll')->group(function () {

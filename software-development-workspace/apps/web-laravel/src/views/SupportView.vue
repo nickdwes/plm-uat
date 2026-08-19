@@ -22,8 +22,18 @@ interface Named { id: number; name: string }
 interface Status extends Named { state: string; colour: string | null; is_default: boolean }
 interface Priority extends Named { level: number; colour: string | null }
 
+interface TicketClock {
+  response_due_at: string | null; resolution_due_at: string | null;
+  response_met: boolean | null; resolution_met: boolean | null;
+  paused_at: string | null; paused_minutes: number;
+  response_minutes: number | null; resolution_minutes: number | null;
+  response_minutes_used: number; resolution_minutes_used: number;
+  escalation_level: string | null;
+}
+
 interface TicketRow {
   id: number; reference: string; subject: string;
+  sla: TicketClock | null;
   requester_name: string | null; requester_email: string | null;
   status: Status | null; type: Named | null; priority: Priority | null;
   assignee: { id: number; name: string } | null;
@@ -44,6 +54,8 @@ interface Worklog {
 
 interface TicketDetail extends TicketRow {
   body: string | null;
+  sla_events?: { id: number; event: string; clock: string | null; detail: string | null;
+                 working_minutes: number | null; occurred_at: string }[];
   urgency: Named | null; impact: Named | null;
   contract: { id: number; name: string } | null;
   messages: Message[]; worklogs: Worklog[]; resolved_at: string | null;
@@ -65,6 +77,8 @@ const open      = ref<TicketDetail | null>(null);
 const openBusy  = ref(false);
 const openError = ref("");
 const minutesLogged = ref(0);
+const slaUsed  = ref(0);
+const elapsed  = ref(0);
 
 const reply      = ref({ body: "", visibility: "public" as "public" | "internal" });
 const replyBusy  = ref(false);
@@ -99,11 +113,14 @@ async function loadList(): Promise<void> {
 async function openTicket(row: TicketRow): Promise<void> {
   openBusy.value = true; openError.value = ""; reply.value = { body: "", visibility: "public" };
   try {
-    const res = await api<{ data: TicketDetail; minutes_logged: number }>(
-      "GET", `/api/v1/support/tickets/${row.id}`, { org: org() },
-    );
+    const res = await api<{
+      data: TicketDetail; minutes_logged: number;
+      sla_minutes_used: number; elapsed_minutes: number;
+    }>("GET", `/api/v1/support/tickets/${row.id}`, { org: org() });
     open.value = res.data;
     minutesLogged.value = res.minutes_logged;
+    slaUsed.value = res.sla_minutes_used;
+    elapsed.value = res.elapsed_minutes;
   } catch (e) {
     openError.value = e instanceof Error ? e.message : "Could not open the ticket.";
   } finally { openBusy.value = false; }
@@ -175,6 +192,176 @@ async function logTime(): Promise<void> {
   }
 }
 
+// ── The clock ──────────────────────────────────────────────────────────────────
+/*
+ * What a row says about its SLA.
+ *
+ * The old system showed nothing, because every figure it computed came out of a
+ * column that does not exist. The states here are deliberately few — a queue
+ * scanned at a glance can carry four meanings, not ten.
+ */
+function clockState(t: TicketRow): { label: string; tone: "ok" | "warn" | "bad" | "mute" } {
+  const c = t.sla;
+
+  // Untriaged: no impact, no urgency, so no promise was made.
+  if (!c) return { label: "No target", tone: "mute" };
+  if (c.paused_at) return { label: "Paused", tone: "mute" };
+
+  if (c.response_met === false) return { label: "Response breached", tone: "bad" };
+  if (c.resolution_met === false) return { label: "Resolution breached", tone: "bad" };
+
+  const due = c.response_met === null ? c.response_due_at : c.resolution_due_at;
+  const what = c.response_met === null ? "Reply" : "Fix";
+
+  if (!due) return { label: "No target", tone: "mute" };
+
+  const left = Math.round((new Date(due).getTime() - Date.now()) / 60000);
+
+  if (left < 0) return { label: `${what} overdue`, tone: "bad" };
+  // Under an hour is where somebody can still do something about it.
+  if (left < 60) return { label: `${what} due in ${left}m`, tone: "warn" };
+
+  const hours = Math.floor(left / 60);
+
+  return hours < 24
+    ? { label: `${what} due in ${hours}h`, tone: "ok" }
+    : { label: `${what} due in ${Math.floor(hours / 24)}d`, tone: "ok" };
+}
+
+function hm(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  return h > 0 ? `${h}h ${minutes % 60}m` : `${minutes}m`;
+}
+
+// ── Service levels ─────────────────────────────────────────────────────────────
+interface SlaTargetRow {
+  id: number; priority_id: number; priority: string; level: number;
+  response_minutes: number; resolution_minutes: number;
+  hod_escalation_minutes: number | null;
+  cto_escalation_minutes: number | null;
+  ceo_escalation_minutes: number | null;
+}
+interface SlaRow {
+  id: number; name: string; is_default: boolean; is_active: boolean;
+  calendar: string | null; calendar_id: number | null;
+  contract: string | null; contract_id: number | null;
+  targets: SlaTargetRow[];
+}
+interface CalendarRow {
+  id: number; name: string; timezone: string; is_default: boolean;
+  windows: { id: number; weekday: number; opens_at: string; closes_at: string }[];
+  holidays: { id: number; observed_on: string; name: string }[];
+}
+
+const slaData = ref<{
+  calendars: CalendarRow[]; slas: SlaRow[];
+  priorities: { id: number; name: string; level: number; colour: string | null }[];
+  contracts: { id: number; name: string; account: string | null }[];
+}>({ calendars: [], slas: [], priorities: [], contracts: [] });
+
+const slaBusy  = ref(false);
+const slaError = ref("");
+const slaNote  = ref("");
+const openSla  = ref<number | null>(null);
+const openCal  = ref<number | null>(null);
+
+const weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+const targetDraft = ref({
+  priority_id: "", response_minutes: "", resolution_minutes: "",
+  hod_escalation_minutes: "", cto_escalation_minutes: "", ceo_escalation_minutes: "",
+});
+const slaDraft  = ref({ name: "", account_contract_id: "", support_calendar_id: "", is_default: false });
+const holDraft  = ref({ observed_on: "", name: "" });
+
+async function loadSla(): Promise<void> {
+  slaBusy.value = true; slaError.value = "";
+  try {
+    slaData.value = await api("GET", "/api/v1/support/sla", { org: org() });
+    if (openSla.value === null && slaData.value.slas.length) openSla.value = slaData.value.slas[0].id;
+    if (openCal.value === null && slaData.value.calendars.length) openCal.value = slaData.value.calendars[0].id;
+  } catch (e) {
+    slaError.value = e instanceof Error ? e.message : "Could not load the service levels.";
+  } finally { slaBusy.value = false; }
+}
+
+async function addSla(): Promise<void> {
+  slaBusy.value = true; slaError.value = "";
+  try {
+    await api("POST", "/api/v1/support/sla/policies", {
+      org: org(),
+      body: {
+        name: slaDraft.value.name,
+        account_contract_id: slaDraft.value.account_contract_id ? Number(slaDraft.value.account_contract_id) : null,
+        support_calendar_id: slaDraft.value.support_calendar_id ? Number(slaDraft.value.support_calendar_id) : null,
+        is_default: slaDraft.value.is_default,
+      },
+    });
+    slaDraft.value = { name: "", account_contract_id: "", support_calendar_id: "", is_default: false };
+    await loadSla();
+  } catch (e) {
+    slaError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { slaBusy.value = false; }
+}
+
+async function saveTarget(): Promise<void> {
+  if (!openSla.value) return;
+  slaBusy.value = true; slaError.value = ""; slaNote.value = "";
+  try {
+    await api("POST", `/api/v1/support/sla/policies/${openSla.value}/targets`, {
+      org: org(),
+      body: {
+        priority_id: Number(targetDraft.value.priority_id),
+        response_minutes: Number(targetDraft.value.response_minutes),
+        resolution_minutes: Number(targetDraft.value.resolution_minutes),
+        hod_escalation_minutes: targetDraft.value.hod_escalation_minutes
+          ? Number(targetDraft.value.hod_escalation_minutes) : null,
+        cto_escalation_minutes: targetDraft.value.cto_escalation_minutes
+          ? Number(targetDraft.value.cto_escalation_minutes) : null,
+        ceo_escalation_minutes: targetDraft.value.ceo_escalation_minutes
+          ? Number(targetDraft.value.ceo_escalation_minutes) : null,
+      },
+    });
+    slaNote.value = "Saved. Tickets already answered keep the target they were judged against.";
+    targetDraft.value = {
+      priority_id: "", response_minutes: "", resolution_minutes: "",
+      hod_escalation_minutes: "", cto_escalation_minutes: "", ceo_escalation_minutes: "",
+    };
+    await loadSla();
+    setTimeout(() => { slaNote.value = ""; }, 6000);
+  } catch (e) {
+    // The server names the resolution-inside-response slip; pass it through.
+    slaError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the target.";
+  } finally { slaBusy.value = false; }
+}
+
+async function addHoliday(): Promise<void> {
+  if (!openCal.value || !holDraft.value.observed_on) return;
+  slaBusy.value = true; slaError.value = "";
+  try {
+    await api("POST", `/api/v1/support/sla/calendars/${openCal.value}/holidays`, {
+      org: org(), body: { ...holDraft.value },
+    });
+    holDraft.value = { observed_on: "", name: "" };
+    await loadSla();
+  } catch (e) {
+    slaError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add it.";
+  } finally { slaBusy.value = false; }
+}
+
+async function removeHoliday(id: number): Promise<void> {
+  if (!openCal.value) return;
+  try {
+    await api("DELETE", `/api/v1/support/sla/calendars/${openCal.value}/holidays/${id}`, { org: org() });
+    await loadSla();
+  } catch (e) {
+    slaError.value = e instanceof Error ? e.message : "Could not remove it.";
+  }
+}
+
+const currentSla = computed(() => slaData.value.slas.find((s) => s.id === openSla.value) ?? null);
+const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === openCal.value) ?? null);
+
 // ── Held mail ──────────────────────────────────────────────────────────────────
 /*
  * Mail from senders nobody recognises. Held rather than discarded or bounced:
@@ -185,7 +372,7 @@ async function logTime(): Promise<void> {
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "held" | "settings";
+type Tab = "queue" | "held" | "settings" | "sla";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -384,6 +571,7 @@ watch([stateFilter, showAll], loadList);
 watch(tab, (t) => {
   if (t === "held") void loadHeld();
   if (t === "settings") void loadSettings();
+  if (t === "sla") void loadSla();
 });
 </script>
 
@@ -409,6 +597,7 @@ watch(tab, (t) => {
         <span v-if="held.length" class="sd-badge">{{ held.length }}</span>
       </button>
       <button :class="['sd-tabbtn', { on: tab === 'settings' }]" @click="tab = 'settings'">Mail settings</button>
+      <button :class="['sd-tabbtn', { on: tab === 'sla' }]" @click="tab = 'sla'">Service levels</button>
     </div>
 
     <template v-if="tab === 'queue'">
@@ -435,7 +624,7 @@ watch(tab, (t) => {
         <thead>
           <tr>
             <th>Ref</th><th>Subject</th><th>Requester</th>
-            <th>Status</th><th>Priority</th><th>Assignee</th>
+            <th>Status</th><th>Priority</th><th>SLA</th><th>Assignee</th>
             <th class="text-right">Replies</th>
           </tr>
         </thead>
@@ -464,6 +653,14 @@ watch(tab, (t) => {
               </span>
               <!-- An untriaged ticket says so rather than showing a guessed Medium. -->
               <span v-else class="sd-meta">Untriaged</span>
+            </td>
+            <!--
+              One of four meanings, because a queue scanned at a glance can
+              carry four and not ten. Paused reads as neutral on purpose:
+              waiting on a supplier is not the desk failing.
+            -->
+            <td>
+              <span class="sd-pill" :class="'sd-clock-' + clockState(t).tone">{{ clockState(t).label }}</span>
             </td>
             <td>{{ t.assignee?.name ?? "Unassigned" }}</td>
             <td class="text-right sd-mono">{{ t.messages_count }}</td>
@@ -663,6 +860,183 @@ watch(tab, (t) => {
       </div>
     </template>
 
+    <!-- ── Service levels ──────────────────────────────────────────────────── -->
+    <template v-if="tab === 'sla'">
+      <p v-if="slaError" class="error">{{ slaError }}</p>
+      <p v-if="slaNote" class="sd-ok">{{ slaNote }}</p>
+
+      <h3 class="sd-h3">Working hours</h3>
+      <p class="sd-lede">
+        Every target is counted in working minutes against a calendar. Without one, a ticket
+        raised at five on Friday burns a four-hour target before anybody is at a desk.
+      </p>
+
+      <div class="sd-card sd-pad">
+        <label class="sd-field" style="max-width:22rem"><span>Calendar</span>
+          <select v-model.number="openCal" class="control">
+            <option v-for="c in slaData.calendars" :key="c.id" :value="c.id">
+              {{ c.name }}{{ c.is_default ? " · default" : "" }}
+            </option>
+          </select>
+        </label>
+
+        <template v-if="currentCal">
+          <ul class="sd-week">
+            <li v-for="d in 7" :key="d" class="sd-day">
+              <span class="sd-day-name">{{ weekdays[d - 1] }}</span>
+              <span v-if="currentCal.windows.find(w => w.weekday === d - 1)" class="sd-day-hours">
+                {{ currentCal.windows.find(w => w.weekday === d - 1)!.opens_at }} –
+                {{ currentCal.windows.find(w => w.weekday === d - 1)!.closes_at }}
+              </span>
+              <span v-else class="sd-day-shut">Closed</span>
+            </li>
+          </ul>
+
+          <h4 class="sd-h4" style="margin-top:14px">Public holidays</h4>
+          <!--
+            Said plainly, because the omission is deliberate and would otherwise
+            look like an oversight the first time Easter passes uncounted.
+          -->
+          <p class="sd-note">
+            Fixed-date Kenyan holidays are filled in for three years. Good Friday, Easter Monday
+            and both Eids move — Eid on sighting of the moon — so they are added here by hand. A
+            wrong date silently changes every SLA that week.
+          </p>
+
+          <ul class="sd-holidays">
+            <li v-for="h in currentCal.holidays" :key="h.id">
+              <span class="sd-mono">{{ h.observed_on }}</span>
+              <span>{{ h.name }}</span>
+              <button class="link" @click="removeHoliday(h.id)">Remove</button>
+            </li>
+          </ul>
+
+          <div class="sd-grid" style="margin-top:10px">
+            <label class="sd-field"><span>Date</span>
+              <input v-model="holDraft.observed_on" class="control" type="date" />
+            </label>
+            <label class="sd-field"><span>Name</span>
+              <input v-model="holDraft.name" class="control" placeholder="Good Friday" />
+            </label>
+          </div>
+          <div class="sd-right">
+            <button class="btn btn-secondary btn-sm"
+                    :disabled="slaBusy || !holDraft.observed_on || !holDraft.name"
+                    @click="addHoliday">Add holiday</button>
+          </div>
+        </template>
+      </div>
+
+      <h3 class="sd-h3">What we promise</h3>
+      <p class="sd-lede">
+        Targets hang off a contract. The one marked default covers tickets from accounts with no
+        contract, so every ticket has a target rather than no answer at all.
+      </p>
+
+      <div class="sd-card sd-pad">
+        <label class="sd-field" style="max-width:26rem"><span>Service level</span>
+          <select v-model.number="openSla" class="control">
+            <option v-for="s in slaData.slas" :key="s.id" :value="s.id">
+              {{ s.name }}{{ s.contract ? ` · ${s.contract}` : (s.is_default ? " · default" : "") }}
+            </option>
+          </select>
+        </label>
+
+        <div v-if="currentSla" class="table-scroll">
+          <table class="sd-table">
+            <thead>
+              <tr>
+                <th>Priority</th><th class="text-right">Respond</th><th class="text-right">Resolve</th>
+                <th class="text-right">HOD</th><th class="text-right">CTO</th><th class="text-right">CEO</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="t in currentSla.targets" :key="t.id">
+                <td>{{ t.priority }}</td>
+                <td class="text-right sd-mono">{{ hm(t.response_minutes) }}</td>
+                <td class="text-right sd-mono">{{ hm(t.resolution_minutes) }}</td>
+                <td class="text-right sd-mono">{{ t.hod_escalation_minutes ? hm(t.hod_escalation_minutes) : "—" }}</td>
+                <td class="text-right sd-mono">{{ t.cto_escalation_minutes ? hm(t.cto_escalation_minutes) : "—" }}</td>
+                <td class="text-right sd-mono">{{ t.ceo_escalation_minutes ? hm(t.ceo_escalation_minutes) : "—" }}</td>
+              </tr>
+              <tr v-if="!currentSla.targets.length">
+                <td colspan="6" class="sd-empty">
+                  No targets yet. Until a priority has one, tickets at that priority have no clock.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h4 class="sd-h4" style="margin-top:14px">Set a target</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Priority</span>
+            <select v-model="targetDraft.priority_id" class="control">
+              <option value="">Choose…</option>
+              <option v-for="p in slaData.priorities" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Respond within (working minutes)</span>
+            <input v-model="targetDraft.response_minutes" class="control" type="number" min="1" placeholder="240" />
+          </label>
+          <label class="sd-field"><span>Resolve within (working minutes)</span>
+            <input v-model="targetDraft.resolution_minutes" class="control" type="number" min="1" placeholder="540" />
+          </label>
+          <label class="sd-field"><span>Escalate to HOD after</span>
+            <input v-model="targetDraft.hod_escalation_minutes" class="control" type="number" min="1" placeholder="300" />
+          </label>
+          <label class="sd-field"><span>Then to CTO after</span>
+            <input v-model="targetDraft.cto_escalation_minutes" class="control" type="number" min="1" placeholder="480" />
+          </label>
+          <label class="sd-field"><span>Then to CEO after</span>
+            <input v-model="targetDraft.ceo_escalation_minutes" class="control" type="number" min="1" placeholder="600" />
+          </label>
+        </div>
+        <p class="sd-note">
+          Working minutes, not clock minutes: 540 is one full day on an eight-to-five calendar.
+          Changing a target leaves tickets already answered judged by the target they were
+          answered under.
+        </p>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm"
+                  :disabled="slaBusy || !targetDraft.priority_id
+                             || !Number(targetDraft.response_minutes) || !Number(targetDraft.resolution_minutes)"
+                  @click="saveTarget">Save target</button>
+        </div>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Add a service level</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Name</span>
+            <input v-model="slaDraft.name" class="control" placeholder="Gold — 24x7" />
+          </label>
+          <label class="sd-field"><span>Contract</span>
+            <select v-model="slaDraft.account_contract_id" class="control">
+              <option value="">None — organisation fallback</option>
+              <option v-for="c in slaData.contracts" :key="c.id" :value="String(c.id)">
+                {{ c.account ? `${c.account} · ` : "" }}{{ c.name }}
+              </option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Calendar</span>
+            <select v-model="slaDraft.support_calendar_id" class="control">
+              <option value="">Use the default calendar</option>
+              <option v-for="c in slaData.calendars" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+            </select>
+          </label>
+          <label class="sd-check" style="align-self:end">
+            <input v-model="slaDraft.is_default" type="checkbox" />
+            <span>Use for tickets with no contract</span>
+          </label>
+        </div>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="slaBusy || !slaDraft.name.trim()"
+                  @click="addSla">Add service level</button>
+        </div>
+      </div>
+    </template>
+
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->
     <div v-if="open" class="sd-overlay" @click.self="open = null">
       <div class="sd-panel" role="dialog" aria-modal="true">
@@ -784,6 +1158,33 @@ watch(tab, (t) => {
               <span v-else class="sd-meta">Untriaged</span>
               <span class="sd-note">{{ priorityHint }}</span>
             </div>
+          </div>
+
+          <!--
+            Counted minutes beside raw elapsed. The gap between the two is the
+            most-disputed number in any service review, so it is shown rather
+            than left to be worked out.
+          -->
+          <div v-if="open.sla" class="sd-field">
+            <span>Service level</span>
+            <div class="sd-sla">
+              <span class="sd-pill" :class="'sd-clock-' + clockState(open).tone">
+                {{ clockState(open).label }}
+              </span>
+              <span class="sd-note">
+                {{ hm(slaUsed) }} counted of {{ hm(elapsed) }} elapsed
+                <template v-if="open.sla.paused_minutes"> · {{ hm(open.sla.paused_minutes) }} paused</template>
+              </span>
+              <span v-if="open.sla.escalation_level" class="sd-note sd-esc">
+                Escalated to {{ open.sla.escalation_level.toUpperCase() }}
+              </span>
+            </div>
+          </div>
+          <div v-else class="sd-field">
+            <span>Service level</span>
+            <span class="sd-note">
+              No target — set impact and urgency to start the clock.
+            </span>
           </div>
 
           <div class="sd-field">
@@ -1010,4 +1411,23 @@ watch(tab, (t) => {
 .sd-off-pill { background: var(--color-surface-sunken); color: var(--color-text-light); }
 .sd-block-pill { background: var(--color-error-light); color: var(--color-error); }
 .sd-error-note { display: block; font-size: .72rem; color: var(--color-error); }
+
+.sd-clock-ok { background: var(--color-success-light); color: var(--color-success); }
+.sd-clock-warn { background: var(--color-warning-light); color: #7C2D12; }
+.sd-clock-bad { background: var(--color-error-light); color: var(--color-error); }
+.sd-clock-mute { background: var(--color-surface-sunken); color: var(--color-text-light); }
+
+.sd-sla { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.sd-esc { color: var(--color-error); }
+
+.sd-week { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.sd-day { display: flex; gap: 12px; font-size: .85rem; padding: 3px 0; }
+.sd-day-name { width: 7rem; color: var(--color-text-light); }
+.sd-day-hours { font-family: ui-monospace, monospace; }
+.sd-day-shut { color: var(--color-text-muted); }
+
+.sd-holidays { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 3px;
+  font-size: .82rem; max-height: 14rem; overflow-y: auto; }
+.sd-holidays li { display: flex; gap: 10px; align-items: baseline; }
+.sd-holidays li .sd-mono { width: 6.5rem; }
 </style>
