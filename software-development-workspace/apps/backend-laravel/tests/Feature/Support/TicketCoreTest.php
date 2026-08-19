@@ -375,6 +375,61 @@ class TicketCoreTest extends TestCase
             ->assertNotFound();
     }
 
+    // ── Seeing only your own ──────────────────────────────────────────────────
+
+    /**
+     * `support.view_own` used to read exactly like `support.view`.
+     *
+     * The policy passed on either and nothing narrowed afterwards, so a
+     * permission whose entire purpose is to limit somebody to their own tickets
+     * showed them everybody's.
+     */
+    public function test_view_own_shows_only_your_own_tickets(): void
+    {
+        $mine    = $this->open(['subject' => 'Mine']);
+        $theirs  = $this->open(['subject' => 'Somebody else\'s']);
+
+        $user = $this->agent([Permission::SUPPORT_VIEW_OWN]);
+        $mine->update(['assigned_to' => $user->id]);
+
+        $this->getJson('/api/v1/support/tickets', ['X-Organization' => 'alpha'])
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $mine->id);
+    }
+
+    /** And the record itself is refused, not merely hidden from the list. */
+    public function test_view_own_cannot_open_somebody_elses_ticket(): void
+    {
+        $theirs = $this->open(['subject' => 'Not yours']);
+        $this->agent([Permission::SUPPORT_VIEW_OWN]);
+
+        $this->getJson("/api/v1/support/tickets/{$theirs->id}", ['X-Organization' => 'alpha'])
+            ->assertForbidden();
+    }
+
+    /** A requester with a login sees the ticket they raised. */
+    public function test_the_person_who_raised_it_can_see_it(): void
+    {
+        $user   = $this->agent([Permission::SUPPORT_VIEW_OWN]);
+        $ticket = $this->open(['requester_user_id' => $user->id]);
+
+        $this->getJson("/api/v1/support/tickets/{$ticket->id}", ['X-Organization' => 'alpha'])
+            ->assertOk();
+    }
+
+    /** Full visibility is unaffected. */
+    public function test_support_view_still_sees_everything(): void
+    {
+        $this->open(['subject' => 'One']);
+        $this->open(['subject' => 'Two']);
+        $this->agent([Permission::SUPPORT_VIEW]);
+
+        $this->getJson('/api/v1/support/tickets', ['X-Organization' => 'alpha'])
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+    }
+
     // ── Time ──────────────────────────────────────────────────────────────────
 
     /**

@@ -54,6 +54,20 @@ class TicketController extends Controller
         }
 
         /*
+         * Somebody holding only `support.view_own` sees their own tickets and
+         * nothing else. Narrowed here as well as in the policy, because the
+         * policy is asked about one record and a listing never presents one —
+         * without this the permission read exactly like full visibility.
+         */
+        if ($request->user() && ! $request->user()->hasPermission(\App\Support\Authorization\Permission::SUPPORT_VIEW)) {
+            $me = $request->user()->id;
+
+            $query->where(fn ($q) => $q->where('requester_user_id', $me)
+                ->orWhere('assigned_to', $me)
+                ->orWhere('escalation_owner_id', $me));
+        }
+
+        /*
          * Unresolved by default. A desk list that opens on two years of closed
          * tickets is a list nobody reads.
          */
@@ -368,6 +382,11 @@ class TicketController extends Controller
     /** Scoped by the global organisation scope; a bad id is a 404, not a leak. */
     private function find(int $id): Ticket
     {
-        return Ticket::findOrFail($id);
+        $ticket = Ticket::findOrFail($id);
+
+        // The record-level half of the same rule the listing applies.
+        $this->authorize('view', $ticket);
+
+        return $ticket;
     }
 }

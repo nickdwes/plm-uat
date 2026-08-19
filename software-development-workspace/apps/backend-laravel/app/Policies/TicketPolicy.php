@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Models\Support\Ticket;
 use App\Models\User;
 use App\Support\Authorization\Permission;
 
@@ -19,9 +20,41 @@ class TicketPolicy extends BasePolicy
         return $this->canAny($user, Permission::SUPPORT_VIEW, Permission::SUPPORT_VIEW_OWN);
     }
 
-    public function view(User $user): bool
+    /**
+     * Seeing one ticket.
+     *
+     * `support.view_own` used to be treated as though it were
+     * `support.view` — the check passed on either and nothing narrowed
+     * afterwards, so a permission whose whole purpose is to limit somebody to
+     * their own tickets granted them all of them.
+     *
+     * A ticket is "own" if the person raised it or holds it. The service desk
+     * analyst following it is deliberately not included: that is what
+     * `support.view` is for, and an analyst without it should not acquire
+     * visibility by being named on a ticket.
+     */
+    public function view(User $user, ?Ticket $ticket = null): bool
     {
-        return $this->canAny($user, Permission::SUPPORT_VIEW, Permission::SUPPORT_VIEW_OWN);
+        if ($this->can($user, Permission::SUPPORT_VIEW)) {
+            return true;
+        }
+
+        if (! $this->can($user, Permission::SUPPORT_VIEW_OWN)) {
+            return false;
+        }
+
+        // No record to judge means the listing, which narrows itself.
+        return $ticket === null || $this->owns($user, $ticket);
+    }
+
+    /** Raised it, holds it, or is the engineer it was escalated to. */
+    public function owns(User $user, Ticket $ticket): bool
+    {
+        return in_array($user->id, array_filter([
+            $ticket->requester_user_id,
+            $ticket->assigned_to,
+            $ticket->escalation_owner_id,
+        ]), true);
     }
 
     public function create(User $user): bool
