@@ -39,45 +39,144 @@ class SmokeTestPeopleSeeder extends Seeder
     public const NUMBER_PREFIX = 'SMK-';
 
     /**
-     * name, role, job title, reports to (by key), department hint.
+     * Departments per organisation, created where the organisation has none.
      *
-     * Ordered so a manager always exists before the people who report to them.
+     * Three of the four tenants were entirely empty — no departments, no
+     * business units, nothing — so a hierarchy could not be built in them at
+     * all. These are plausible for what each company actually does, because a
+     * test tenant staffed with "Department 1" tells you nothing when you are
+     * looking at a headcount screen trying to judge whether it reads right.
+     */
+    private const DEPARTMENTS = [
+        'tiberbu' => ['Clinical Systems', 'Health Information', 'Client Services', 'Finance', 'People & Culture'],
+        'visibility' => ['Software Engineering', 'Managed Services', 'Commercial', 'Finance & Admin'],
+        'teedu' => ['Faculty', 'Student Services', 'Operations', 'Finance'],
+    ];
+
+    /**
+     * key, name, role, job title, reports-to key, department.
+     *
+     * Grouped by organisation, and ordered so a manager always exists before
+     * the people who report to them.
      */
     private const PEOPLE = [
-        ['coo',        'Grace Wanjiku',   'operations_executive', 'Chief Operating Officer', null],
-        ['cfo',        'Peter Otieno',    'finance_executive',    'Chief Financial Officer', 'coo'],
-        ['finance',    'Mary Njeri',      'finance_officer',      'Finance Officer',         'cfo'],
-        ['hr',         'Alice Kamau',     'org_hr',               'HR Manager',              'coo'],
-        ['desk_lead',  'David Mwangi',    'service_desk_analyst', 'Service Desk Lead',       'coo'],
-        ['eng_net',    'John Kariuki',    'support_engineer',     'Network Engineer',        'desk_lead'],
-        ['eng_iam',    'Faith Chebet',    'support_engineer',     'Security Engineer',       'desk_lead'],
-        ['manager',    'Samuel Kiprop',   'dept_manager',         'Technical Manager',       'coo'],
-        ['staff_one',  'Brian Omondi',    'employee',             'Support Technician',      'manager'],
-        ['staff_two',  'Ruth Achieng',    'employee',             'Field Technician',        'manager'],
-        ['account',    'Nancy Wairimu',   'account_manager',      'Account Manager',         'coo'],
-        ['buyer',      'Joseph Maina',    'procurement_officer',  'Procurement Officer',     'coo'],
-        ['groupadmin', 'Esther Nyambura', 'group_admin',          'Group Administrator',     null],
+        'konvergenz' => [
+            ['coo',        'Grace Wanjiku',   'operations_executive', 'Chief Operating Officer', null,        'Service Delivery'],
+            ['cfo',        'Peter Otieno',    'finance_executive',    'Chief Financial Officer', 'coo',       'Finance'],
+            ['finance',    'Mary Njeri',      'finance_officer',      'Finance Officer',         'cfo',       'Finance'],
+            ['hr',         'Alice Kamau',     'org_hr',               'HR Manager',              'coo',       'HR'],
+            ['desk_lead',  'David Mwangi',    'service_desk_analyst', 'Service Desk Lead',       'coo',       'Service Delivery'],
+            ['eng_net',    'John Kariuki',    'support_engineer',     'Network Engineer',        'desk_lead', 'Technical'],
+            ['eng_iam',    'Faith Chebet',    'support_engineer',     'Security Engineer',       'desk_lead', 'Technical'],
+            ['manager',    'Samuel Kiprop',   'dept_manager',         'Technical Manager',       'coo',       'Technical'],
+            ['staff_one',  'Brian Omondi',    'employee',             'Support Technician',      'manager',   'Technical'],
+            ['staff_two',  'Ruth Achieng',    'employee',             'Field Technician',        'manager',   'Technical'],
+            ['account',    'Nancy Wairimu',   'account_manager',      'Account Manager',         'coo',       'BFSI'],
+            ['buyer',      'Joseph Maina',    'procurement_officer',  'Procurement Officer',     'coo',       'Service Delivery'],
+            ['groupadmin', 'Esther Nyambura', 'group_admin',          'Group Administrator',     null,        null],
+        ],
+
+        'tiberbu' => [
+            ['tb_head',    'Daniel Mutiso',   'operations_executive', 'Managing Director',       null,        'Client Services'],
+            ['tb_hr',      'Lucy Wambui',     'org_hr',               'HR & Admin Manager',      'tb_head',   'People & Culture'],
+            ['tb_clin',    'Dr Susan Adhiambo', 'dept_manager',       'Head of Clinical Systems','tb_head',   'Clinical Systems'],
+            ['tb_analyst', 'Kevin Barasa',    'service_desk_analyst', 'Service Desk Analyst',    'tb_clin',   'Client Services'],
+            ['tb_eng',     'Mercy Wanjiru',   'support_engineer',     'Systems Engineer',        'tb_clin',   'Clinical Systems'],
+            ['tb_hi',      'Paul Ochieng',    'employee',             'Health Records Officer',  'tb_clin',   'Health Information'],
+            ['tb_fin',     'Janet Muthoni',   'finance_officer',      'Finance Officer',         'tb_head',   'Finance'],
+            ['tb_acct',    'Victor Kimani',   'account_manager',      'Client Relationship Lead','tb_head',   'Client Services'],
+        ],
+
+        'visibility' => [
+            ['vs_head',    'Anne Wangari',    'operations_executive', 'General Manager',         null,        'Managed Services'],
+            ['vs_cfo',     'Tom Kiplagat',    'finance_executive',    'Finance Director',        'vs_head',   'Finance & Admin'],
+            ['vs_dev',     'Ian Njoroge',     'dept_manager',         'Engineering Manager',     'vs_head',   'Software Engineering'],
+            ['vs_eng_one', 'Cynthia Auma',    'support_engineer',     'Software Engineer',       'vs_dev',    'Software Engineering'],
+            ['vs_eng_two', 'Dennis Mwaura',   'support_engineer',     'Platform Engineer',       'vs_dev',    'Managed Services'],
+            ['vs_hr',      'Beatrice Nduta',  'org_hr',               'People Lead',             'vs_head',   'Finance & Admin'],
+            ['vs_sales',   'Eric Wafula',     'account_manager',      'Business Development',    'vs_head',   'Commercial'],
+        ],
+
+        'teedu' => [
+            ['td_head',    'Prof James Mburu','operations_executive', 'Principal',               null,        'Operations'],
+            ['td_faculty', 'Rose Nekesa',     'dept_manager',         'Head of Faculty',         'td_head',   'Faculty'],
+            ['td_tutor',   'Simon Cheruiyot', 'employee',             'Lecturer',                'td_faculty','Faculty'],
+            ['td_student', 'Winnie Akinyi',   'employee',             'Student Services Officer','td_head',   'Student Services'],
+            ['td_fin',     'Charles Barasa',  'finance_officer',      'Bursar',                  'td_head',   'Finance'],
+            ['td_hr',      'Agnes Chelimo',   'org_hr',               'HR Officer',              'td_head',   'Operations'],
+        ],
     ];
 
     public function run(): void
     {
-        $home = Organization::where('slug', 'konvergenz')->first()
-            ?? Organization::orderBy('id')->firstOrFail();
+        $made  = [];
+        $index = 0;
 
-        app()->instance('current.organization_id', $home->id);
+        DB::transaction(function () use (&$made, &$index) {
+            foreach (self::PEOPLE as $slug => $roster) {
+                $org = Organization::where('slug', $slug)->first();
 
-        $made = [];
+                if (! $org) {
+                    $this->command?->warn("No organisation '{$slug}' — skipped.");
+                    continue;
+                }
 
-        DB::transaction(function () use ($home, &$made) {
-            foreach (self::PEOPLE as $i => [$key, $name, $roleName, $title, $managerKey]) {
-                $made[$key] = $this->person($home, $key, $name, $roleName, $title, $i, $made[$managerKey] ?? null);
+                app()->instance('current.organization_id', $org->id);
+
+                $departments = $this->departments($org, $slug);
+
+                foreach ($roster as [$key, $name, $roleName, $title, $managerKey, $departmentName]) {
+                    $index++;
+
+                    $made[$key] = $this->person(
+                        $org, $key, $name, $roleName, $index,
+                        $made[$managerKey] ?? null,
+                        $departments[$departmentName] ?? null,
+                    );
+                }
+
+                $this->supportSetup($org, $made);
             }
 
-            $this->supportSetup($home, $made);
-            $this->secondments($home, $made);
+            $this->secondments(Organization::where('slug', 'konvergenz')->firstOrFail(), $made);
         });
 
-        $this->command?->info('Seeded ' . count($made) . ' test people. Password: ' . self::PASSWORD);
+        $this->command?->info('Seeded ' . count($made) . ' test people across '
+            . count(self::PEOPLE) . ' organisations. Password: ' . self::PASSWORD);
+    }
+
+    /**
+     * Departments for an organisation, created where it has none.
+     *
+     * Three of the four tenants were empty, so nobody could be placed anywhere
+     * and every hierarchy screen had nothing to draw. Existing departments are
+     * left alone — Konvergenz has sixteen real ones and this is not the place
+     * to second-guess them.
+     *
+     * @return array<string, int> name => id
+     */
+    private function departments(Organization $org, string $slug): array
+    {
+        $existing = \App\Models\Department::withoutGlobalScope('organization')
+            ->where('organization_id', $org->id)
+            ->pluck('id', 'name');
+
+        foreach (self::DEPARTMENTS[$slug] ?? [] as $name) {
+            if ($existing->has($name)) {
+                continue;
+            }
+
+            $department = \App\Models\Department::create([
+                'organization_id' => $org->id,
+                'name'            => $name,
+                'code'            => strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $name), 0, 4)),
+                'is_active'       => true,
+            ]);
+
+            $existing->put($name, $department->id);
+        }
+
+        return $existing->all();
     }
 
     // ── One person ────────────────────────────────────────────────────────────
@@ -87,9 +186,9 @@ class SmokeTestPeopleSeeder extends Seeder
         string $key,
         string $name,
         string $roleName,
-        string $title,
         int $index,
         ?Employee $manager,
+        ?int $departmentId,
     ): Employee {
         [$first, $last] = explode(' ', $name, 2);
 
@@ -104,21 +203,24 @@ class SmokeTestPeopleSeeder extends Seeder
         );
 
         $employee = Employee::withoutGlobalScope('organization')->updateOrCreate(
-            ['employee_number' => self::NUMBER_PREFIX . str_pad((string) ($index + 1), 3, '0', STR_PAD_LEFT)],
+            ['employee_number' => self::NUMBER_PREFIX . str_pad((string) $index, 3, '0', STR_PAD_LEFT)],
             [
                 'primary_organization_id' => $org->id,
                 'user_id'         => $user->id,
                 'first_name'      => $first,
                 'last_name'       => $last,
                 'work_email'      => $user->email,
+                'department_id'   => $departmentId,
                 'employment_type' => 'permanent',
                 'status'          => 'active',
                 'date_hired'      => now()->subYears(2)->toDateString(),
-                'country'         => 'KE',   // ISO code — the column is varchar(3)
+                'country'         => 'KE',
                 // Distinct and obviously fake, and national_id is unique.
-                'national_id'     => '9900' . str_pad((string) ($index + 1), 4, '0', STR_PAD_LEFT),
-                'basic_salary'    => 120000 + ($index * 10000),
-                'reports_to'      => $manager?->id,
+                'national_id'     => '9900' . str_pad((string) $index, 4, '0', STR_PAD_LEFT),
+                'basic_salary'    => 120000 + ($index * 5000),
+                // Within their own organisation only — a manager in another
+                // tenant would be a reporting line the org scope cannot follow.
+                'reports_to'      => $manager?->primary_organization_id === $org->id ? $manager->id : null,
             ],
         );
 
@@ -126,8 +228,8 @@ class SmokeTestPeopleSeeder extends Seeder
 
         /*
          * Everyone also holds `employee`, because the self-service screens are
-         * gated on it and a COO who cannot see their own payslip is not a
-         * realistic thing to test against.
+         * gated on it and a managing director who cannot open their own payslip
+         * is not a realistic thing to test against.
          */
         if ($roleName !== 'employee' && $roleName !== 'group_admin') {
             $this->grant($user, 'employee', $org->id);
@@ -241,6 +343,54 @@ class SmokeTestPeopleSeeder extends Seeder
             );
         }
 
+        /*
+         * 5. The other direction. Secondment tested only outward from the main
+         *    tenant proves the org switcher works for one org's people; a
+         *    Visibility engineer working inside Konvergenz is the case that
+         *    catches scope assumptions written from the main tenant's point of
+         *    view.
+         */
+        if (isset($made['vs_eng_two'])) {
+            $this->second($made['vs_eng_two'], $home, [
+                'allocation_pct'  => 50,
+                'engagement_type' => 'secondment',
+                'role'            => 'Platform Engineer (inbound)',
+                'effective_from'  => now()->subWeeks(2)->toDateString(),
+                'effective_to'    => now()->addMonths(3)->toDateString(),
+                'is_billable'     => true,
+                'notes'           => 'Half a week on the Konvergenz managed platform.',
+            ]);
+
+            $this->grant(
+                $made['vs_eng_two']->user, 'support_engineer', $home->id,
+                from: now()->subWeeks(2)->toDateString(),
+                until: now()->addMonths(3)->toDateString(),
+                reason: 'Inbound secondment from Visibility — platform work',
+            );
+        }
+
+        // 6. A third tenant, so the switcher has more than two entries for
+        //    somebody who is genuinely in several.
+        if (isset($made['tb_eng'])) {
+            $teedu = Organization::where('slug', 'teedu')->first();
+
+            if ($teedu) {
+                $this->second($made['tb_eng'], $teedu, [
+                    'allocation_pct'  => 20,
+                    'engagement_type' => 'shared_service',
+                    'role'            => 'Systems Engineer (shared)',
+                    'effective_from'  => now()->subMonths(3)->toDateString(),
+                    'notes'           => 'One day a week supporting the academy systems. No end date.',
+                ]);
+
+                $this->grant(
+                    $made['tb_eng']->user, 'support_engineer', $teedu->id,
+                    from: now()->subMonths(3)->toDateString(),
+                    reason: 'Shared service — academy systems, one day a week',
+                );
+            }
+        }
+
         // 4. Revoked rather than expired. A different question, and a different
         //    answer to "why can this person no longer see it".
         if ($host && isset($made['staff_one'])) {
@@ -257,9 +407,15 @@ class SmokeTestPeopleSeeder extends Seeder
     /** The host-organisation half: allocation, dates, and who they report to there. */
     private function second(Employee $employee, Organization $host, array $context): void
     {
+        /*
+         * Whoever heads the host organisation. A seconded engineer answers to
+         * somebody there, not to their substantive manager — which is the whole
+         * reason the reporting line lives on the pivot rather than the employee.
+         */
         $hostManager = Employee::withoutGlobalScope('organization')
             ->where('primary_organization_id', $host->id)
             ->whereNull('reports_to')
+            ->orderBy('id')
             ->value('id');
 
         $employee->organizations()->syncWithoutDetaching([
