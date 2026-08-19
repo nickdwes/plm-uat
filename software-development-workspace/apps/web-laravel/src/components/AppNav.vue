@@ -358,6 +358,13 @@ watch(() => route.name, () => {
         </router-link>
 
       </div>
+      <router-link :to="{ name: 'support' }" :class="['nav-item', { active: isActive('support') }]">
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M18 10a8 8 0 10-16 0 8 8 0 0016 0zM8.5 8.5a1.5 1.5 0 113 0c0 .8-.4 1.2-1 1.6-.5.4-.75.7-.75 1.4h-1.5c0-1.2.5-1.8 1.1-2.2.4-.3.65-.5.65-.8a.5.5 0 00-1 0h-.5zM10 13a1 1 0 100 2 1 1 0 000-2z" />
+        </svg>
+        Service Desk
+      </router-link>
+
       <router-link :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 10a1 1 0 00-1 1 1 1 0 001 1h10a1 1 0 001-1 1 1 0 00-1-1H5z" />
