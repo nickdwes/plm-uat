@@ -20,6 +20,7 @@ import PayrollConfigView   from "../views/PayrollConfigView.vue";
 import SendPayslipsView    from "../views/Payroll/SendPayslipsView.vue";
 import SendP9View          from "../views/Payroll/SendP9View.vue";
 import SupportView         from "../views/SupportView.vue";
+import OrgChartView        from "../views/OrgChartView.vue";
 import OrgView             from "../views/OrgView.vue";
 import OrgProfileView      from "../views/OrgProfileView.vue";
 import PerformanceView     from "../views/PerformanceView.vue";
@@ -157,6 +158,7 @@ const routes: RouteRecordRaw[] = [
   { path: "/deliveries/:id",  name: "delivery",          component: DeliveryDetailView, props: true },
   { path: "/travel/settings", name: "travel-settings",   component: TravelSettingsView },
   { path: "/support",         name: "support",       component: SupportView },
+  { path: "/org-chart",       name: "org-chart",     component: OrgChartView },
   { path: "/assets",          name: "assets",        component: AssetsView },
   { path: "/assets/:id",      name: "asset-detail",  component: AssetDetailView, props: true },
   { path: "/performance",          name: "performance",      component: PerformanceView },

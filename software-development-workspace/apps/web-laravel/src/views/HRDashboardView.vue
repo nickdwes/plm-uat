@@ -245,6 +245,19 @@ function formatMonth(ym: string): string {
         <h2 class="dash-title">HR Dashboard</h2>
         <p class="dash-sub">{{ todayStr }}</p>
       </div>
+      <div class="dash-header-pills">
+        <!--
+          The chart is a page rather than a pill: it is the one thing on this
+          screen people leave the dashboard to look at, and it wants the width.
+        -->
+        <router-link :to="{ name: 'org-chart' }" class="dash-chart-link">
+          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path d="M9 2h2a1 1 0 011 1v2a1 1 0 01-1 1h-.5v2H14a1 1 0 011 1v1.5h.5a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1v-2a1 1 0 011-1H14V10h-3v1.5h.5a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1v-2a1 1 0 011-1H10V10H7v1.5h.5a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1v-2a1 1 0 011-1H6V10a1 1 0 011-1h2.5V7H9a1 1 0 01-1-1V3a1 1 0 011-1z"/>
+          </svg>
+          Org Chart
+        </router-link>
+      </div>
+
       <div class="dash-header-pills" v-if="summary">
         <span class="dash-pill">
           <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zm8 0a3 3 0 11-6 0 3 3 0 016 0zM.458 18C1.64 14.435 5.08 12 9 12s7.36 2.435 8.542 6H.458z"/></svg>
@@ -964,4 +977,12 @@ function formatMonth(ym: string): string {
   .donut-wrap { width: 100px; height: 100px; }
   .dept-name  { width: 110px; }
 }
+
+.dash-chart-link { display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px; border-radius: 999px; text-decoration: none;
+  font-size: .85rem; font-weight: 500;
+  background: var(--color-brand-subtle); color: var(--color-brand-base);
+  border: 1px solid var(--color-brand-light); }
+.dash-chart-link:hover { background: var(--color-brand-light); }
+.dash-chart-link svg { width: 16px; height: 16px; }
 </style>
