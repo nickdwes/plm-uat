@@ -96,5 +96,8 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(\App\Models\Task\Task::class, \App\Policies\Task\TaskPolicy::class);
         Gate::policy(\App\Models\Attendance\AttendanceDay::class, \App\Policies\Attendance\AttendanceDayPolicy::class);
         Gate::policy(\App\Models\Recruitment\TalentRequisition::class, \App\Policies\Recruitment\TalentRequisitionPolicy::class);
+
+        // Service desk
+        Gate::policy(\App\Models\Support\Ticket::class, \App\Policies\TicketPolicy::class);
     }
 }

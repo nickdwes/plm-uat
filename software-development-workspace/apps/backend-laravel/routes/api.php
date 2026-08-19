@@ -18,6 +18,7 @@ use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
+use App\Http\Controllers\Support\TicketController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\RecurringDeductionController;
 use App\Http\Controllers\Payroll\PayrollConfigController;
@@ -872,6 +873,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     });
 
     // ── Payroll ───────────────────────────────────────────────────────────────
+    /*
+     * Service desk. Replacing the old PLM tickets module — see
+     * App\Services\Support\TicketService for why every write goes through one
+     * door rather than three.
+     */
+    Route::prefix('support')->group(function () {
+        Route::get('/taxonomy',                 [TicketController::class, 'taxonomy']);
+        Route::get('/tickets',                  [TicketController::class, 'index']);
+        Route::post('/tickets',                 [TicketController::class, 'store']);
+        Route::get('/tickets/{ticket}',         [TicketController::class, 'show']);
+        Route::post('/tickets/{ticket}/reply',  [TicketController::class, 'reply']);
+        Route::post('/tickets/{ticket}/status', [TicketController::class, 'changeStatus']);
+        Route::post('/tickets/{ticket}/classify', [TicketController::class, 'reclassify']);
+        Route::post('/tickets/{ticket}/assign', [TicketController::class, 'assign']);
+        Route::post('/tickets/{ticket}/time',   [TicketController::class, 'logTime']);
+    });
+
     Route::prefix('payroll')->group(function () {
         Route::get('/history',                              [PayrollController::class, 'history']);
         Route::get('/p9',                                   [PayrollController::class, 'p9']);

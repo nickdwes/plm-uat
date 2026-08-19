@@ -173,6 +173,31 @@ final class Permission
     public const TASKS_ASSIGN   = 'tasks.assign';
     public const TASKS_COMMENT  = 'tasks.comment';
 
+    // ── Service desk ──────────────────────────────────────────────────────
+    public const SUPPORT_VIEW      = 'support.view';
+    public const SUPPORT_VIEW_OWN  = 'support.view_own';
+    public const SUPPORT_CREATE    = 'support.create';
+    public const SUPPORT_UPDATE    = 'support.update';
+
+    /*
+     * Handing work to somebody else, kept apart from updating a ticket. An
+     * agent may reclassify and reply on anything they touch without being the
+     * person who decides whose queue it lands in.
+     */
+    public const SUPPORT_ASSIGN    = 'support.assign';
+
+    /** Closing is where an SLA outcome is fixed, so it stands on its own. */
+    public const SUPPORT_CLOSE     = 'support.close';
+
+    public const SUPPORT_LOG_TIME  = 'support.log_time';
+
+    /*
+     * Statuses, types and the priority matrix. Changing the matrix silently
+     * re-prioritises how the whole desk is worked, which is a different
+     * question from whether somebody may answer a ticket.
+     */
+    public const SUPPORT_MANAGE_CONFIG = 'support.manage_config';
+
     // ── Assets ────────────────────────────────────────────────────────────
     public const ASSETS_VIEW          = 'assets.view';
     public const ASSETS_VIEW_OWN      = 'assets.view_own';
@@ -305,6 +330,11 @@ final class Permission
                 self::PAYROLL_VIEW, self::PAYROLL_CREATE, self::PAYROLL_PROCESS,
                 self::PAYROLL_APPROVE,
                 self::PAYROLL_MANAGE_CONFIG, self::PAYROLL_MANAGE_STATUTORY,
+            ],
+            'support'       => [
+                self::SUPPORT_VIEW, self::SUPPORT_VIEW_OWN, self::SUPPORT_CREATE,
+                self::SUPPORT_UPDATE, self::SUPPORT_ASSIGN, self::SUPPORT_CLOSE,
+                self::SUPPORT_LOG_TIME, self::SUPPORT_MANAGE_CONFIG,
             ],
             'payslip'       => [self::PAYSLIP_VIEW_OWN],
             'organizations' => [self::ORGANIZATIONS_VIEW, self::ORGANIZATIONS_MANAGE],
