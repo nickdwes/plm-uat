@@ -9,7 +9,15 @@ import { resolvedTheme } from "./stores/theme";
 import { deriveBrandPalette, readableOn } from "./lib/palette";
 
 const route = useRoute();
-const showShell = computed(() => isAuthenticated.value && route.name !== "login");
+/*
+ * The portal renders bare even for a signed-in member of staff. A customer view
+ * wrapped in the internal navigation is confusing to them and shows an outsider
+ * the shape of the system when the link is forwarded.
+ */
+const showShell = computed(() =>
+  isAuthenticated.value
+  && route.name !== "login"
+  && !String(route.name ?? "").startsWith("portal-"));
 
 // ── Per-org theme ────────────────────────────────────────────────────────────
 

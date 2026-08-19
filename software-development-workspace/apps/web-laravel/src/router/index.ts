@@ -21,6 +21,7 @@ import SendPayslipsView    from "../views/Payroll/SendPayslipsView.vue";
 import SendP9View          from "../views/Payroll/SendP9View.vue";
 import SupportView         from "../views/SupportView.vue";
 import OrgChartView        from "../views/OrgChartView.vue";
+import PortalView          from "../views/PortalView.vue";
 import OrgView             from "../views/OrgView.vue";
 import OrgProfileView      from "../views/OrgProfileView.vue";
 import PerformanceView     from "../views/PerformanceView.vue";
@@ -123,6 +124,14 @@ const routes: RouteRecordRaw[] = [
    * is the shape the backend builds into the email; changing either here
    * silently breaks every link already sent.
    */
+  /*
+   * The customer portal. Public by construction — access is the token in the
+   * link, and these pages deliberately render outside the staff shell.
+   */
+  { path: "/portal/ticket",    name: "portal-ticket",    component: PortalView, meta: { public: true } },
+  { path: "/portal/tickets",   name: "portal-tickets",   component: PortalView, meta: { public: true } },
+  { path: "/portal/catalogue", name: "portal-catalogue", component: PortalView, meta: { public: true } },
+  { path: "/portal/survey",    name: "portal-survey",    component: PortalView, meta: { public: true } },
   { path: "/forgot-password", name: "forgot-password", component: ForgotPasswordView, meta: { public: true } },
   { path: "/reset-password/:token", name: "reset-password", component: ResetPasswordView, meta: { public: true } },
   { path: "/dashboard",       name: "dashboard",        component: DashboardView },

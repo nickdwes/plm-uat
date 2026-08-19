@@ -756,6 +756,105 @@ async function deleteView(v: ViewRow): Promise<void> {
   }
 }
 
+// ── The portal ─────────────────────────────────────────────────────────────────
+/*
+ * A link to the customer's own view of their ticket, and the survey afterwards.
+ *
+ * Both are shown once and never stored in a readable form, so they are copied
+ * into a reply an agent is already writing rather than sent as a second email
+ * the customer has to reconcile with the first.
+ */
+const portalLink = ref("");
+const surveyLink = ref("");
+
+async function issuePortalLink(): Promise<void> {
+  if (!open.value) return;
+  openError.value = "";
+  try {
+    const res = await api<{ url: string }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/portal-link`, { org: org() },
+    );
+    portalLink.value = res.url;
+  } catch (e) {
+    openError.value = e instanceof ApiError ? e.message : "Could not create a link.";
+  }
+}
+
+async function issueSurveyLink(): Promise<void> {
+  if (!open.value) return;
+  openError.value = "";
+  try {
+    const res = await api<{ url: string }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/survey`, { org: org() },
+    );
+    surveyLink.value = res.url;
+  } catch (e) {
+    // The server refuses a survey on unresolved work and says why.
+    openError.value = e instanceof ApiError ? e.message : "Could not create a survey.";
+  }
+}
+
+function copy(text: string): void {
+  void navigator.clipboard?.writeText(text);
+}
+
+// ── The catalogue ──────────────────────────────────────────────────────────────
+interface CatalogueService {
+  id: number; name: string; slug: string; summary: string | null;
+  needs_approval: boolean; is_active: boolean; fields: any[];
+  category?: { name: string } | null;
+}
+
+const catalogue = ref<{ services: CatalogueService[]; surveys: any } | null>(null);
+const catBusy   = ref(false);
+const catError  = ref("");
+const svcDraft  = ref({
+  name: "", summary: "", service_category_id: "", needs_approval: false,
+  fields: [] as { key: string; label: string; type: string; required: boolean }[],
+});
+
+async function loadCatalogue(): Promise<void> {
+  catBusy.value = true; catError.value = "";
+  try {
+    catalogue.value = await api("GET", "/api/v1/support/catalogue", { org: org() });
+  } catch (e) {
+    catError.value = e instanceof Error ? e.message : "Could not load the catalogue.";
+  } finally { catBusy.value = false; }
+}
+
+function addField(): void {
+  svcDraft.value.fields.push({ key: "", label: "", type: "text", required: false });
+}
+
+/** Keys are derived from the label, because a hand-typed key is a typo waiting. */
+function keyFor(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 60);
+}
+
+async function saveService(): Promise<void> {
+  catBusy.value = true; catError.value = "";
+  try {
+    await api("POST", "/api/v1/support/catalogue/services", {
+      org: org(),
+      body: {
+        name: svcDraft.value.name,
+        summary: svcDraft.value.summary || null,
+        service_category_id: svcDraft.value.service_category_id
+          ? Number(svcDraft.value.service_category_id) : null,
+        needs_approval: svcDraft.value.needs_approval,
+        fields: svcDraft.value.fields
+          .filter((f) => f.label.trim())
+          .map((f) => ({ ...f, key: f.key || keyFor(f.label) })),
+      },
+    });
+    svcDraft.value = { name: "", summary: "", service_category_id: "", needs_approval: false, fields: [] };
+    await loadCatalogue();
+  } catch (e) {
+    // Duplicate field keys are refused by name.
+    catError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { catBusy.value = false; }
+}
+
 // ── Splitting ──────────────────────────────────────────────────────────────────
 /*
  * One message, two problems. Worked as a single ticket it closes when the
@@ -1023,7 +1122,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts";
+type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -1233,6 +1332,7 @@ watch(tab, (t) => {
   if (t === "workspace") { void loadWorkspace(); void loadWorkload(); }
   if (t === "desk") void loadDesk();
   if (t === "contracts") void loadContracts();
+  if (t === "catalogue") void loadCatalogue();
 });
 </script>
 
@@ -1262,6 +1362,7 @@ watch(tab, (t) => {
       <button :class="['sd-tabbtn', { on: tab === 'sla' }]" @click="tab = 'sla'">Service levels</button>
       <button :class="['sd-tabbtn', { on: tab === 'workspace' }]" @click="tab = 'workspace'">Teams &amp; routing</button>
       <button :class="['sd-tabbtn', { on: tab === 'contracts' }]" @click="tab = 'contracts'">Contract engineers</button>
+      <button :class="['sd-tabbtn', { on: tab === 'catalogue' }]" @click="tab = 'catalogue'">Catalogue &amp; CSAT</button>
     </div>
 
     <template v-if="tab === 'queue'">
@@ -2268,6 +2369,123 @@ watch(tab, (t) => {
       </div>
     </template>
 
+    <!-- ── Catalogue and CSAT ──────────────────────────────────────────────── -->
+    <template v-if="tab === 'catalogue'">
+      <p v-if="catError" class="error">{{ catError }}</p>
+
+      <h3 class="sd-h3">Service catalogue</h3>
+      <p class="sd-lede">
+        What a customer can ask for, and the questions worth asking up front. Everything used to
+        arrive as prose — "we need a mailbox", with no name, no start date and no manager — and the
+        first reply was always the same three questions.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>Service</th><th>Discipline</th><th class="text-right">Questions</th><th>Approval</th></tr></thead>
+          <tbody>
+            <tr v-for="s in catalogue?.services ?? []" :key="s.id">
+              <td>
+                <span class="sd-subject">{{ s.name }}</span>
+                <span v-if="s.summary" class="sd-meta">{{ s.summary }}</span>
+              </td>
+              <td class="sd-meta">{{ s.category?.name ?? "—" }}</td>
+              <td class="text-right sd-mono">{{ s.fields?.length ?? 0 }}</td>
+              <td>
+                <span v-if="s.needs_approval" class="sd-pill sd-warn-pill">Needs approval</span>
+                <span v-else class="sd-meta">Straight through</span>
+              </td>
+            </tr>
+            <tr v-if="!catalogue?.services?.length && !catBusy">
+              <td colspan="4" class="sd-empty">
+                Nothing published. Customers can still write in; they just cannot pick from a list.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Publish a service</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Name</span>
+            <input v-model="svcDraft.name" class="control" placeholder="New mailbox" />
+          </label>
+          <label class="sd-field"><span>One line about it</span>
+            <input v-model="svcDraft.summary" class="control" placeholder="A mailbox for a new starter" />
+          </label>
+          <label class="sd-field"><span>Discipline</span>
+            <select v-model="svcDraft.service_category_id" class="control">
+              <option value="">Not categorised</option>
+              <option v-for="c in categories" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+            </select>
+          </label>
+          <label class="sd-check" style="align-self:end">
+            <input v-model="svcDraft.needs_approval" type="checkbox" />
+            <span>Needs approval before work starts</span>
+          </label>
+        </div>
+
+        <h4 class="sd-h4" style="margin-top:12px">Questions to ask</h4>
+        <div v-for="(f, i) in svcDraft.fields" :key="i" class="sd-qrow">
+          <input v-model="f.label" class="control" placeholder="Name of the new starter" />
+          <select v-model="f.type" class="control">
+            <option value="text">Short text</option>
+            <option value="textarea">Long text</option>
+            <option value="date">Date</option>
+            <option value="number">Number</option>
+            <option value="email">Email</option>
+            <option value="select">Choice</option>
+          </select>
+          <label class="sd-check"><input v-model="f.required" type="checkbox" /><span>Required</span></label>
+          <button class="link" @click="svcDraft.fields.splice(i, 1)">Remove</button>
+        </div>
+        <button class="link" @click="addField">Add a question</button>
+
+        <p class="sd-note">
+          Ask only what you would otherwise have to ask in the first reply. Every extra question is
+          one more reason somebody sends an email instead.
+        </p>
+
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="catBusy || !svcDraft.name.trim()"
+                  @click="saveService">Publish</button>
+        </div>
+      </div>
+
+      <h3 class="sd-h3">Satisfaction</h3>
+      <div v-if="catalogue?.surveys" class="sd-summary-bar" style="margin-bottom:12px">
+        <div class="sd-sum-item">
+          <span class="sd-sum-label">Sent</span><span class="sd-sum-val">{{ catalogue.surveys.sent }}</span>
+        </div>
+        <div class="sd-sum-item">
+          <span class="sd-sum-label">Answered</span><span class="sd-sum-val">{{ catalogue.surveys.answered }}</span>
+        </div>
+        <div class="sd-sum-item">
+          <span class="sd-sum-label">Average</span>
+          <span class="sd-sum-val">{{ catalogue.surveys.average || "—" }}</span>
+        </div>
+      </div>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>Ticket</th><th class="text-right">Rating</th><th>Timely</th><th>Fully resolved</th><th>Comment</th></tr></thead>
+          <tbody>
+            <tr v-for="r in catalogue?.surveys?.recent ?? []" :key="r.id">
+              <td class="sd-mono">{{ r.ticket?.reference }}</td>
+              <td class="text-right sd-mono">{{ r.rating }}/5</td>
+              <td class="sd-meta">{{ r.timeliness ?? "—" }}</td>
+              <td class="sd-meta">{{ r.resolved_fully ?? "—" }}</td>
+              <td class="sd-meta">{{ r.comment ?? "" }}</td>
+            </tr>
+            <tr v-if="!catalogue?.surveys?.recent?.length">
+              <td colspan="5" class="sd-empty">No responses yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->
     <div v-if="open" class="sd-overlay" @click.self="open = null">
       <div class="sd-panel" role="dialog" aria-modal="true">
@@ -2616,6 +2834,27 @@ watch(tab, (t) => {
             </select>
           </div>
 
+          <!--
+            The customer's own view. Shown once and stored only hashed, so it is
+            copied into a reply the agent is already writing rather than sent as
+            a second email to reconcile with the first.
+          -->
+          <div class="sd-field">
+            <span>Customer portal</span>
+            <div v-if="portalLink" class="sd-linkbox">
+              <code>{{ portalLink }}</code>
+              <button class="link" @click="copy(portalLink)">Copy</button>
+              <span class="sd-note">Shown once — issue another if it is lost.</span>
+            </div>
+            <button v-else class="link" @click="issuePortalLink">Create a link for the customer</button>
+
+            <div v-if="surveyLink" class="sd-linkbox">
+              <code>{{ surveyLink }}</code>
+              <button class="link" @click="copy(surveyLink)">Copy</button>
+            </div>
+            <button v-else class="link" @click="issueSurveyLink">Ask how it went</button>
+          </div>
+
           <div class="sd-field">
             <span>Time logged</span>
             <div class="sd-derived">
@@ -2918,4 +3157,16 @@ watch(tab, (t) => {
   gap: 3px; font-size: .78rem; color: var(--color-text-light); }
 .sd-split-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
   gap: 3px; max-height: 10rem; overflow-y: auto; font-size: .78rem; }
+
+.sd-linkbox { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px; border-radius: 8px; background: var(--color-surface-sunken); margin-bottom: 6px; }
+.sd-linkbox code { font-size: .7rem; word-break: break-all; flex: 1 1 10rem; color: var(--color-text-light); }
+.sd-qrow { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr) auto auto;
+  gap: 8px; align-items: center; margin-bottom: 6px; }
+@media (max-width: 640px) { .sd-qrow { grid-template-columns: 1fr; } }
+.sd-summary-bar { display: flex; flex-wrap: wrap; gap: 22px; padding: 12px 16px;
+  border-radius: 10px; background: var(--color-surface); border: 1px solid var(--color-border); }
+.sd-sum-item { display: flex; flex-direction: column; }
+.sd-sum-label { font-size: .72rem; color: var(--color-text-light); }
+.sd-sum-val { font-size: 1.15rem; font-weight: 600; color: var(--color-text); }
 </style>
