@@ -21,7 +21,20 @@ use RuntimeException;
  */
 class TicketService
 {
-    public function __construct(private readonly SupportDefaults $defaults = new SupportDefaults()) {}
+    public function __construct(
+        private readonly SupportDefaults $defaults = new SupportDefaults(),
+        private readonly ?SlaClock $clock = null,
+    ) {}
+
+    /**
+     * Resolved lazily rather than injected, because the clock reads tickets and
+     * the service writes them — constructing each from the other's constructor
+     * is a cycle the container cannot settle.
+     */
+    private function clock(): SlaClock
+    {
+        return $this->clock ?? app(SlaClock::class);
+    }
 
     /**
      * Open a ticket.
@@ -80,7 +93,15 @@ class TicketService
                 ]);
             }
 
-            return $ticket->fresh(['status', 'priority']);
+            /*
+             * A target only exists once there is a priority, which an emailed
+             * ticket does not have until somebody triages it. Attaching returns
+             * null in that case rather than starting a countdown against a
+             * promise nobody made.
+             */
+            $this->clock()->attach($ticket);
+
+            return $ticket->fresh(['status', 'priority', 'sla']);
         });
     }
 
@@ -108,6 +129,9 @@ class TicketService
 
             if ($message->countsAsFirstResponse() && $ticket->first_response_at === null) {
                 $ticket->forceFill(['first_response_at' => $message->created_at])->save();
+
+                // The verdict is written now and never recalculated.
+                $this->clock()->onFirstResponse($ticket->fresh(), $message->created_at);
             }
 
             return $message;
@@ -140,7 +164,21 @@ class TicketService
 
         $ticket->forceFill($changes)->save();
 
-        return $ticket->fresh(['status']);
+        $fresh = $ticket->fresh(['status', 'sla']);
+
+        /*
+         * Pause and resume follow the state, and reaching a terminal state
+         * settles the resolution clock. Both go through the clock rather than
+         * being written here, so the mail ingestion and the portal get the same
+         * behaviour without repeating it.
+         */
+        $this->clock()->onStatusChanged($fresh, $status);
+
+        if ($status->isTerminal() && $fresh->resolved_at) {
+            $this->clock()->onResolved($fresh, $fresh->resolved_at);
+        }
+
+        return $fresh;
     }
 
     /** Reclassify, and let the priority follow rather than be argued about. */
@@ -160,7 +198,14 @@ class TicketService
 
         $ticket->save();
 
-        return $ticket->fresh(['priority', 'type', 'urgency', 'impact']);
+        /*
+         * Triage is where most emailed tickets first get a priority, and so
+         * where most clocks actually start. Re-attaching leaves an already-run
+         * clock alone — see SlaClock::attach.
+         */
+        $this->clock()->attach($ticket->fresh());
+
+        return $ticket->fresh(['priority', 'type', 'urgency', 'impact', 'sla']);
     }
 
     public function logTime(Ticket $ticket, User $user, array $data): TicketWorklog

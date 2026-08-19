@@ -33,7 +33,9 @@ class TicketController extends Controller
         $orgId = app('current.organization_id');
         $this->defaults->ensureFor($orgId);
 
-        $query = Ticket::with(['status', 'type', 'priority', 'assignee', 'account'])
+        // The clock rides along on the list: a countdown nobody can see is the
+        // old system's problem restated, not solved.
+        $query = Ticket::with(['status', 'type', 'priority', 'assignee', 'account', 'sla'])
             ->withCount('messages');
 
         // Filters, all optional, all narrowing rather than replacing.
@@ -73,7 +75,7 @@ class TicketController extends Controller
         );
     }
 
-    public function show(int $ticket): JsonResponse
+    public function show(int $ticket, \App\Services\Support\SlaClock $sla): JsonResponse
     {
         $this->authorize('view', Ticket::class);
 
@@ -85,8 +87,18 @@ class TicketController extends Controller
                 'assignee', 'account', 'contact', 'contract', 'parent',
                 'messages' => fn ($q) => $q->with('author:id,name')->orderBy('id'),
                 'worklogs' => fn ($q) => $q->with('user:id,name')->orderByDesc('performed_on'),
+                'sla.sla', 'slaEvents' => fn ($q) => $q->orderBy('occurred_at'),
             ]),
             'minutes_logged' => $record->minutesLogged(),
+            /*
+             * Counted alongside raw elapsed. The gap between them is the
+             * most-disputed number in any service review, so it is stated here
+             * rather than left to be worked out from the event log.
+             */
+            'sla_minutes_used' => $sla->minutesUsed($record),
+            'elapsed_minutes'  => $record->opened_at
+                ? (int) $record->opened_at->diffInMinutes(now())
+                : 0,
         ]);
     }
 

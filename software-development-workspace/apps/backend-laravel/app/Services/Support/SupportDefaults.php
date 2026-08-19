@@ -2,6 +2,9 @@
 
 namespace App\Services\Support;
 
+use App\Models\Support\Calendar;
+use App\Models\Support\CalendarHoliday;
+use App\Models\Support\CalendarWindow;
 use App\Models\Support\PriorityMatrix;
 use App\Models\Support\TicketImpact;
 use App\Models\Support\TicketPriority;
@@ -146,6 +149,85 @@ class SupportDefaults
 
             $this->buildMatrix($organizationId);
         });
+    }
+
+    /**
+     * The organisation's working calendar, created on first sight.
+     *
+     * Eight to five, Monday to Friday, Nairobi time — the recommendation
+     * adopted from the plan. A per-contract calendar overrides it; this is what
+     * a ticket falls back to so no clock ever runs against no calendar.
+     */
+    public function defaultCalendar(int $organizationId): Calendar
+    {
+        $existing = Calendar::withoutGlobalScope('organization')
+            ->where('organization_id', $organizationId)
+            ->where('is_default', true)
+            ->first();
+
+        if ($existing) {
+            return $existing;
+        }
+
+        return DB::transaction(function () use ($organizationId) {
+            $calendar = Calendar::create([
+                'organization_id' => $organizationId,
+                'name'            => 'Business hours (8–5, Mon–Fri)',
+                'timezone'        => 'Africa/Nairobi',
+                'is_default'      => true,
+            ]);
+
+            // 1 = Monday … 5 = Friday, matching Carbon's dayOfWeek.
+            foreach ([1, 2, 3, 4, 5] as $weekday) {
+                CalendarWindow::create([
+                    'support_calendar_id' => $calendar->id,
+                    'weekday'   => $weekday,
+                    'opens_at'  => '08:00:00',
+                    'closes_at' => '17:00:00',
+                ]);
+            }
+
+            $this->seedHolidays($calendar);
+
+            return $calendar;
+        });
+    }
+
+    /**
+     * Kenyan public holidays with fixed dates, for the next few years.
+     *
+     * Deliberately only the fixed ones. Good Friday and Easter Monday move with
+     * the ecclesiastical calendar, and Eid al-Fitr and Eid al-Adha are declared
+     * on sighting of the moon — a computed date for either would be wrong often
+     * enough to matter, and a wrong holiday silently changes every SLA that
+     * week. Those are added by hand, and the calendar screen says so.
+     */
+    private function seedHolidays(Calendar $calendar): void
+    {
+        $fixed = [
+            ['01-01', 'New Year\'s Day'],
+            ['05-01', 'Labour Day'],
+            ['06-01', 'Madaraka Day'],
+            ['10-10', 'Utamaduni Day'],
+            ['10-20', 'Mashujaa Day'],
+            ['12-12', 'Jamhuri Day'],
+            ['12-25', 'Christmas Day'],
+            ['12-26', 'Boxing Day'],
+        ];
+
+        $thisYear = (int) now()->format('Y');
+
+        foreach (range($thisYear, $thisYear + 2) as $year) {
+            foreach ($fixed as [$monthDay, $name]) {
+                CalendarHoliday::updateOrCreate(
+                    [
+                        'support_calendar_id' => $calendar->id,
+                        'observed_on'         => "{$year}-{$monthDay}",
+                    ],
+                    ['name' => $name],
+                );
+            }
+        }
     }
 
     /** Every impact/urgency pair gets an answer, so triage can never fall through. */

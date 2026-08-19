@@ -51,6 +51,17 @@ class Ticket extends Model
     public function assignee(): BelongsTo  { return $this->belongsTo(User::class, 'assigned_to'); }
     public function parent(): BelongsTo    { return $this->belongsTo(self::class, 'parent_ticket_id'); }
 
+    /** The clock, where this ticket has one. */
+    public function sla(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(TicketSla::class, 'support_ticket_id');
+    }
+
+    public function slaEvents(): HasMany
+    {
+        return $this->hasMany(SlaEvent::class, 'support_ticket_id');
+    }
+
     public function messages(): HasMany
     {
         return $this->hasMany(TicketMessage::class, 'support_ticket_id');

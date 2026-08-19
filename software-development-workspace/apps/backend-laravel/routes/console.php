@@ -43,3 +43,12 @@ Schedule::command('tasks:release-handovers')->dailyAt('05:30')->withoutOverlappi
  */
 Schedule::command('attendance:remind-open-commitments')->hourly()->withoutOverlapping();
 
+/*
+ * Climb the escalation ladder on tickets that have run past their thresholds.
+ *
+ * Every fifteen minutes: an escalation that arrives an hour after the threshold
+ * is an escalation nobody can act on, and the command is cheap — it only looks
+ * at live, unpaused tickets that already carry a target. Each rung fires once,
+ * guarded by its timestamp, so re-running is safe.
+ */
+Schedule::command('support:escalate')->everyFifteenMinutes()->withoutOverlapping();
