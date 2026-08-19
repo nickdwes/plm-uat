@@ -34,6 +34,7 @@ interface TicketClock {
 interface TicketRow {
   id: number; reference: string; subject: string;
   sla: TicketClock | null;
+  team?: { id: number; name: string } | null;
   requester_name: string | null; requester_email: string | null;
   status: Status | null; type: Named | null; priority: Priority | null;
   assignee: { id: number; name: string } | null;
@@ -54,6 +55,8 @@ interface Worklog {
 
 interface TicketDetail extends TicketRow {
   body: string | null;
+  parent?: { id: number; reference: string; subject: string } | null;
+  children?: { id: number; reference: string; subject: string }[];
   sla_events?: { id: number; event: string; clock: string | null; detail: string | null;
                  working_minutes: number | null; occurred_at: string }[];
   urgency: Named | null; impact: Named | null;
@@ -71,6 +74,8 @@ const listBusy  = ref(false);
 const listError = ref("");
 const query     = ref("");
 const stateFilter = ref("");
+const teamFilter  = ref("");
+const unassignedOnly = ref(false);
 const showAll   = ref(false);
 
 const open      = ref<TicketDetail | null>(null);
@@ -100,6 +105,8 @@ async function loadList(): Promise<void> {
     if (query.value.trim()) params.set("q", query.value.trim());
     if (stateFilter.value) params.set("state", stateFilter.value);
     if (showAll.value) params.set("all", "1");
+    if (teamFilter.value) params.set("team", teamFilter.value);
+    if (unassignedOnly.value) params.set("unassigned", "1");
 
     const res = await api<{ data: TicketRow[] }>(
       "GET", `/api/v1/support/tickets?${params.toString()}`, { org: org() },
@@ -190,6 +197,222 @@ async function logTime(): Promise<void> {
   } catch (e) {
     openError.value = e instanceof Error ? e.message : "Could not log the time.";
   }
+}
+
+// ── Working the queue ──────────────────────────────────────────────────────────
+/*
+ * Selection and bulk actions. Every bulk change goes through the same endpoint
+ * as a single one, so the clock and the timestamps behave exactly as if
+ * somebody had opened each ticket — a bulk action that skips those rules is how
+ * a queue gets tidied and the SLA figures quietly stop meaning anything.
+ */
+const selected  = ref<Set<number>>(new Set());
+const bulkBusy  = ref(false);
+const bulkNote  = ref("");
+const bulkAction = ref<"status" | "assign" | "team">("status");
+const bulkStatus = ref("");
+const bulkTeam   = ref("");
+
+const allSelected = computed(() => rows.value.length > 0 && selected.value.size === rows.value.length);
+
+function toggleRow(id: number): void {
+  const next = new Set(selected.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  selected.value = next;
+}
+
+function toggleAll(): void {
+  selected.value = allSelected.value ? new Set() : new Set(rows.value.map((r) => r.id));
+}
+
+async function runBulk(): Promise<void> {
+  if (!selected.value.size) return;
+  bulkBusy.value = true; listError.value = ""; bulkNote.value = "";
+  try {
+    const res = await api<{ updated: number; skipped: number[] }>(
+      "POST", "/api/v1/support/tickets/bulk", {
+        org: org(),
+        body: {
+          ticket_ids: [...selected.value],
+          action: bulkAction.value,
+          ticket_status_id: bulkStatus.value ? Number(bulkStatus.value) : null,
+          support_team_id: bulkTeam.value ? Number(bulkTeam.value) : null,
+        },
+      });
+    // Skipped ids are named rather than swallowed: a count that does not match
+    // the selection needs a reason.
+    bulkNote.value = res.skipped.length
+      ? `${res.updated} updated. ${res.skipped.length} could not be reached.`
+      : `${res.updated} updated.`;
+    selected.value = new Set();
+    await loadList();
+    setTimeout(() => { bulkNote.value = ""; }, 6000);
+  } catch (e) {
+    listError.value = e instanceof ApiError ? e.message : "Could not apply that.";
+  } finally { bulkBusy.value = false; }
+}
+
+// ── Workspace ──────────────────────────────────────────────────────────────────
+interface TeamRow {
+  id: number; name: string; description: string | null; is_default: boolean;
+  members: { id: number; user_id: number; name: string | null; is_lead: boolean; accepts_assignment: boolean }[];
+}
+interface RuleRow {
+  id: number; name: string; position: number; is_active: boolean;
+  match_domain: string | null; match_keyword: string | null;
+  assign_mode: string; team: { id: number; name: string } | null;
+}
+interface CannedRow { id: number; title: string; body: string; support_team_id: number | null; use_count: number }
+interface ViewRow { id: number; name: string; filters: Record<string, string>; user_id: number | null }
+
+const teams  = ref<TeamRow[]>([]);
+const wsRules = ref<RuleRow[]>([]);
+const canned = ref<CannedRow[]>([]);
+const views  = ref<ViewRow[]>([]);
+const wsBusy = ref(false);
+const wsError = ref("");
+
+const teamDraft   = ref({ name: "", description: "" });
+const cannedDraft = ref({ title: "", body: "" });
+const ruleDraft2  = ref({ name: "", match_domain: "", match_keyword: "", assign_team_id: "", assign_mode: "none" });
+
+async function loadWorkspace(): Promise<void> {
+  wsBusy.value = true; wsError.value = "";
+  try {
+    const res = await api<{ teams: TeamRow[]; rules: RuleRow[]; canned: CannedRow[]; views: ViewRow[] }>(
+      "GET", "/api/v1/support/workspace", { org: org() },
+    );
+    teams.value = res.teams; wsRules.value = res.rules;
+    canned.value = res.canned; views.value = res.views;
+  } catch (e) {
+    wsError.value = e instanceof Error ? e.message : "Could not load the workspace.";
+  } finally { wsBusy.value = false; }
+}
+
+async function addTeam(): Promise<void> {
+  wsBusy.value = true; wsError.value = "";
+  try {
+    await api("POST", "/api/v1/support/workspace/teams", { org: org(), body: { ...teamDraft.value } });
+    teamDraft.value = { name: "", description: "" };
+    await loadWorkspace();
+  } catch (e) {
+    wsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add the team.";
+  } finally { wsBusy.value = false; }
+}
+
+async function addRule2(): Promise<void> {
+  wsBusy.value = true; wsError.value = "";
+  try {
+    await api("POST", "/api/v1/support/workspace/rules", {
+      org: org(),
+      body: {
+        name: ruleDraft2.value.name,
+        match_domain: ruleDraft2.value.match_domain || null,
+        match_keyword: ruleDraft2.value.match_keyword || null,
+        assign_team_id: ruleDraft2.value.assign_team_id ? Number(ruleDraft2.value.assign_team_id) : null,
+        assign_mode: ruleDraft2.value.assign_mode,
+        position: wsRules.value.length + 1,
+      },
+    });
+    ruleDraft2.value = { name: "", match_domain: "", match_keyword: "", assign_team_id: "", assign_mode: "none" };
+    await loadWorkspace();
+  } catch (e) {
+    // The server names the two rules that would silently do nothing.
+    wsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the rule.";
+  } finally { wsBusy.value = false; }
+}
+
+async function removeRule2(id: number): Promise<void> {
+  try {
+    await api("DELETE", `/api/v1/support/workspace/rules/${id}`, { org: org() });
+    await loadWorkspace();
+  } catch (e) { wsError.value = e instanceof Error ? e.message : "Could not remove it."; }
+}
+
+async function addCanned(): Promise<void> {
+  wsBusy.value = true; wsError.value = "";
+  try {
+    await api("POST", "/api/v1/support/workspace/canned", { org: org(), body: { ...cannedDraft.value } });
+    cannedDraft.value = { title: "", body: "" };
+    await loadWorkspace();
+  } catch (e) {
+    wsError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { wsBusy.value = false; }
+}
+
+/** Drop a canned answer into the compose box, filled in against this ticket. */
+async function useCanned(id: number): Promise<void> {
+  if (!open.value) return;
+  try {
+    const res = await api<{ body: string }>(
+      "POST", `/api/v1/support/workspace/canned/${id}/use`,
+      { org: org(), body: { ticket_id: open.value.id } },
+    );
+    reply.value.body = reply.value.body ? `${reply.value.body}\n\n${res.body}` : res.body;
+    showCanned.value = false;
+  } catch (e) {
+    openError.value = e instanceof Error ? e.message : "Could not load that response.";
+  }
+}
+
+const showCanned = ref(false);
+
+/** Moving between queues is assignment, not classification. */
+async function moveTeam(value: string): Promise<void> {
+  if (!open.value) return;
+  openError.value = "";
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/assign`, {
+      org: org(), body: { support_team_id: value ? Number(value) : null },
+    });
+    await refreshOpen();
+  } catch (e) {
+    openError.value = e instanceof ApiError ? e.message : "Could not move it.";
+  }
+}
+
+// ── Major incidents ────────────────────────────────────────────────────────────
+const mergeRef  = ref("");
+const showMerge = ref(false);
+
+async function mergeTicket(): Promise<void> {
+  if (!open.value || !mergeRef.value.trim()) return;
+  openError.value = "";
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/merge`, {
+      org: org(), body: { parent_reference: mergeRef.value.trim() },
+    });
+    mergeRef.value = ""; showMerge.value = false;
+    await refreshOpen();
+  } catch (e) {
+    openError.value = e instanceof ApiError ? e.message : "Could not join it.";
+  }
+}
+
+async function detachTicket(): Promise<void> {
+  if (!open.value) return;
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/detach`, { org: org() });
+    await refreshOpen();
+  } catch (e) { openError.value = e instanceof Error ? e.message : "Could not separate it."; }
+}
+
+/** One update, to everybody joined to this ticket. */
+async function broadcast(): Promise<void> {
+  if (!open.value || !reply.value.body.trim()) return;
+  replyBusy.value = true; openError.value = "";
+  try {
+    const res = await api<{ message: string }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/broadcast`,
+      { org: org(), body: { body: reply.value.body } },
+    );
+    bulkNote.value = res.message;
+    reply.value.body = "";
+    await refreshOpen();
+    setTimeout(() => { bulkNote.value = ""; }, 6000);
+  } catch (e) {
+    openError.value = e instanceof ApiError ? e.message : "Could not post it.";
+  } finally { replyBusy.value = false; }
 }
 
 // ── The clock ──────────────────────────────────────────────────────────────────
@@ -372,7 +595,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "held" | "settings" | "sla";
+type Tab = "queue" | "held" | "settings" | "sla" | "workspace";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -563,15 +786,19 @@ function init(): void {
   // Loaded up front so the tab can carry a count — held mail nobody looks at
   // is the same as mail that was discarded.
   void loadHeld();
+  // Teams and canned answers are needed by the queue and the ticket panel, not
+  // only by their own tab.
+  void loadWorkspace();
 }
 
 onMounted(init);
 watch(currentOrgSlug, init);
-watch([stateFilter, showAll], loadList);
+watch([stateFilter, showAll, teamFilter, unassignedOnly], loadList);
 watch(tab, (t) => {
   if (t === "held") void loadHeld();
   if (t === "settings") void loadSettings();
   if (t === "sla") void loadSla();
+  if (t === "workspace") void loadWorkspace();
 });
 </script>
 
@@ -598,6 +825,7 @@ watch(tab, (t) => {
       </button>
       <button :class="['sd-tabbtn', { on: tab === 'settings' }]" @click="tab = 'settings'">Mail settings</button>
       <button :class="['sd-tabbtn', { on: tab === 'sla' }]" @click="tab = 'sla'">Service levels</button>
+      <button :class="['sd-tabbtn', { on: tab === 'workspace' }]" @click="tab = 'workspace'">Teams &amp; routing</button>
     </div>
 
     <template v-if="tab === 'queue'">
@@ -608,6 +836,14 @@ watch(tab, (t) => {
         <option value="">All open work</option>
         <option v-for="(label, key) in taxonomy.states" :key="key" :value="key">{{ label }}</option>
       </select>
+      <select v-model="teamFilter" class="control sd-select">
+        <option value="">Any team</option>
+        <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+      </select>
+      <label class="sd-check">
+        <input v-model="unassignedOnly" type="checkbox" />
+        <span>Unassigned only</span>
+      </label>
       <label class="sd-check">
         <input v-model="showAll" type="checkbox" />
         <span>Include closed</span>
@@ -618,11 +854,39 @@ watch(tab, (t) => {
     </div>
 
     <p v-if="listError" class="error">{{ listError }}</p>
+    <p v-if="bulkNote" class="sd-ok">{{ bulkNote }}</p>
+
+    <!--
+      Appears only with a selection. A bulk bar that is always on screen invites
+      the accident it exists to make efficient.
+    -->
+    <div v-if="tab === 'queue' && selected.size" class="sd-bulk">
+      <span class="sd-bulk-count">{{ selected.size }} selected</span>
+      <select v-model="bulkAction" class="control sd-select">
+        <option value="status">Change status</option>
+        <option value="team">Move to team</option>
+      </select>
+      <select v-if="bulkAction === 'status'" v-model="bulkStatus" class="control sd-select">
+        <option value="">Choose a status…</option>
+        <option v-for="st in taxonomy.statuses" :key="st.id" :value="String(st.id)">{{ st.name }}</option>
+      </select>
+      <select v-else v-model="bulkTeam" class="control sd-select">
+        <option value="">Choose a team…</option>
+        <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+      </select>
+      <button class="btn btn-primary btn-sm"
+              :disabled="bulkBusy || (bulkAction === 'status' ? !bulkStatus : !bulkTeam)"
+              @click="runBulk">Apply</button>
+      <button class="link" @click="selected = new Set()">Clear</button>
+    </div>
 
     <div class="sd-card table-scroll">
       <table class="sd-table">
         <thead>
           <tr>
+            <th class="sd-tick">
+              <input type="checkbox" :checked="allSelected" @change="toggleAll" />
+            </th>
             <th>Ref</th><th>Subject</th><th>Requester</th>
             <th>Status</th><th>Priority</th><th>SLA</th><th>Assignee</th>
             <th class="text-right">Replies</th>
@@ -630,6 +894,9 @@ watch(tab, (t) => {
         </thead>
         <tbody>
           <tr v-for="t in rows" :key="t.id" class="sd-row" @click="openTicket(t)">
+            <td class="sd-tick" @click.stop>
+              <input type="checkbox" :checked="selected.has(t.id)" @change="toggleRow(t.id)" />
+            </td>
             <td class="sd-mono">{{ t.reference }}</td>
             <td>
               <span class="sd-subject">{{ t.subject }}</span>
@@ -662,7 +929,10 @@ watch(tab, (t) => {
             <td>
               <span class="sd-pill" :class="'sd-clock-' + clockState(t).tone">{{ clockState(t).label }}</span>
             </td>
-            <td>{{ t.assignee?.name ?? "Unassigned" }}</td>
+            <td>
+              <span>{{ t.assignee?.name ?? "Unassigned" }}</span>
+              <span v-if="t.team" class="sd-meta">{{ t.team.name }}</span>
+            </td>
             <td class="text-right sd-mono">{{ t.messages_count }}</td>
           </tr>
           <tr v-if="!rows.length && !listBusy">
@@ -1037,6 +1307,165 @@ watch(tab, (t) => {
       </div>
     </template>
 
+    <!-- ── Teams &amp; routing ─────────────────────────────────────────────── -->
+    <template v-if="tab === 'workspace'">
+      <p v-if="wsError" class="error">{{ wsError }}</p>
+
+      <h3 class="sd-h3">Teams</h3>
+      <p class="sd-lede">
+        Work belongs to a team before it belongs to a person. Somebody on leave stays on their
+        team and stops receiving work — taking them off would lose the fact that they belong to it.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>Team</th><th>Members</th><th>Taking work</th></tr></thead>
+          <tbody>
+            <tr v-for="t in teams" :key="t.id">
+              <td>
+                <span class="sd-subject">{{ t.name }}</span>
+                <span v-if="t.description" class="sd-meta">{{ t.description }}</span>
+              </td>
+              <td>{{ t.members.map(m => m.name).join(", ") || "— nobody yet —" }}</td>
+              <td class="sd-mono">{{ t.members.filter(m => m.accepts_assignment).length }} / {{ t.members.length }}</td>
+            </tr>
+            <tr v-if="!teams.length"><td colspan="3" class="sd-empty">No teams yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Add a team</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Name</span>
+            <input v-model="teamDraft.name" class="control" placeholder="Network" />
+          </label>
+          <label class="sd-field"><span>Description</span>
+            <input v-model="teamDraft.description" class="control" placeholder="Links, routers, connectivity" />
+          </label>
+        </div>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="wsBusy || !teamDraft.name.trim()"
+                  @click="addTeam">Add team</button>
+        </div>
+      </div>
+
+      <h3 class="sd-h3">Routing</h3>
+      <p class="sd-lede">
+        The first rule that matches decides, in this order. Every condition you set must match;
+        the ones you leave blank are ignored. A rule with nothing set matches everything, which is
+        a useful catch-all at the bottom and a trap at the top.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>#</th><th>Rule</th><th>Matches</th><th>Sends to</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="(r, i) in wsRules" :key="r.id">
+              <td class="sd-mono">{{ i + 1 }}</td>
+              <td>{{ r.name }}</td>
+              <td class="sd-meta">
+                <template v-if="r.match_domain">@{{ r.match_domain }}</template>
+                <template v-if="r.match_domain && r.match_keyword"> · </template>
+                <template v-if="r.match_keyword">“{{ r.match_keyword }}”</template>
+                <template v-if="!r.match_domain && !r.match_keyword">everything</template>
+              </td>
+              <td>
+                {{ r.team?.name ?? "—" }}
+                <span class="sd-meta">{{
+                  r.assign_mode === "round_robin" ? "shared round-robin"
+                  : r.assign_mode === "least_busy" ? "to whoever is least busy"
+                  : r.assign_mode === "specific" ? "to one person" : "team only"
+                }}</span>
+              </td>
+              <td class="text-right">
+                <button class="btn btn-ghost btn-sm" style="font-size:.72rem" @click="removeRule2(r.id)">Remove</button>
+              </td>
+            </tr>
+            <tr v-if="!wsRules.length">
+              <td colspan="5" class="sd-empty">No rules. Tickets arrive unassigned until you add one.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Add a rule</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Name</span>
+            <input v-model="ruleDraft2.name" class="control" placeholder="Network faults" />
+          </label>
+          <label class="sd-field"><span>Sender domain</span>
+            <input v-model="ruleDraft2.match_domain" class="control" placeholder="client.co.ke" />
+          </label>
+          <label class="sd-field"><span>Word in the subject</span>
+            <input v-model="ruleDraft2.match_keyword" class="control" placeholder="down" />
+          </label>
+          <label class="sd-field"><span>Send to team</span>
+            <select v-model="ruleDraft2.assign_team_id" class="control">
+              <option value="">No team</option>
+              <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Then</span>
+            <select v-model="ruleDraft2.assign_mode" class="control">
+              <option value="none">Leave for the team to pick up</option>
+              <option value="round_robin">Share round-robin</option>
+              <option value="least_busy">Give to whoever is least busy</option>
+            </select>
+          </label>
+        </div>
+        <p class="sd-note">
+          Least-busy counts tickets that are waiting on somebody else too — fifteen tickets parked
+          with suppliers is still fifteen things to chase.
+        </p>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="wsBusy || !ruleDraft2.name.trim()"
+                  @click="addRule2">Add rule</button>
+        </div>
+      </div>
+
+      <h3 class="sd-h3">Saved answers</h3>
+      <p class="sd-lede">
+        <!-- v-pre: these are placeholders to be shown, not expressions to evaluate. -->
+        Available from the compose box on any ticket.
+        <span class="sd-mono" v-pre>{{requester}}</span>,
+        <span class="sd-mono" v-pre>{{reference}}</span>,
+        <span class="sd-mono" v-pre>{{subject}}</span> and
+        <span class="sd-mono" v-pre>{{assignee}}</span> are filled in when you use one.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>Title</th><th>Answer</th><th class="text-right">Used</th></tr></thead>
+          <tbody>
+            <tr v-for="c in canned" :key="c.id">
+              <td>{{ c.title }}</td>
+              <td class="sd-meta">{{ c.body.slice(0, 90) }}{{ c.body.length > 90 ? "…" : "" }}</td>
+              <td class="text-right sd-mono">{{ c.use_count }}</td>
+            </tr>
+            <tr v-if="!canned.length"><td colspan="3" class="sd-empty">Nothing saved yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Save an answer</h4>
+        <label class="sd-field"><span>Title</span>
+          <input v-model="cannedDraft.title" class="control" placeholder="Acknowledged — engineer dispatched" />
+        </label>
+        <label class="sd-field"><span>Answer</span>
+          <textarea v-model="cannedDraft.body" class="control" rows="4"
+                    placeholder="Hello {{requester}}, we have logged {{reference}} and an engineer is on the way."></textarea>
+        </label>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm"
+                  :disabled="wsBusy || !cannedDraft.title.trim() || !cannedDraft.body.trim()"
+                  @click="addCanned">Save answer</button>
+        </div>
+      </div>
+    </template>
+
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->
     <div v-if="open" class="sd-overlay" @click.self="open = null">
       <div class="sd-panel" role="dialog" aria-modal="true">
@@ -1090,16 +1519,46 @@ watch(tab, (t) => {
                       :placeholder="reply.visibility === 'internal'
                         ? 'Only the desk sees this. Working notes, supplier prices, what you have ruled out.'
                         : 'This goes to the customer.'"></textarea>
+            <!--
+              Canned answers sit on the compose box, not in a settings screen.
+              An answer somebody has already written well is only useful at the
+              moment of writing the next one.
+            -->
+            <div v-if="showCanned" class="sd-canned">
+              <button v-for="c in canned" :key="c.id" class="sd-canned-item" @click="useCanned(c.id)">
+                <strong>{{ c.title }}</strong>
+                <span class="sd-meta">used {{ c.use_count }}×</span>
+              </button>
+              <p v-if="!canned.length" class="sd-note">
+                Nothing saved yet. Add answers on the Teams &amp; routing tab.
+              </p>
+            </div>
+
             <div class="sd-compose-foot">
+              <button class="link" @click="showCanned = !showCanned">
+                {{ showCanned ? "Hide saved answers" : "Saved answers" }}
+              </button>
               <span class="sd-meta">
                 <template v-if="reply.visibility === 'internal'">The customer never sees internal notes.</template>
                 <template v-else-if="!open.first_response_at">This will be recorded as the first response.</template>
                 <template v-else>First response {{ when(open.first_response_at) }}.</template>
               </span>
-              <button class="btn btn-primary btn-sm" :disabled="replyBusy || !reply.body.trim()"
-                      @click="sendReply">
-                {{ replyBusy ? "Saving…" : (reply.visibility === "internal" ? "Add note" : "Send reply") }}
-              </button>
+              <div class="sd-compose-actions">
+                <!--
+                  Only where something is joined. One update reaching forty
+                  customers is the point of a major incident; offering it on a
+                  lone ticket is a button that does nothing.
+                -->
+                <button v-if="open.children?.length && reply.visibility === 'public'"
+                        class="btn btn-secondary btn-sm" :disabled="replyBusy || !reply.body.trim()"
+                        @click="broadcast">
+                  Send to all {{ open.children.length + 1 }}
+                </button>
+                <button class="btn btn-primary btn-sm" :disabled="replyBusy || !reply.body.trim()"
+                        @click="sendReply">
+                  {{ replyBusy ? "Saving…" : (reply.visibility === "internal" ? "Add note" : "Send reply") }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1185,6 +1644,38 @@ watch(tab, (t) => {
             <span class="sd-note">
               No target — set impact and urgency to start the clock.
             </span>
+          </div>
+
+          <!--
+            One outage is not forty faults. Joining a ticket to a parent says so,
+            and each child keeps its own clock — merging is a statement about
+            cause, not a way to make thirty-nine breaches disappear.
+          -->
+          <div class="sd-field">
+            <span>Major incident</span>
+            <div v-if="open.parent" class="sd-derived">
+              <span class="sd-note">Joined to {{ open.parent.reference }}</span>
+              <button class="link" @click="detachTicket">Separate</button>
+            </div>
+            <div v-else-if="open.children?.length" class="sd-derived">
+              <span class="sd-note">{{ open.children.length }} joined to this</span>
+            </div>
+            <div v-else class="sd-derived">
+              <button v-if="!showMerge" class="link" @click="showMerge = true">Join to another ticket</button>
+              <template v-else>
+                <input v-model="mergeRef" class="control" placeholder="SD-2026-00001" />
+                <button class="btn btn-secondary btn-sm" :disabled="!mergeRef.trim()" @click="mergeTicket">Join</button>
+              </template>
+            </div>
+          </div>
+
+          <div class="sd-field">
+            <span>Team</span>
+            <select :value="open.team?.id ?? ''" class="control"
+                    @change="moveTeam(($event.target as HTMLSelectElement).value)">
+              <option value="">Unassigned to a team</option>
+              <option v-for="t in teams" :key="t.id" :value="t.id">{{ t.name }}</option>
+            </select>
           </div>
 
           <div class="sd-field">
@@ -1430,4 +1921,17 @@ watch(tab, (t) => {
   font-size: .82rem; max-height: 14rem; overflow-y: auto; }
 .sd-holidays li { display: flex; gap: 10px; align-items: baseline; }
 .sd-holidays li .sd-mono { width: 6.5rem; }
+
+.sd-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px;
+  padding: 9px 12px; border-radius: 8px; background: var(--color-brand-subtle);
+  border: 1px solid var(--color-brand-base); }
+.sd-bulk-count { font-size: .84rem; font-weight: 600; }
+.sd-tick { width: 2.2rem; }
+
+.sd-canned { display: flex; flex-direction: column; gap: 2px; max-height: 12rem; overflow-y: auto;
+  border-top: 1px solid var(--color-border); padding: 6px; }
+.sd-canned-item { text-align: left; background: none; border: none; cursor: pointer;
+  padding: 6px 8px; border-radius: 6px; font-size: .84rem; }
+.sd-canned-item:hover { background: var(--color-surface-sunken); }
+.sd-compose-actions { display: flex; gap: 6px; }
 </style>

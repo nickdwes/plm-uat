@@ -181,14 +181,21 @@ class TicketController extends Controller
     {
         $this->authorize('assign', Ticket::class);
 
+        // Team and person together: moving work between queues is the same
+        // act as handing it to somebody, and splitting them across two
+        // endpoints means a screen has to make two calls to do one thing.
         $data = $request->validate([
-            'assigned_to' => ['nullable', 'integer', 'exists:users,id'],
+            'assigned_to'     => ['nullable', 'integer', 'exists:users,id'],
+            'support_team_id' => ['nullable', 'integer', 'exists:support_teams,id'],
         ]);
 
         $record = $this->find($ticket);
-        $record->update(['assigned_to' => $data['assigned_to'] ?? null]);
 
-        return response()->json(['data' => $record->fresh(['assignee'])]);
+        $record->update(array_intersect_key($data, array_flip(
+            array_keys($request->only(['assigned_to', 'support_team_id'])),
+        )));
+
+        return response()->json(['data' => $record->fresh(['assignee', 'team'])]);
     }
 
     public function logTime(Request $request, int $ticket): JsonResponse
