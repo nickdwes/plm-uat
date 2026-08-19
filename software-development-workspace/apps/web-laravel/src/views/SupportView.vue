@@ -175,6 +175,149 @@ async function logTime(): Promise<void> {
   }
 }
 
+// ── Held mail ──────────────────────────────────────────────────────────────────
+/*
+ * Mail from senders nobody recognises. Held rather than discarded or bounced:
+ * discarding means the message a customer swears they sent cannot be produced,
+ * and bouncing tells a spammer the address is live.
+ *
+ * Releasing offers to trust the sender in the same motion, because this is the
+ * only moment somebody has the context to decide it. The old module kept its
+ * whitelist on a screen of its own, and it stayed empty for two years.
+ */
+type Tab = "queue" | "held" | "settings";
+const tab = ref<Tab>("queue");
+
+interface Held {
+  id: number; from_name: string | null; from_email: string | null;
+  subject: string | null; body_preview: string | null;
+  received_at: string | null; quarantine_reason: string;
+}
+
+const held      = ref<Held[]>([]);
+const heldBusy  = ref(false);
+const heldError = ref("");
+const heldNote  = ref("");
+
+async function loadHeld(): Promise<void> {
+  heldBusy.value = true; heldError.value = "";
+  try {
+    const res = await api<{ data: Held[] }>("GET", "/api/v1/support/mail/quarantine", { org: org() });
+    held.value = res.data;
+  } catch (e) {
+    heldError.value = e instanceof Error ? e.message : "Could not load held mail.";
+  } finally { heldBusy.value = false; }
+}
+
+async function releaseHeld(row: Held, trust: "" | "address" | "domain"): Promise<void> {
+  heldBusy.value = true; heldError.value = ""; heldNote.value = "";
+  try {
+    const res = await api<{ ticket: { reference: string } | null }>(
+      "POST", `/api/v1/support/mail/quarantine/${row.id}/release`,
+      { org: org(), body: trust ? { trust } : {} },
+    );
+    heldNote.value = res.ticket
+      ? `Released as ${res.ticket.reference}${trust ? ` — future mail from this ${trust} goes straight through.` : "."}`
+      : "Released.";
+    await Promise.all([loadHeld(), loadList()]);
+    setTimeout(() => { heldNote.value = ""; }, 6000);
+  } catch (e) {
+    heldError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not release it.";
+  } finally { heldBusy.value = false; }
+}
+
+function domainOf(address: string | null): string {
+  return address?.split("@")[1] ?? "";
+}
+
+// ── Mail settings ──────────────────────────────────────────────────────────────
+interface MailboxRow {
+  id: number; address: string; is_active: boolean; auto_acknowledge: boolean;
+  connection: string | null; subscribed: boolean; expires_at: string | null;
+  needs_renewal: boolean; last_delivered_at: string | null; last_error: string | null;
+}
+interface Rule { id: number; kind: string; value: string; action: string; note: string | null }
+
+const mailboxes  = ref<MailboxRow[]>([]);
+const rules      = ref<Rule[]>([]);
+const cfgBusy    = ref(false);
+const cfgError   = ref("");
+const cfgNote    = ref("");
+const connections = ref<{ id: number; name: string }[]>([]);
+
+const mailboxDraft = ref({ address: "", integration_connection_id: "", auto_acknowledge: true });
+const ruleDraft    = ref({ kind: "domain", value: "", action: "allow", note: "" });
+
+async function loadSettings(): Promise<void> {
+  cfgBusy.value = true; cfgError.value = "";
+  try {
+    const [mb, rl] = await Promise.all([
+      api<{ data: MailboxRow[] }>("GET", "/api/v1/support/mailboxes", { org: org() }),
+      api<{ data: Rule[] }>("GET", "/api/v1/support/sender-rules", { org: org() }),
+    ]);
+    mailboxes.value = mb.data;
+    rules.value = rl.data;
+  } catch (e) {
+    cfgError.value = e instanceof Error ? e.message : "Could not load the mail settings.";
+  } finally { cfgBusy.value = false; }
+
+  try {
+    const res = await api<{ data: any[] }>("GET", "/api/v1/integrations/connections", { org: org() });
+    connections.value = (res.data ?? []).map((c: any) => ({ id: c.id, name: c.name }));
+  } catch { connections.value = []; }
+}
+
+async function addMailbox(): Promise<void> {
+  cfgBusy.value = true; cfgError.value = "";
+  try {
+    await api("POST", "/api/v1/support/mailboxes", {
+      org: org(),
+      body: {
+        address: mailboxDraft.value.address,
+        integration_connection_id: Number(mailboxDraft.value.integration_connection_id),
+        auto_acknowledge: mailboxDraft.value.auto_acknowledge,
+      },
+    });
+    mailboxDraft.value = { address: "", integration_connection_id: "", auto_acknowledge: true };
+    await loadSettings();
+  } catch (e) {
+    cfgError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add the mailbox.";
+  } finally { cfgBusy.value = false; }
+}
+
+async function subscribe(row: MailboxRow): Promise<void> {
+  cfgBusy.value = true; cfgError.value = ""; cfgNote.value = "";
+  try {
+    await api("POST", `/api/v1/support/mailboxes/${row.id}/subscribe`, { org: org() });
+    cfgNote.value = `Microsoft Graph will now notify us about mail to ${row.address}.`;
+    await loadSettings();
+  } catch (e) {
+    // The two usual causes are named by the server; pass them straight through.
+    cfgError.value = e instanceof ApiError ? e.message : "Could not subscribe.";
+  } finally { cfgBusy.value = false; }
+}
+
+async function addRule(): Promise<void> {
+  cfgBusy.value = true; cfgError.value = "";
+  try {
+    await api("POST", "/api/v1/support/sender-rules", { org: org(), body: { ...ruleDraft.value } });
+    ruleDraft.value = { kind: "domain", value: "", action: "allow", note: "" };
+    await loadSettings();
+  } catch (e) {
+    cfgError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the rule.";
+  } finally { cfgBusy.value = false; }
+}
+
+async function removeRule(rule: Rule): Promise<void> {
+  cfgBusy.value = true;
+  try {
+    await api("DELETE", `/api/v1/support/sender-rules/${rule.id}`, { org: org() });
+    await loadSettings();
+  } catch (e) {
+    cfgError.value = e instanceof Error ? e.message : "Could not remove it.";
+  } finally { cfgBusy.value = false; }
+}
+
 // ── New ticket ─────────────────────────────────────────────────────────────────
 const showNew = ref(false);
 const draft = ref({
@@ -230,11 +373,18 @@ function when(v: string | null): string {
 function init(): void {
   void loadTaxonomy();
   void loadList();
+  // Loaded up front so the tab can carry a count — held mail nobody looks at
+  // is the same as mail that was discarded.
+  void loadHeld();
 }
 
 onMounted(init);
 watch(currentOrgSlug, init);
 watch([stateFilter, showAll], loadList);
+watch(tab, (t) => {
+  if (t === "held") void loadHeld();
+  if (t === "settings") void loadSettings();
+});
 </script>
 
 <template>
@@ -244,9 +394,24 @@ watch([stateFilter, showAll], loadList);
         <h2>Service Desk</h2>
         <p class="sd-sub">Incidents, requests and everything else the desk is asked for.</p>
       </div>
-      <button class="btn btn-primary btn-sm" @click="showNew = true">New ticket</button>
+      <button v-if="tab === 'queue'" class="btn btn-primary btn-sm" @click="showNew = true">New ticket</button>
     </div>
 
+    <div class="sd-tabs">
+      <button :class="['sd-tabbtn', { on: tab === 'queue' }]" @click="tab = 'queue'">Queue</button>
+      <!--
+        The count is on the tab because held mail nobody looks at is the same
+        as mail that was discarded — which is the outcome this whole mechanism
+        exists to avoid.
+      -->
+      <button :class="['sd-tabbtn', { on: tab === 'held' }]" @click="tab = 'held'">
+        Held mail
+        <span v-if="held.length" class="sd-badge">{{ held.length }}</span>
+      </button>
+      <button :class="['sd-tabbtn', { on: tab === 'settings' }]" @click="tab = 'settings'">Mail settings</button>
+    </div>
+
+    <template v-if="tab === 'queue'">
     <div class="sd-filters">
       <input v-model="query" class="control sd-search" placeholder="Reference, subject, requester"
              @keyup.enter="loadList" />
@@ -312,6 +477,191 @@ watch([stateFilter, showAll], loadList);
         </tbody>
       </table>
     </div>
+
+    </template>
+
+    <!-- ── Held mail ───────────────────────────────────────────────────────── -->
+    <template v-else-if="tab === 'held'">
+      <p class="sd-lede">
+        Mail from senders nobody recognises. It is held rather than discarded or bounced —
+        discarding means a message a customer swears they sent cannot be produced, and bouncing
+        tells a spammer the address is live. Releasing it opens a ticket.
+      </p>
+
+      <p v-if="heldError" class="error">{{ heldError }}</p>
+      <p v-if="heldNote" class="sd-ok">{{ heldNote }}</p>
+
+      <div class="sd-card">
+        <ul class="sd-held">
+          <li v-for="h in held" :key="h.id" class="sd-held-item">
+            <div class="sd-held-main">
+              <div class="sd-held-from">
+                <strong>{{ h.from_name || h.from_email }}</strong>
+                <span class="sd-meta">{{ h.from_email }}</span>
+              </div>
+              <div class="sd-held-subject">{{ h.subject || "(no subject)" }}</div>
+              <p class="sd-held-preview">{{ h.body_preview }}</p>
+              <p class="sd-held-why">{{ h.quarantine_reason }}</p>
+            </div>
+            <!--
+              Trusting the sender is offered here rather than on the settings
+              tab, because this is the only moment somebody has the context to
+              decide it. The old module kept its whitelist on a screen of its
+              own and it stayed empty for two years.
+            -->
+            <div class="sd-held-actions">
+              <button class="btn btn-primary btn-sm" :disabled="heldBusy"
+                      @click="releaseHeld(h, '')">Release once</button>
+              <button class="btn btn-secondary btn-sm" :disabled="heldBusy"
+                      @click="releaseHeld(h, 'address')">Release &amp; trust this address</button>
+              <button class="btn btn-secondary btn-sm" :disabled="heldBusy || !domainOf(h.from_email)"
+                      @click="releaseHeld(h, 'domain')">
+                Release &amp; trust @{{ domainOf(h.from_email) || "…" }}
+              </button>
+            </div>
+          </li>
+          <li v-if="!held.length && !heldBusy" class="sd-empty">
+            Nothing held. Mail from known contacts and allowed domains goes straight to the queue.
+          </li>
+        </ul>
+      </div>
+    </template>
+
+    <!-- ── Mail settings ───────────────────────────────────────────────────── -->
+    <template v-else>
+      <p v-if="cfgError" class="error">{{ cfgError }}</p>
+      <p v-if="cfgNote" class="sd-ok">{{ cfgNote }}</p>
+
+      <h3 class="sd-h3">Watched mailboxes</h3>
+      <p class="sd-lede">
+        Microsoft Graph notifies this system when mail arrives. Subscriptions last about three
+        days and are renewed automatically — a mailbox showing as due for renewal has stopped
+        being watched, which is a support desk that has quietly gone silent.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead>
+            <tr><th>Mailbox</th><th>Credentials</th><th>Watching</th><th>Last delivery</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="m in mailboxes" :key="m.id">
+              <td>
+                <span class="sd-subject">{{ m.address }}</span>
+                <span class="sd-meta">{{ m.auto_acknowledge ? "Auto-acknowledges" : "No auto-reply" }}</span>
+              </td>
+              <td>{{ m.connection ?? "— none linked —" }}</td>
+              <td>
+                <span v-if="m.subscribed && !m.needs_renewal" class="sd-pill sd-ok-pill">Watching</span>
+                <span v-else-if="m.subscribed" class="sd-pill sd-warn-pill">Renewal due</span>
+                <span v-else class="sd-pill sd-off-pill">Not subscribed</span>
+                <span v-if="m.expires_at" class="sd-meta">until {{ m.expires_at.slice(0, 16) }}</span>
+              </td>
+              <td>
+                <span>{{ m.last_delivered_at?.slice(0, 16) ?? "—" }}</span>
+                <span v-if="m.last_error" class="sd-error-note">{{ m.last_error }}</span>
+              </td>
+              <td>
+                <button class="btn btn-secondary btn-sm" :disabled="cfgBusy" @click="subscribe(m)">
+                  {{ m.subscribed ? "Re-subscribe" : "Subscribe" }}
+                </button>
+              </td>
+            </tr>
+            <tr v-if="!mailboxes.length"><td colspan="5" class="sd-empty">No mailbox is being watched yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Watch a mailbox</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Address</span>
+            <input v-model="mailboxDraft.address" class="control" placeholder="support@kns.co.ke" />
+          </label>
+          <label class="sd-field"><span>Credentials</span>
+            <select v-model="mailboxDraft.integration_connection_id" class="control">
+              <option value="">Choose a connection…</option>
+              <option v-for="c in connections" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+            </select>
+          </label>
+        </div>
+        <label class="sd-check">
+          <input v-model="mailboxDraft.auto_acknowledge" type="checkbox" />
+          <span>Send an automatic acknowledgement with the ticket reference</span>
+        </label>
+        <p class="sd-note">
+          The app registration needs <strong>Mail.Read</strong> and <strong>Mail.Send</strong> as
+          application permissions with admin consent, and this system needs a publicly reachable
+          address — Graph checks the webhook before it will subscribe.
+        </p>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm"
+                  :disabled="cfgBusy || !mailboxDraft.address || !mailboxDraft.integration_connection_id"
+                  @click="addMailbox">Add mailbox</button>
+        </div>
+      </div>
+
+      <h3 class="sd-h3">Who may open a ticket</h3>
+      <p class="sd-lede">
+        Anyone recorded as a contact on a client account is allowed without a rule. These rules
+        cover everyone else. Blocking an address beats allowing its domain.
+      </p>
+
+      <div class="sd-card table-scroll">
+        <table class="sd-table">
+          <thead><tr><th>Rule</th><th>Match</th><th>Note</th><th></th></tr></thead>
+          <tbody>
+            <tr v-for="r in rules" :key="r.id">
+              <td>
+                <span class="sd-pill" :class="r.action === 'block' ? 'sd-block-pill' : 'sd-ok-pill'">
+                  {{ r.action === "block" ? "Block" : "Allow" }}
+                </span>
+              </td>
+              <td class="sd-mono">{{ r.kind === "domain" ? "@" + r.value : r.value }}</td>
+              <td class="sd-meta">{{ r.note ?? "" }}</td>
+              <td class="text-right">
+                <button class="btn btn-ghost btn-sm" style="font-size:.72rem"
+                        :disabled="cfgBusy" @click="removeRule(r)">Remove</button>
+              </td>
+            </tr>
+            <tr v-if="!rules.length">
+              <td colspan="4" class="sd-empty">
+                No rules yet. Known contacts still get through — rules are for everyone else.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="sd-card sd-pad">
+        <h4 class="sd-h4">Add a rule</h4>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Match on</span>
+            <select v-model="ruleDraft.kind" class="control">
+              <option value="domain">Whole domain</option>
+              <option value="address">One address</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>{{ ruleDraft.kind === "domain" ? "Domain" : "Address" }}</span>
+            <input v-model="ruleDraft.value" class="control"
+                   :placeholder="ruleDraft.kind === 'domain' ? 'client.co.ke' : 'ann@client.co.ke'" />
+          </label>
+          <label class="sd-field"><span>Then</span>
+            <select v-model="ruleDraft.action" class="control">
+              <option value="allow">Allow — opens tickets</option>
+              <option value="block">Block — recorded, never a ticket</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Note</span>
+            <input v-model="ruleDraft.note" class="control" placeholder="Why, for whoever asks later" />
+          </label>
+        </div>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm" :disabled="cfgBusy || !ruleDraft.value.trim()"
+                  @click="addRule">Add rule</button>
+        </div>
+      </div>
+    </template>
 
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->
     <div v-if="open" class="sd-overlay" @click.self="open = null">
@@ -627,4 +977,37 @@ watch([stateFilter, showAll], loadList);
 .error { font-size: .85rem; color: var(--color-error); background: var(--color-error-light);
   border-radius: 8px; padding: 9px 12px; margin: 0 20px; }
 .table-scroll { overflow-x: auto; }
+
+.sd-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--color-border); }
+.sd-tabbtn { background: none; border: none; cursor: pointer; padding: 8px 14px;
+  font-size: .88rem; color: var(--color-text-light); border-bottom: 2px solid transparent; }
+.sd-tabbtn.on { color: var(--color-text); font-weight: 600; border-bottom-color: var(--color-brand-base); }
+.sd-badge { display: inline-block; margin-left: 6px; font-size: .68rem; padding: 1px 6px;
+  border-radius: 999px; background: var(--color-warning); color: #fff; }
+
+.sd-lede { font-size: .85rem; color: var(--color-text-light); margin: 0 0 12px; max-width: 46rem; }
+.sd-h3 { @apply font-semibold; margin: 18px 0 4px; color: var(--color-text); }
+.sd-h4 { @apply font-semibold; margin: 0 0 10px; font-size: .9rem; color: var(--color-text); }
+.sd-pad { padding: 16px; margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.sd-right { display: flex; justify-content: flex-end; }
+.sd-ok { font-size: .85rem; padding: 9px 12px; border-radius: 8px;
+  background: var(--color-success-light); color: var(--color-success); margin: 0 0 10px; }
+
+.sd-held { list-style: none; margin: 0; padding: 0; }
+.sd-held-item { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--color-border); }
+.sd-held-item:last-child { border-bottom: none; }
+.sd-held-main { flex: 1 1 22rem; min-width: 0; }
+.sd-held-from { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.sd-held-subject { font-size: .9rem; color: var(--color-text); margin-top: 2px; }
+.sd-held-preview { font-size: .8rem; color: var(--color-text-light); margin: 4px 0 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sd-held-why { font-size: .76rem; color: var(--color-warning); margin: 6px 0 0; }
+.sd-held-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-start; }
+
+.sd-ok-pill { background: var(--color-success-light); color: var(--color-success); }
+.sd-warn-pill { background: var(--color-warning-light); color: #7C2D12; }
+.sd-off-pill { background: var(--color-surface-sunken); color: var(--color-text-light); }
+.sd-block-pill { background: var(--color-error-light); color: var(--color-error); }
+.sd-error-note { display: block; font-size: .72rem; color: var(--color-error); }
 </style>
