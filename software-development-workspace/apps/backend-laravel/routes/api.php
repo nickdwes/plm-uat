@@ -22,6 +22,7 @@ use App\Http\Controllers\Support\MailWebhookController;
 use App\Http\Controllers\Support\MailboxController;
 use App\Http\Controllers\Support\SlaController;
 use App\Http\Controllers\Support\TicketController;
+use App\Http\Controllers\Support\WorkspaceController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\RecurringDeductionController;
 use App\Http\Controllers\Payroll\PayrollConfigController;
@@ -903,6 +904,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/classify', [TicketController::class, 'reclassify']);
         Route::post('/tickets/{ticket}/assign', [TicketController::class, 'assign']);
         Route::post('/tickets/{ticket}/time',   [TicketController::class, 'logTime']);
+        Route::post('/tickets/{ticket}/merge',  [TicketController::class, 'merge']);
+        Route::post('/tickets/{ticket}/detach', [TicketController::class, 'detach']);
+        Route::post('/tickets/{ticket}/broadcast', [TicketController::class, 'broadcast']);
+        Route::post('/tickets/bulk',            [TicketController::class, 'bulk']);
+
+        // Teams, routing, canned answers and saved queues.
+        Route::get('/workspace',                [WorkspaceController::class, 'index']);
+        Route::post('/workspace/teams',         [WorkspaceController::class, 'storeTeam']);
+        Route::post('/workspace/teams/{team}/members', [WorkspaceController::class, 'saveMember']);
+        Route::delete('/workspace/teams/{team}/members/{member}', [WorkspaceController::class, 'removeMember']);
+        Route::post('/workspace/rules',         [WorkspaceController::class, 'saveRule']);
+        Route::delete('/workspace/rules/{rule}', [WorkspaceController::class, 'destroyRule']);
+        Route::post('/workspace/canned',        [WorkspaceController::class, 'saveCanned']);
+        Route::post('/workspace/canned/{canned}/use', [WorkspaceController::class, 'useCanned']);
+        Route::delete('/workspace/canned/{canned}', [WorkspaceController::class, 'destroyCanned']);
+        Route::post('/workspace/views',         [WorkspaceController::class, 'saveView']);
+        Route::delete('/workspace/views/{view}', [WorkspaceController::class, 'destroyView']);
 
         // Mail ingestion setup, and the queue of held messages.
         Route::get('/mailboxes',                    [MailboxController::class, 'index']);

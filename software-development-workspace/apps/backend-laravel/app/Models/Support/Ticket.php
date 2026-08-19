@@ -27,7 +27,7 @@ class Ticket extends Model
         'subject', 'body',
         'requester_name', 'requester_email', 'requester_user_id', 'account_contact_id',
         'ticket_type_id', 'ticket_status_id', 'urgency_id', 'impact_id', 'priority_id',
-        'assigned_to', 'parent_ticket_id', 'source',
+        'assigned_to', 'support_team_id', 'parent_ticket_id', 'merged_at', 'source',
         'opened_at', 'first_response_at', 'resolved_at', 'closed_at', 'created_by',
     ];
 
@@ -36,6 +36,7 @@ class Ticket extends Model
         'first_response_at' => 'datetime',
         'resolved_at'       => 'datetime',
         'closed_at'         => 'datetime',
+        'merged_at'         => 'datetime',
     ];
 
     // ── Relations ─────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ class Ticket extends Model
     public function contact(): BelongsTo   { return $this->belongsTo(AccountContact::class, 'account_contact_id'); }
     public function assignee(): BelongsTo  { return $this->belongsTo(User::class, 'assigned_to'); }
     public function parent(): BelongsTo    { return $this->belongsTo(self::class, 'parent_ticket_id'); }
+    public function team(): BelongsTo      { return $this->belongsTo(Team::class, 'support_team_id'); }
 
     /** The clock, where this ticket has one. */
     public function sla(): \Illuminate\Database\Eloquent\Relations\HasOne

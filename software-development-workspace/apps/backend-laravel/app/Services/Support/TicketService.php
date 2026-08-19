@@ -70,6 +70,7 @@ class TicketService
                 'priority_id'      => $this->priorityFor($organizationId, $data),
 
                 'assigned_to'      => $data['assigned_to'] ?? null,
+                'support_team_id'  => $data['support_team_id'] ?? null,
                 'parent_ticket_id' => $data['parent_ticket_id'] ?? null,
                 'source'           => $data['source'] ?? 'agent',
                 'opened_at'        => now(),
@@ -101,7 +102,14 @@ class TicketService
              */
             $this->clock()->attach($ticket);
 
-            return $ticket->fresh(['status', 'priority', 'sla']);
+            /*
+             * Routed after the clock, because a rule can match on priority and
+             * the priority is settled by then. Never overrides an assignment
+             * the caller supplied — see AssignmentEngine.
+             */
+            app(AssignmentEngine::class)->apply($ticket);
+
+            return $ticket->fresh(['status', 'priority', 'sla', 'team', 'assignee']);
         });
     }
 
