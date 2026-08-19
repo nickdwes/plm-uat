@@ -18,7 +18,9 @@ use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
+use App\Http\Controllers\Support\CatalogueController;
 use App\Http\Controllers\Support\MailWebhookController;
+use App\Http\Controllers\Support\PortalController;
 use App\Http\Controllers\Support\MailboxController;
 use App\Http\Controllers\Support\RoutingController;
 use App\Http\Controllers\Support\SlaController;
@@ -110,6 +112,24 @@ Route::prefix('auth/azure')->middleware('throttle:20,1')->group(function () {
     Route::get('/redirect',  [AzureSsoController::class, 'redirect']);
     Route::get('/callback',  [AzureSsoController::class, 'callback']);
     Route::post('/exchange', [AzureSsoController::class, 'exchange']);
+});
+
+/*
+ * The customer portal.
+ *
+ * Unauthenticated by design — access is a signed, revocable link emailed to the
+ * person the ticket belongs to. Throttled hard because the URL is public by
+ * construction and the token is the only thing in front of somebody's
+ * correspondence.
+ */
+Route::prefix('v1/support/portal')->middleware('throttle:60,1')->group(function () {
+    Route::get('/ticket',     [PortalController::class, 'ticket']);
+    Route::get('/tickets',    [PortalController::class, 'tickets']);
+    Route::post('/reply',     [PortalController::class, 'reply']);
+    Route::get('/catalogue',  [PortalController::class, 'catalogue']);
+    Route::post('/request',   [PortalController::class, 'submit']);
+    Route::get('/survey',     [PortalController::class, 'survey']);
+    Route::post('/survey',    [PortalController::class, 'respond']);
 });
 
 /*
@@ -908,6 +928,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/merge',  [TicketController::class, 'merge']);
         Route::post('/tickets/{ticket}/detach', [TicketController::class, 'detach']);
         Route::post('/tickets/{ticket}/split',  [TicketController::class, 'split']);
+
+        // The catalogue, portal links and the satisfaction survey.
+        Route::get('/catalogue',                 [CatalogueController::class, 'index']);
+        Route::post('/catalogue/services',       [CatalogueController::class, 'saveService']);
+        Route::post('/tickets/{ticket}/portal-link', [CatalogueController::class, 'portalLink']);
+        Route::post('/portal-links/account',     [CatalogueController::class, 'accountLink']);
+        Route::post('/tickets/{ticket}/survey',  [CatalogueController::class, 'sendSurvey']);
         Route::post('/tickets/{ticket}/broadcast', [TicketController::class, 'broadcast']);
         Route::post('/tickets/bulk',            [TicketController::class, 'bulk']);
 

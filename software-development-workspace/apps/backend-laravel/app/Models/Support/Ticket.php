@@ -30,7 +30,7 @@ class Ticket extends Model
         'urgency_id', 'impact_id', 'priority_id',
         'service_desk_user_id', 'escalation_owner_id', 'account_contract_engineer_id',
         'assigned_to', 'support_team_id', 'parent_ticket_id', 'merged_at',
-        'split_from_ticket_id', 'source',
+        'split_from_ticket_id', 'support_service_id', 'source',
         'opened_at', 'first_response_at', 'resolved_at', 'closed_at', 'created_by',
     ];
 
@@ -104,6 +104,16 @@ class Ticket extends Model
     public function publicMessages(): HasMany
     {
         return $this->messages()->where('visibility', TicketMessage::VISIBILITY_PUBLIC);
+    }
+
+    public function answers(): HasMany
+    {
+        return $this->hasMany(TicketAnswer::class, 'support_ticket_id');
+    }
+
+    public function survey(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(Survey::class, 'support_ticket_id');
     }
 
     public function worklogs(): HasMany
