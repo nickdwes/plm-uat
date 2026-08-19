@@ -907,6 +907,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/time',   [TicketController::class, 'logTime']);
         Route::post('/tickets/{ticket}/merge',  [TicketController::class, 'merge']);
         Route::post('/tickets/{ticket}/detach', [TicketController::class, 'detach']);
+        Route::post('/tickets/{ticket}/split',  [TicketController::class, 'split']);
         Route::post('/tickets/{ticket}/broadcast', [TicketController::class, 'broadcast']);
         Route::post('/tickets/bulk',            [TicketController::class, 'bulk']);
 

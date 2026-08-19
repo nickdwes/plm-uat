@@ -106,6 +106,7 @@ class TicketController extends Controller
                 'sla.sla', 'slaEvents' => fn ($q) => $q->orderBy('occurred_at'),
                 'team', 'children:id,reference,subject,ticket_status_id,parent_ticket_id',
                 'serviceCategory', 'analyst:id,name', 'escalationOwner:id,name',
+                'splitFrom:id,reference,subject', 'splits:id,reference,subject,split_from_ticket_id',
                 /*
                  * The hand-off trail and the escalations. Written since the
                  * routing revision and, until now, loaded by nothing — which is
@@ -300,6 +301,38 @@ class TicketController extends Controller
                 ? 'Posted. Nothing else is joined to this ticket.'
                 : "Posted here and on {$result['children']} joined " .
                   ($result['children'] === 1 ? 'ticket.' : 'tickets.'),
+        ], 201);
+    }
+
+    /**
+     * Split part of a conversation into its own ticket.
+     *
+     * The chosen messages are copied rather than moved — see TicketService.
+     * The new ticket routes itself from scratch, which is usually the point:
+     * the second half of the request is a different discipline and belongs to
+     * different people.
+     */
+    public function split(Request $request, int $ticket): JsonResponse
+    {
+        $this->authorize('update', Ticket::class);
+
+        $data = $request->validate([
+            'subject'             => ['required', 'string', 'max:300'],
+            'message_ids'         => ['array'],
+            'message_ids.*'       => ['integer'],
+            'ticket_type_id'      => ['nullable', 'integer', 'exists:support_ticket_types,id'],
+            'service_category_id' => ['nullable', 'integer', 'exists:support_service_categories,id'],
+        ]);
+
+        try {
+            $fresh = $this->service->split($this->find($ticket), $data, $request->user());
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'data'    => $fresh,
+            'message' => "Raised {$fresh->reference}. The original keeps its full history.",
         ], 201);
     }
 

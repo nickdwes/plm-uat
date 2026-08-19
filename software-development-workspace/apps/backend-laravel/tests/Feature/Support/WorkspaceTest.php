@@ -270,6 +270,101 @@ class WorkspaceTest extends TestCase
             ->assertJsonPath('skipped.0', 999999);
     }
 
+    // ── Splitting ─────────────────────────────────────────────────────────────
+
+    /**
+     * "The laptop is slow, and while I have you, we need a mailbox." Two pieces
+     * of work with two owners and two clocks; worked as one they close when the
+     * slower half finishes.
+     */
+    public function test_a_ticket_splits_into_a_second_one(): void
+    {
+        $ticket = $this->open(['subject' => 'Laptop slow and new starter mailbox']);
+        $agent  = User::factory()->create();
+        $second = $this->service()->reply($ticket, ['body' => 'Also the mailbox please.'], $agent);
+
+        $fresh = $this->service()->split($ticket, [
+            'subject'     => 'New starter mailbox',
+            'message_ids' => [$second->id],
+        ], $agent);
+
+        $this->assertNotSame($ticket->id, $fresh->id);
+        $this->assertSame($ticket->id, $fresh->split_from_ticket_id);
+        $this->assertSame('New starter mailbox', $fresh->subject);
+    }
+
+    /**
+     * The original keeps everything. Moving messages out would leave replies to
+     * something nobody can see — and the customer's own copy still has them.
+     */
+    public function test_splitting_leaves_the_original_intact(): void
+    {
+        $ticket = $this->open();
+        $agent  = User::factory()->create();
+        $extra  = $this->service()->reply($ticket, ['body' => 'Second problem.'], $agent);
+
+        $before = $ticket->messages()->count();
+
+        $this->service()->split($ticket, ['subject' => 'Second problem', 'message_ids' => [$extra->id]], $agent);
+
+        // Everything it had, plus the internal note saying where the rest went.
+        $this->assertSame($before + 1, $ticket->fresh()->messages()->count());
+        $this->assertTrue($ticket->fresh()->messages()
+            ->where('visibility', TicketMessage::VISIBILITY_INTERNAL)
+            ->get()->contains(fn ($m) => str_contains($m->body, 'Split:')));
+    }
+
+    /** The customer and their contract come with it — same person asking. */
+    public function test_the_split_keeps_the_customer_and_contract(): void
+    {
+        $account = \App\Models\Account\Account::create([
+            'organization_id' => $this->org->id,
+            'name' => 'Client Ltd', 'reference' => 'ACC-9', 'status' => 'active',
+        ]);
+
+        $ticket = $this->open(['account_id' => $account->id, 'requester_name' => 'Ann Otieno']);
+
+        $fresh = $this->service()->split($ticket, ['subject' => 'Other thing'], User::factory()->create());
+
+        $this->assertSame($account->id, $fresh->account_id);
+        $this->assertSame('Ann Otieno', $fresh->requester_name);
+    }
+
+    /** A split is not a major incident, and must not appear as one. */
+    public function test_a_split_is_not_a_parent_child_relationship(): void
+    {
+        $ticket = $this->open();
+        $fresh  = $this->service()->split($ticket, ['subject' => 'Other thing'], User::factory()->create());
+
+        $this->assertNull($fresh->parent_ticket_id);
+        $this->assertSame(0, $ticket->fresh()->children()->count());
+        $this->assertSame(1, $ticket->fresh()->splits()->count());
+    }
+
+    /** Usually the point: the other half belongs to a different discipline. */
+    public function test_the_split_can_be_routed_somewhere_else(): void
+    {
+        $mailboxes = \App\Models\Support\ServiceCategory::where('name', 'Cloud')->firstOrFail();
+
+        $ticket = $this->open();
+        $fresh  = $this->service()->split($ticket, [
+            'subject' => 'New starter mailbox',
+            'service_category_id' => $mailboxes->id,
+        ], User::factory()->create());
+
+        $this->assertSame($mailboxes->id, $fresh->service_category_id);
+        $this->assertSame(Team::where('name', 'Cloud Support')->value('id'), $fresh->support_team_id);
+    }
+
+    public function test_a_split_without_a_subject_is_refused(): void
+    {
+        $ticket = $this->open();
+        $this->signIn([Permission::SUPPORT_VIEW, Permission::SUPPORT_UPDATE]);
+
+        $this->postJson("/api/v1/support/tickets/{$ticket->id}/split", [],
+            ['X-Organization' => 'alpha'])->assertStatus(422);
+    }
+
     // ── Canned responses ──────────────────────────────────────────────────────
 
     public function test_a_canned_response_fills_in_what_the_system_knows(): void

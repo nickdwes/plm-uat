@@ -227,6 +227,102 @@ class TicketService
         return $ticket->fresh(['priority', 'type', 'urgency', 'impact', 'sla', 'team', 'assignee']);
     }
 
+    /**
+     * Take part of a conversation and make it its own ticket.
+     *
+     * "The laptop is slow, and while I have you, we need a mailbox for the new
+     * starter" is two pieces of work with two owners and two clocks. Worked as
+     * one ticket it closes when the slower half finishes, which is how a desk
+     * ends up with resolution times nobody recognises.
+     *
+     * ── The chosen messages are copied, not moved ──
+     *
+     * The original keeps its whole history. Moving messages out would leave a
+     * thread with replies to something nobody can see, and the customer's own
+     * copy of that conversation still has them — so the ticket would no longer
+     * match what they are reading.
+     *
+     * @param  array $data subject, message_ids, ticket_type_id, service_category_id
+     */
+    public function split(Ticket $ticket, array $data, ?User $actor = null): Ticket
+    {
+        if (blank($data['subject'] ?? null)) {
+            throw new RuntimeException('The new ticket needs a subject of its own.');
+        }
+
+        $messages = $ticket->messages()
+            ->whereIn('id', $data['message_ids'] ?? [])
+            ->orderBy('id')
+            ->get();
+
+        return DB::transaction(function () use ($ticket, $data, $messages, $actor) {
+            /*
+             * The customer, account and contract come across unchanged: it is
+             * the same person asking, so the same service level applies and the
+             * same engineers are the right ones to consider.
+             */
+            $fresh = $this->open($ticket->organization_id, [
+                'subject'             => $data['subject'],
+                'body'                => $messages->first()?->body ?? $ticket->body,
+                'account_id'          => $ticket->account_id,
+                'account_contract_id' => $ticket->account_contract_id,
+                'account_contact_id'  => $ticket->account_contact_id,
+                'requester_name'      => $ticket->requester_name,
+                'requester_email'     => $ticket->requester_email,
+                'requester_user_id'   => $ticket->requester_user_id,
+                'ticket_type_id'      => $data['ticket_type_id'] ?? $ticket->ticket_type_id,
+                // Usually the point of splitting: the second half is a
+                // different discipline and belongs to different people.
+                'service_category_id' => $data['service_category_id'] ?? null,
+                'source'              => $ticket->source,
+            ], $actor);
+
+            $fresh->forceFill(['split_from_ticket_id' => $ticket->id])->save();
+
+            /*
+             * Everything after the first, copied in order. The first is already
+             * the opening description, so copying it again would show it twice.
+             */
+            foreach ($messages->skip(1) as $message) {
+                $fresh->messages()->create([
+                    'visibility'     => $message->visibility,
+                    'body'           => $message->body,
+                    'author_user_id' => $message->author_user_id,
+                    'author_name'    => $message->author_name,
+                    'author_email'   => $message->author_email,
+                    'source'         => $message->source,
+                    'is_from_agent'  => $message->is_from_agent,
+                ]);
+            }
+
+            // Both sides say where the other is, because the question asked
+            // later is always "where did the rest of this go?".
+            $this->reply($ticket, [
+                'body'       => "Split: {$fresh->reference} raised for \"{$data['subject']}\".",
+                'visibility' => TicketMessage::VISIBILITY_INTERNAL,
+                'source'     => 'system',
+            ], $actor);
+
+            $this->reply($fresh, [
+                'body'       => "Split out of {$ticket->reference} — {$ticket->subject}.",
+                'visibility' => TicketMessage::VISIBILITY_INTERNAL,
+                'source'     => 'system',
+            ], $actor);
+
+            \App\Models\Support\TicketEvent::create([
+                'support_ticket_id' => $ticket->id,
+                'event'      => 'split',
+                'field'      => 'ticket',
+                'to_value'   => $fresh->reference,
+                'reason'     => $data['subject'],
+                'actor_id'   => $actor?->id,
+                'occurred_at' => now(),
+            ]);
+
+            return $fresh->fresh(['status', 'priority', 'team', 'assignee', 'sla']);
+        });
+    }
+
     public function logTime(Ticket $ticket, User $user, array $data): TicketWorklog
     {
         return $ticket->worklogs()->create([

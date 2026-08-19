@@ -55,6 +55,8 @@ interface Worklog {
 
 interface TicketDetail extends TicketRow {
   body: string | null;
+  split_from?: { id: number; reference: string; subject: string } | null;
+  splits?: { id: number; reference: string; subject: string }[];
   service_category?: { id: number; name: string; is_technical: boolean } | null;
   analyst?: { id: number; name: string } | null;
   escalation_owner?: { id: number; name: string } | null;
@@ -752,6 +754,49 @@ async function deleteView(v: ViewRow): Promise<void> {
   } catch (e) {
     listError.value = e instanceof ApiError ? e.message : "Could not remove it.";
   }
+}
+
+// ── Splitting ──────────────────────────────────────────────────────────────────
+/*
+ * One message, two problems. Worked as a single ticket it closes when the
+ * slower half finishes, which is how a desk ends up with resolution times
+ * nobody recognises.
+ *
+ * The chosen messages are copied, not moved: the customer's own copy of the
+ * conversation still has them, so a thread with pieces removed would no longer
+ * match what they are reading.
+ */
+const showSplit  = ref(false);
+const splitDraft = ref({ subject: "", service_category_id: "", message_ids: [] as number[] });
+const splitBusy  = ref(false);
+
+function toggleSplitMessage(id: number): void {
+  const at = splitDraft.value.message_ids.indexOf(id);
+  at === -1 ? splitDraft.value.message_ids.push(id) : splitDraft.value.message_ids.splice(at, 1);
+}
+
+async function splitTicket(): Promise<void> {
+  if (!open.value || !splitDraft.value.subject.trim()) return;
+  splitBusy.value = true; openError.value = "";
+  try {
+    const res = await api<{ message: string }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/split`, {
+        org: org(),
+        body: {
+          subject: splitDraft.value.subject,
+          message_ids: splitDraft.value.message_ids,
+          service_category_id: splitDraft.value.service_category_id
+            ? Number(splitDraft.value.service_category_id) : null,
+        },
+      });
+    bulkNote.value = res.message;
+    showSplit.value = false;
+    splitDraft.value = { subject: "", service_category_id: "", message_ids: [] };
+    await refreshOpen();
+    setTimeout(() => { bulkNote.value = ""; }, 6000);
+  } catch (e) {
+    openError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not split it.";
+  } finally { splitBusy.value = false; }
 }
 
 // ── Major incidents ────────────────────────────────────────────────────────────
@@ -2519,6 +2564,49 @@ watch(tab, (t) => {
             </div>
           </div>
 
+          <!--
+            A split is not a major incident. Merging says forty reports are one
+            fault; splitting says one report was two requests. Kept apart on the
+            panel for the same reason they are kept apart in the data.
+          -->
+          <div class="sd-field">
+            <span>Split</span>
+            <div v-if="open.split_from" class="sd-derived">
+              <span class="sd-note">Split out of {{ open.split_from.reference }}</span>
+            </div>
+            <ul v-if="open.splits?.length" class="sd-splits">
+              <li v-for="sp in open.splits" :key="sp.id">
+                <span class="sd-mono">{{ sp.reference }}</span> {{ sp.subject }}
+              </li>
+            </ul>
+            <button v-if="!showSplit" class="link" @click="showSplit = true">
+              Split part of this into a new ticket
+            </button>
+            <div v-else class="sd-assign">
+              <input v-model="splitDraft.subject" class="control" placeholder="Subject for the new ticket" />
+              <select v-model="splitDraft.service_category_id" class="control">
+                <option value="">Same discipline</option>
+                <option v-for="c in categories" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+              </select>
+              <p class="sd-note">
+                Tick the messages that belong to the new ticket. They are copied, not moved — the
+                original keeps its full history, because the customer's own copy still has them.
+              </p>
+              <ul class="sd-split-pick">
+                <li v-for="m in open.messages" :key="m.id">
+                  <label class="sd-check">
+                    <input type="checkbox" :checked="splitDraft.message_ids.includes(m.id)"
+                           @change="toggleSplitMessage(m.id)" />
+                    <span>{{ m.body.slice(0, 60) }}{{ m.body.length > 60 ? "…" : "" }}</span>
+                  </label>
+                </li>
+              </ul>
+              <button class="btn btn-primary btn-sm" :disabled="splitBusy || !splitDraft.subject.trim()"
+                      @click="splitTicket">Raise the new ticket</button>
+              <button class="link" @click="showSplit = false">Cancel</button>
+            </div>
+          </div>
+
           <div class="sd-field">
             <span>Team</span>
             <select :value="open.team?.id ?? ''" class="control"
@@ -2825,4 +2913,9 @@ watch(tab, (t) => {
 .sd-view-x:hover { color: var(--color-error); }
 .sd-view-save { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .sd-view-save .control { max-width: 15rem; }
+
+.sd-splits { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column;
+  gap: 3px; font-size: .78rem; color: var(--color-text-light); }
+.sd-split-pick { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column;
+  gap: 3px; max-height: 10rem; overflow-y: auto; font-size: .78rem; }
 </style>
