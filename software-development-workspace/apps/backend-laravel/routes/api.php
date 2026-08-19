@@ -18,6 +18,8 @@ use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
+use App\Http\Controllers\Support\MailWebhookController;
+use App\Http\Controllers\Support\MailboxController;
 use App\Http\Controllers\Support\TicketController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\RecurringDeductionController;
@@ -105,6 +107,18 @@ Route::prefix('auth/azure')->middleware('throttle:20,1')->group(function () {
     Route::get('/redirect',  [AzureSsoController::class, 'redirect']);
     Route::get('/callback',  [AzureSsoController::class, 'callback']);
     Route::post('/exchange', [AzureSsoController::class, 'exchange']);
+});
+
+/*
+ * Microsoft Graph change notifications.
+ *
+ * Necessarily unauthenticated — Graph carries no bearer token — so the
+ * controller checks each notification against the mailbox's clientState before
+ * queueing anything. Throttled because the URL is public by construction.
+ */
+Route::prefix('v1')->group(function () {
+    Route::post('/support/mail/webhook', MailWebhookController::class)
+        ->middleware('throttle:600,1');
 });
 
 // Current authenticated user.
@@ -888,6 +902,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/classify', [TicketController::class, 'reclassify']);
         Route::post('/tickets/{ticket}/assign', [TicketController::class, 'assign']);
         Route::post('/tickets/{ticket}/time',   [TicketController::class, 'logTime']);
+
+        // Mail ingestion setup, and the queue of held messages.
+        Route::get('/mailboxes',                    [MailboxController::class, 'index']);
+        Route::post('/mailboxes',                   [MailboxController::class, 'store']);
+        Route::post('/mailboxes/{mailbox}/subscribe', [MailboxController::class, 'subscribe']);
+        Route::get('/mail/quarantine',              [MailboxController::class, 'quarantine']);
+        Route::post('/mail/quarantine/{email}/release', [MailboxController::class, 'release']);
+        Route::get('/sender-rules',                 [MailboxController::class, 'rules']);
+        Route::post('/sender-rules',                [MailboxController::class, 'storeRule']);
+        Route::delete('/sender-rules/{rule}',       [MailboxController::class, 'destroyRule']);
     });
 
     Route::prefix('payroll')->group(function () {
