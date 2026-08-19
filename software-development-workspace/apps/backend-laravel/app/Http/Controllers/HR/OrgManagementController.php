@@ -400,6 +400,117 @@ class OrgManagementController extends Controller
 
     // ── Org Structure: Full hierarchy tree ───────────────────────────────────
 
+    /**
+     * The org chart, both ways round.
+     *
+     * "Org chart" means two different pictures depending on who is asking. HR
+     * means the structure — units, departments, who heads them. A manager means
+     * the reporting line — who answers to whom. They disagree often enough to
+     * be worth showing separately: somebody can head a department and report
+     * to a person outside it.
+     *
+     * Both are returned in one call because the tab shows one and offers the
+     * other, and a second round trip to switch view is a spinner nobody needs.
+     */
+    public function orgChart(): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
+        $orgId = app('current.organization_id');
+
+        $people = \App\Models\Employee::where('primary_organization_id', $orgId)
+            ->where('status', 'active')
+            ->whereNull('date_exited')
+            ->with(['designation:id,title', 'department:id,name'])
+            ->orderBy('first_name')
+            ->get([
+                'id', 'employee_number', 'first_name', 'last_name', 'reports_to',
+                'designation_id', 'department_id', 'work_email', 'photo_url', 'is_shared',
+            ]);
+
+        return response()->json([
+            'reporting'   => $this->reportingTree($people),
+            'unassigned'  => $this->peopleWithoutAPlace($people),
+            'headcount'   => $people->count(),
+            'organization' => \App\Models\Organization::find($orgId)?->only(['id', 'name']),
+        ]);
+    }
+
+    /**
+     * The reporting line as a tree.
+     *
+     * Assembled from one query rather than recursing into the database, because
+     * a chart that costs a query per person is a chart that times out on the
+     * organisation big enough to need one.
+     */
+    private function reportingTree($people): array
+    {
+        $byManager = $people->groupBy('reports_to');
+        $ids       = $people->pluck('id')->flip();
+
+        /*
+         * Roots are people with no manager *and* people whose manager is not in
+         * this list — somebody reporting into another tenant, or to a leaver.
+         * Without the second case they vanish from the chart entirely, which is
+         * how an org chart quietly loses a department.
+         */
+        $roots = $people->filter(
+            fn ($e) => $e->reports_to === null || ! $ids->has($e->reports_to)
+        );
+
+        $seen = [];
+
+        $build = function ($employee, int $depth) use (&$build, $byManager, &$seen) {
+            /*
+             * A reports_to cycle is rare and fatal: two people managing each
+             * other would recurse until the request dies. Guarded rather than
+             * assumed away, because the data is edited by hand.
+             */
+            if (isset($seen[$employee->id]) || $depth > 20) {
+                return null;
+            }
+
+            $seen[$employee->id] = true;
+
+            $children = ($byManager[$employee->id] ?? collect())
+                ->map(fn ($child) => $build($child, $depth + 1))
+                ->filter()
+                ->values();
+
+            return [
+                'id'          => $employee->id,
+                'name'        => trim($employee->first_name . ' ' . $employee->last_name),
+                'number'      => $employee->employee_number,
+                'title'       => $employee->designation?->title,
+                'department'  => $employee->department?->name,
+                'email'       => $employee->work_email,
+                'photo'       => $employee->photo_url,
+                'is_shared'   => (bool) $employee->is_shared,
+                // The whole subtree, so a collapsed node can say what it hides.
+                'reports'     => $this->countDescendants($children),
+                'children'    => $children,
+            ];
+        };
+
+        return $roots->map(fn ($r) => $build($r, 0))->filter()->values()->all();
+    }
+
+    private function countDescendants($children): int
+    {
+        return collect($children)->sum(fn ($c) => 1 + $c['reports']);
+    }
+
+    /** Active people with no department, which a chart should surface not hide. */
+    private function peopleWithoutAPlace($people): array
+    {
+        return $people->whereNull('department_id')->map(fn ($e) => [
+            'id'     => $e->id,
+            'name'   => trim($e->first_name . ' ' . $e->last_name),
+            'number' => $e->employee_number,
+            'title'  => $e->designation?->title,
+        ])->values()->all();
+    }
+
     public function orgStructure(): JsonResponse
     {
         abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);

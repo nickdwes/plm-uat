@@ -1043,6 +1043,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Org structure hierarchy
         Route::get('/structure',                              [OrgManagementController::class, 'orgStructure']);
+        // The same organisation seen as a reporting line rather than a
+        // structure — the two disagree often enough to be worth both.
+        Route::get('/org-chart',                              [OrgManagementController::class, 'orgChart']);
         Route::get('/functional-units',                       [OrgManagementController::class, 'functionalUnits']);
         Route::post('/functional-units',                      [OrgManagementController::class, 'storeFunctionalUnit']);
         Route::put('/functional-units/{functionalUnit}',      [OrgManagementController::class, 'updateFunctionalUnit']);
