@@ -55,6 +55,14 @@ interface Worklog {
 
 interface TicketDetail extends TicketRow {
   body: string | null;
+  service_category?: { id: number; name: string; is_technical: boolean } | null;
+  analyst?: { id: number; name: string } | null;
+  escalation_owner?: { id: number; name: string } | null;
+  escalations?: { id: number; level: string; reason: string; outcome: string | null;
+                  escalated_at: string; resolved_at: string | null;
+                  to?: { name: string } | null; by?: { name: string } | null }[];
+  events?: { id: number; event: string; reason: string | null; to_value: string | null;
+             automatic: boolean; occurred_at: string }[];
   parent?: { id: number; reference: string; subject: string } | null;
   children?: { id: number; reference: string; subject: string }[];
   sla_events?: { id: number; event: string; clock: string | null; detail: string | null;
@@ -126,6 +134,7 @@ async function openTicket(row: TicketRow): Promise<void> {
     }>("GET", `/api/v1/support/tickets/${row.id}`, { org: org() });
     open.value = res.data;
     minutesLogged.value = res.minutes_logged;
+    void loadSuggestions();
     slaUsed.value = res.sla_minutes_used;
     elapsed.value = res.elapsed_minutes;
   } catch (e) {
@@ -198,6 +207,190 @@ async function logTime(): Promise<void> {
     openError.value = e instanceof Error ? e.message : "Could not log the time.";
   }
 }
+
+// ── Placing work ───────────────────────────────────────────────────────────────
+/*
+ * Suggestions, never automatic distribution. Where several engineers are
+ * equally placed the choice belongs to the analyst or the team lead — they know
+ * about the leave nobody recorded and the customer who will not work with one
+ * of them. Workload is shown to inform that, not to make it.
+ */
+interface Suggestion {
+  user_id: number; name: string | null; reason: string;
+  score: number; open: number; pending: number; at_risk: number; available: boolean;
+}
+
+const suggestions = ref<Suggestion[]>([]);
+const suggestBusy = ref(false);
+const showAssign  = ref(false);
+const assignReason = ref("");
+const assignTo    = ref<number | null>(null);
+
+async function loadSuggestions(): Promise<void> {
+  if (!open.value) return;
+  suggestBusy.value = true;
+  try {
+    const res = await api<{ suggestions: Suggestion[] }>(
+      "GET", `/api/v1/support/tickets/${open.value.id}/suggest`, { org: org() },
+    );
+    suggestions.value = res.suggestions;
+  } catch { suggestions.value = []; }
+  finally { suggestBusy.value = false; }
+}
+
+async function assignTicket(): Promise<void> {
+  if (!open.value || !assignReason.value.trim()) return;
+  openError.value = "";
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/reassign`, {
+      org: org(),
+      body: { assigned_to: assignTo.value, reason: assignReason.value },
+    });
+    showAssign.value = false; assignReason.value = ""; assignTo.value = null;
+    await refreshOpen();
+  } catch (e) {
+    openError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not assign it.";
+  }
+}
+
+/** Re-run the rules — normally after triage has set the service category. */
+async function reroute(force = false): Promise<void> {
+  if (!open.value) return;
+  openError.value = "";
+  try {
+    const res = await api<{ result: { why: string } }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/reroute`,
+      { org: org(), body: { force } },
+    );
+    bulkNote.value = res.result.why;
+    await refreshOpen();
+    setTimeout(() => { bulkNote.value = ""; }, 6000);
+  } catch (e) {
+    openError.value = e instanceof Error ? e.message : "Could not re-route it.";
+  }
+}
+
+// ── Escalation ─────────────────────────────────────────────────────────────────
+const showEscalate = ref(false);
+const escalation = ref({ level: "specialist", reason: "", to_user_id: "", to_team_id: "" });
+const outcomeDraft = ref<Record<number, string>>({});
+
+const escalationLevels: Record<string, string> = {
+  specialist: "Specialist engineer",
+  team_lead: "Technical team lead",
+  business_unit: "Business unit",
+  vendor: "Vendor or supplier",
+  service_desk: "Back to the service desk",
+};
+
+async function escalate(): Promise<void> {
+  if (!open.value || !escalation.value.reason.trim()) return;
+  openError.value = "";
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/escalate`, {
+      org: org(),
+      body: {
+        level: escalation.value.level,
+        reason: escalation.value.reason,
+        to_user_id: escalation.value.to_user_id ? Number(escalation.value.to_user_id) : null,
+        to_team_id: escalation.value.to_team_id ? Number(escalation.value.to_team_id) : null,
+      },
+    });
+    showEscalate.value = false;
+    escalation.value = { level: "specialist", reason: "", to_user_id: "", to_team_id: "" };
+    await refreshOpen();
+  } catch (e) {
+    // The server refuses a reason-less escalation and says why.
+    openError.value = e instanceof ApiError ? e.message : "Could not escalate it.";
+  }
+}
+
+async function resolveEscalation(id: number): Promise<void> {
+  if (!open.value || !outcomeDraft.value[id]?.trim()) return;
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/escalations/${id}/resolve`, {
+      org: org(), body: { outcome: outcomeDraft.value[id] },
+    });
+    delete outcomeDraft.value[id];
+    await refreshOpen();
+  } catch (e) {
+    openError.value = e instanceof ApiError ? e.message : "Could not close it off.";
+  }
+}
+
+// ── The desk board ─────────────────────────────────────────────────────────────
+/*
+ * The analyst's home. Unassigned work and tickets at risk are the two things the
+ * desk exists to catch, so they are one screen rather than filters somebody has
+ * to remember to apply.
+ */
+const desk = ref<{
+  unassigned: TicketRow[]; at_risk: TicketRow[]; waiting: TicketRow[]; mine: TicketRow[];
+  open_escalations: any[];
+} | null>(null);
+const deskBusy = ref(false);
+
+async function loadDesk(): Promise<void> {
+  deskBusy.value = true;
+  try {
+    desk.value = await api("GET", "/api/v1/support/desk", { org: org() });
+  } catch { desk.value = null; }
+  finally { deskBusy.value = false; }
+}
+
+// ── Contracts ──────────────────────────────────────────────────────────────────
+const contracts = ref<any[]>([]);
+const categories = ref<{ id: number; name: string; is_technical: boolean }[]>([]);
+const engineerPool = ref<any[]>([]);
+const openContract = ref<number | null>(null);
+const ctBusy = ref(false);
+const ctError = ref("");
+const engDraft = ref({ user_id: "", role: "primary", service_category_id: "" });
+
+async function loadContracts(): Promise<void> {
+  ctBusy.value = true; ctError.value = "";
+  try {
+    const res = await api<{ contracts: any[]; categories: any[]; engineers: any[] }>(
+      "GET", "/api/v1/support/contracts", { org: org() },
+    );
+    contracts.value = res.contracts;
+    categories.value = res.categories;
+    engineerPool.value = res.engineers;
+    if (openContract.value === null && res.contracts.length) openContract.value = res.contracts[0].id;
+  } catch (e) {
+    ctError.value = e instanceof Error ? e.message : "Could not load the contracts.";
+  } finally { ctBusy.value = false; }
+}
+
+async function addContractEngineer(): Promise<void> {
+  if (!openContract.value || !engDraft.value.user_id) return;
+  ctBusy.value = true; ctError.value = "";
+  try {
+    await api("POST", `/api/v1/support/contracts/${openContract.value}/engineers`, {
+      org: org(),
+      body: {
+        user_id: Number(engDraft.value.user_id),
+        role: engDraft.value.role,
+        service_category_id: engDraft.value.service_category_id
+          ? Number(engDraft.value.service_category_id) : null,
+      },
+    });
+    engDraft.value = { user_id: "", role: "primary", service_category_id: "" };
+    await loadContracts();
+  } catch (e) {
+    ctError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not add them.";
+  } finally { ctBusy.value = false; }
+}
+
+async function removeContractEngineer(id: number): Promise<void> {
+  if (!openContract.value) return;
+  try {
+    await api("DELETE", `/api/v1/support/contracts/${openContract.value}/engineers/${id}`, { org: org() });
+    await loadContracts();
+  } catch (e) { ctError.value = e instanceof Error ? e.message : "Could not remove them."; }
+}
+
+const currentContract = computed(() => contracts.value.find((c) => c.id === openContract.value) ?? null);
 
 // ── Working the queue ──────────────────────────────────────────────────────────
 /*
@@ -595,7 +788,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "held" | "settings" | "sla" | "workspace";
+type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -732,7 +925,7 @@ async function removeRule(rule: Rule): Promise<void> {
 const showNew = ref(false);
 const draft = ref({
   subject: "", body: "", requester_name: "", requester_email: "",
-  ticket_type_id: "", urgency_id: "", impact_id: "", source: "phone",
+  ticket_type_id: "", service_category_id: "", urgency_id: "", impact_id: "", source: "phone",
 });
 const newBusy  = ref(false);
 const newError = ref("");
@@ -748,6 +941,7 @@ async function createTicket(): Promise<void> {
         requester_name: draft.value.requester_name || null,
         requester_email: draft.value.requester_email || null,
         ticket_type_id: draft.value.ticket_type_id ? Number(draft.value.ticket_type_id) : null,
+        service_category_id: draft.value.service_category_id ? Number(draft.value.service_category_id) : null,
         urgency_id: draft.value.urgency_id ? Number(draft.value.urgency_id) : null,
         impact_id: draft.value.impact_id ? Number(draft.value.impact_id) : null,
         source: draft.value.source,
@@ -756,7 +950,7 @@ async function createTicket(): Promise<void> {
     showNew.value = false;
     draft.value = {
       subject: "", body: "", requester_name: "", requester_email: "",
-      ticket_type_id: "", urgency_id: "", impact_id: "", source: "phone",
+      ticket_type_id: "", service_category_id: "", urgency_id: "", impact_id: "", source: "phone",
     };
     await loadList();
     await openTicket(res.data);
@@ -789,6 +983,9 @@ function init(): void {
   // Teams and canned answers are needed by the queue and the ticket panel, not
   // only by their own tab.
   void loadWorkspace();
+  // Categories are needed by the queue filters and the new-ticket form, not
+  // only by the contracts tab.
+  void loadContracts();
 }
 
 onMounted(init);
@@ -799,6 +996,8 @@ watch(tab, (t) => {
   if (t === "settings") void loadSettings();
   if (t === "sla") void loadSla();
   if (t === "workspace") void loadWorkspace();
+  if (t === "desk") void loadDesk();
+  if (t === "contracts") void loadContracts();
 });
 </script>
 
@@ -814,6 +1013,7 @@ watch(tab, (t) => {
 
     <div class="sd-tabs">
       <button :class="['sd-tabbtn', { on: tab === 'queue' }]" @click="tab = 'queue'">Queue</button>
+      <button :class="['sd-tabbtn', { on: tab === 'desk' }]" @click="tab = 'desk'">Service Desk</button>
       <!--
         The count is on the tab because held mail nobody looks at is the same
         as mail that was discarded — which is the outcome this whole mechanism
@@ -826,6 +1026,7 @@ watch(tab, (t) => {
       <button :class="['sd-tabbtn', { on: tab === 'settings' }]" @click="tab = 'settings'">Mail settings</button>
       <button :class="['sd-tabbtn', { on: tab === 'sla' }]" @click="tab = 'sla'">Service levels</button>
       <button :class="['sd-tabbtn', { on: tab === 'workspace' }]" @click="tab = 'workspace'">Teams &amp; routing</button>
+      <button :class="['sd-tabbtn', { on: tab === 'contracts' }]" @click="tab = 'contracts'">Contract engineers</button>
     </div>
 
     <template v-if="tab === 'queue'">
@@ -1373,9 +1574,8 @@ watch(tab, (t) => {
               <td>
                 {{ r.team?.name ?? "—" }}
                 <span class="sd-meta">{{
-                  r.assign_mode === "round_robin" ? "shared round-robin"
-                  : r.assign_mode === "least_busy" ? "to whoever is least busy"
-                  : r.assign_mode === "specific" ? "to one person" : "team only"
+                  r.assign_mode === "specific" ? "always one named person"
+                  : "then the customer's contract engineer"
                 }}</span>
               </td>
               <td class="text-right">
@@ -1409,15 +1609,20 @@ watch(tab, (t) => {
           </label>
           <label class="sd-field"><span>Then</span>
             <select v-model="ruleDraft2.assign_mode" class="control">
-              <option value="none">Leave for the team to pick up</option>
-              <option value="round_robin">Share round-robin</option>
-              <option value="least_busy">Give to whoever is least busy</option>
+              <option value="none">Use the customer's contract engineer</option>
+              <option value="specific">Always one named person</option>
             </select>
           </label>
         </div>
+        <!--
+          Said plainly because it is the behaviour people expect to find and
+          will otherwise go looking for.
+        -->
         <p class="sd-note">
-          Least-busy counts tickets that are waiting on somebody else too — fifteen tickets parked
-          with suppliers is still fifteen things to chase.
+          Work is not shared out automatically. A rule picks the queue; who takes the ticket comes
+          from the customer's contract — the engineer named for that service, then the contract's
+          generalist. Anything that cannot be placed reaches the Service Desk queue rather than
+          sitting unassigned.
         </p>
         <div class="sd-right">
           <button class="btn btn-primary btn-sm" :disabled="wsBusy || !ruleDraft2.name.trim()"
@@ -1463,6 +1668,149 @@ watch(tab, (t) => {
                   :disabled="wsBusy || !cannedDraft.title.trim() || !cannedDraft.body.trim()"
                   @click="addCanned">Save answer</button>
         </div>
+      </div>
+    </template>
+
+    <!-- ── Service desk board ──────────────────────────────────────────────── -->
+    <template v-if="tab === 'desk'">
+      <p class="sd-lede">
+        The two things the desk exists to catch: work nobody has picked up, and work that is about
+        to miss what was promised. Placing a ticket is not the same as owning the fix — an analyst
+        can chase a ticket all the way to resolution without ever being its engineer.
+      </p>
+
+      <div v-if="desk" class="sd-board">
+        <section class="sd-card sd-board-col">
+          <h4 class="sd-h4">Not placed yet <span class="sd-badge">{{ desk.unassigned.length }}</span></h4>
+          <ul class="sd-board-list">
+            <li v-for="t in desk.unassigned" :key="t.id" @click="openTicket(t)">
+              <span class="sd-mono">{{ t.reference }}</span>
+              <span>{{ t.subject }}</span>
+              <span class="sd-meta">{{ t.account?.name ?? "No account matched" }}</span>
+            </li>
+            <li v-if="!desk.unassigned.length" class="sd-note">Everything has somewhere to be.</li>
+          </ul>
+        </section>
+
+        <section class="sd-card sd-board-col">
+          <h4 class="sd-h4">About to breach <span class="sd-badge">{{ desk.at_risk.length }}</span></h4>
+          <ul class="sd-board-list">
+            <li v-for="t in desk.at_risk" :key="t.id" @click="openTicket(t)">
+              <span class="sd-mono">{{ t.reference }}</span>
+              <span>{{ t.subject }}</span>
+              <span class="sd-pill" :class="'sd-clock-' + clockState(t).tone">{{ clockState(t).label }}</span>
+            </li>
+            <li v-if="!desk.at_risk.length" class="sd-note">Nothing within four hours of its target.</li>
+          </ul>
+        </section>
+
+        <section class="sd-card sd-board-col">
+          <!--
+            The desk's real job. A ticket parked with a customer or a supplier
+            stops its own clock and stops being anybody's problem, which is how
+            it sits for three weeks.
+          -->
+          <h4 class="sd-h4">Waiting on somebody <span class="sd-badge">{{ desk.waiting.length }}</span></h4>
+          <ul class="sd-board-list">
+            <li v-for="t in desk.waiting" :key="t.id" @click="openTicket(t)">
+              <span class="sd-mono">{{ t.reference }}</span>
+              <span>{{ t.subject }}</span>
+              <span class="sd-meta">{{ t.status?.name }} · {{ t.assignee?.name ?? "unassigned" }}</span>
+            </li>
+            <li v-if="!desk.waiting.length" class="sd-note">Nothing parked.</li>
+          </ul>
+        </section>
+
+        <section class="sd-card sd-board-col">
+          <h4 class="sd-h4">Open escalations <span class="sd-badge">{{ desk.open_escalations.length }}</span></h4>
+          <ul class="sd-board-list">
+            <li v-for="e in desk.open_escalations" :key="e.id">
+              <span class="sd-mono">{{ e.ticket?.reference }}</span>
+              <span>{{ escalationLevels[e.level] ?? e.level }}</span>
+              <span class="sd-meta">
+                {{ e.by?.name ?? "—" }}<template v-if="e.to"> → {{ e.to.name }}</template>
+              </span>
+              <span class="sd-meta">{{ e.reason }}</span>
+            </li>
+            <li v-if="!desk.open_escalations.length" class="sd-note">Nothing escalated.</li>
+          </ul>
+        </section>
+      </div>
+      <p v-else-if="deskBusy" class="quiet">Loading…</p>
+    </template>
+
+    <!-- ── Contract engineers ──────────────────────────────────────────────── -->
+    <template v-if="tab === 'contracts'">
+      <p v-if="ctError" class="error">{{ ctError }}</p>
+      <p class="sd-lede">
+        Who supports each customer. This is what routing reads: a ticket goes to the engineer named
+        on the contract for its service category, then to the contract's generalist, then to the
+        team. Nobody is picked because they happen to be free.
+      </p>
+
+      <div class="sd-card sd-pad">
+        <label class="sd-field" style="max-width:30rem"><span>Contract</span>
+          <select v-model.number="openContract" class="control">
+            <option v-for="c in contracts" :key="c.id" :value="c.id">
+              {{ c.account ? c.account + " · " : "" }}{{ c.name }}{{ c.status === "active" ? "" : ` (${c.status})` }}
+            </option>
+          </select>
+        </label>
+
+        <template v-if="currentContract">
+          <table class="sd-table">
+            <thead><tr><th>Engineer</th><th>Role</th><th>For</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="e in currentContract.engineers" :key="e.id">
+                <td>{{ e.engineer?.name ?? "—" }}</td>
+                <td>{{ e.role }}</td>
+                <td>{{ e.category?.name ?? "Anything on this contract" }}</td>
+                <td class="text-right">
+                  <button class="btn btn-ghost btn-sm" style="font-size:.72rem"
+                          @click="removeContractEngineer(e.id)">Remove</button>
+                </td>
+              </tr>
+              <tr v-if="!currentContract.engineers?.length">
+                <td colspan="4" class="sd-empty">
+                  Nobody named. Tickets for this customer fall through to the team, then the desk.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4 class="sd-h4" style="margin-top:14px">Name an engineer</h4>
+          <div class="sd-grid">
+            <label class="sd-field"><span>Engineer</span>
+              <select v-model="engDraft.user_id" class="control">
+                <option value="">Choose…</option>
+                <option v-for="e in engineerPool" :key="e.user_id" :value="String(e.user_id)">
+                  {{ e.user?.name }}{{ e.practice ? ` · ${e.practice.name}` : "" }}
+                </option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Role</span>
+              <select v-model="engDraft.role" class="control">
+                <option value="primary">Primary</option>
+                <option value="secondary">Secondary</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>For which service</span>
+              <select v-model="engDraft.service_category_id" class="control">
+                <option value="">Anything on this contract</option>
+                <option v-for="c in categories" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+              </select>
+            </label>
+          </div>
+          <p class="sd-note">
+            Leave the service blank for the generalist on the contract. Name one to have network
+            tickets reach the network engineer and cloud tickets the cloud engineer.
+          </p>
+          <div class="sd-right">
+            <button class="btn btn-primary btn-sm" :disabled="ctBusy || !engDraft.user_id"
+                    @click="addContractEngineer">Add engineer</button>
+          </div>
+        </template>
+        <p v-else-if="!ctBusy" class="sd-note">No contracts yet.</p>
       </div>
     </template>
 
@@ -1669,6 +2017,99 @@ watch(tab, (t) => {
             </div>
           </div>
 
+          <!--
+            Which discipline owns it — a separate question from what kind of
+            thing it is. Setting this is what lets routing find the right
+            engineer on the contract rather than the only one.
+          -->
+          <div class="sd-field">
+            <span>Service category</span>
+            <select :value="open.service_category?.id ?? ''" class="control"
+                    @change="classify('service_category_id', ($event.target as HTMLSelectElement).value)">
+              <option value="">Not categorised</option>
+              <option v-for="c in categories" :key="c.id" :value="c.id">
+                {{ c.name }}{{ c.is_technical ? "" : " (non-technical)" }}
+              </option>
+            </select>
+            <button class="link" @click="reroute(false)">Re-run routing</button>
+          </div>
+
+          <!--
+            Suggestions, ranked. Contract knowledge outranks being idle, and the
+            workload figures are there to inform the choice rather than make it.
+          -->
+          <div class="sd-field">
+            <span>Who should take this</span>
+            <ul v-if="suggestions.length" class="sd-suggest">
+              <li v-for="sg in suggestions" :key="sg.user_id"
+                  :class="{ off: !sg.available }">
+                <button class="sd-suggest-btn"
+                        @click="assignTo = sg.user_id; showAssign = true">
+                  <strong>{{ sg.name }}</strong>
+                  <span class="sd-meta">{{ sg.reason }}</span>
+                  <span class="sd-meta">
+                    {{ sg.open }} open · {{ sg.pending }} waiting
+                    <template v-if="sg.at_risk"> · {{ sg.at_risk }} at risk</template>
+                  </span>
+                </button>
+              </li>
+            </ul>
+            <p v-else-if="!suggestBusy" class="sd-note">
+              Nobody is named on a contract for this customer, and no practice owns the category.
+            </p>
+
+            <div v-if="showAssign" class="sd-assign">
+              <input v-model="assignReason" class="control" placeholder="Why you are moving it" />
+              <button class="btn btn-primary btn-sm" :disabled="!assignReason.trim()" @click="assignTicket">
+                Assign
+              </button>
+              <button class="link" @click="showAssign = false">Cancel</button>
+            </div>
+          </div>
+
+          <!--
+            Deliberate escalation, which is not the SLA ladder. The clock keeps
+            running: the customer was promised a resolution and does not care
+            how many people it passed through.
+          -->
+          <div class="sd-field">
+            <span>Escalation</span>
+            <ul v-if="open.escalations?.length" class="sd-escalations">
+              <li v-for="e in open.escalations" :key="e.id">
+                <strong>{{ escalationLevels[e.level] ?? e.level }}</strong>
+                <span class="sd-meta">{{ e.reason }}</span>
+                <span class="sd-meta">
+                  by {{ e.by?.name ?? "—" }}<template v-if="e.to"> to {{ e.to.name }}</template>
+                  · {{ e.escalated_at?.slice(0, 16).replace("T", " ") }}
+                </span>
+                <template v-if="!e.resolved_at">
+                  <input v-model="outcomeDraft[e.id]" class="control"
+                         placeholder="What was found, before handing it back" />
+                  <button class="link" :disabled="!outcomeDraft[e.id]?.trim()"
+                          @click="resolveEscalation(e.id)">Hand back</button>
+                </template>
+                <span v-else class="sd-meta sd-done">Closed: {{ e.outcome }}</span>
+              </li>
+            </ul>
+
+            <button v-if="!showEscalate" class="link" @click="showEscalate = true">Escalate this</button>
+            <div v-else class="sd-assign">
+              <select v-model="escalation.level" class="control">
+                <option v-for="(label, key) in escalationLevels" :key="key" :value="key">{{ label }}</option>
+              </select>
+              <select v-model="escalation.to_team_id" class="control">
+                <option value="">To a team…</option>
+                <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+              </select>
+              <textarea v-model="escalation.reason" class="control" rows="3"
+                        placeholder="What has been tried, and what you need. Required — 'escalated' on its own tells the next person nothing."></textarea>
+              <button class="btn btn-primary btn-sm"
+                      :disabled="!escalation.reason.trim() || (!escalation.to_team_id && !escalation.to_user_id)"
+                      @click="escalate">Escalate</button>
+              <button class="link" @click="showEscalate = false">Cancel</button>
+            </div>
+          </div>
+
           <div class="sd-field">
             <span>Team</span>
             <select :value="open.team?.id ?? ''" class="control"
@@ -1738,6 +2179,12 @@ watch(tab, (t) => {
               <option value="agent">Raised by us</option>
               <option value="email">Email</option>
               <option value="portal">Portal</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Service category</span>
+            <select v-model="draft.service_category_id" class="control">
+              <option value="">Not categorised</option>
+              <option v-for="c in categories" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
             </select>
           </label>
           <label class="sd-field"><span>Impact</span>
@@ -1934,4 +2381,27 @@ watch(tab, (t) => {
   padding: 6px 8px; border-radius: 6px; font-size: .84rem; }
 .sd-canned-item:hover { background: var(--color-surface-sunken); }
 .sd-compose-actions { display: flex; gap: 6px; }
+
+.sd-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 12px; }
+.sd-board-col { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
+.sd-board-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+  max-height: 26rem; overflow-y: auto; font-size: .82rem; }
+.sd-board-list li { display: flex; flex-direction: column; gap: 2px; padding: 7px 8px;
+  border-radius: 6px; background: var(--color-surface-sunken); cursor: pointer; }
+.sd-board-list li:hover { background: var(--color-brand-subtle); }
+
+.sd-suggest { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sd-suggest li.off { opacity: .55; }
+.sd-suggest-btn { width: 100%; text-align: left; background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border); border-radius: 8px; padding: 7px 9px; cursor: pointer;
+  display: flex; flex-direction: column; gap: 1px; font-size: .8rem; }
+.sd-suggest-btn:hover { border-color: var(--color-brand-base); }
+
+.sd-assign { display: flex; flex-direction: column; gap: 6px; margin-top: 6px;
+  padding: 9px; border-radius: 8px; background: var(--color-surface-sunken); }
+
+.sd-escalations { list-style: none; margin: 0 0 6px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sd-escalations li { display: flex; flex-direction: column; gap: 2px; font-size: .8rem;
+  padding: 8px; border-radius: 8px; background: var(--color-warning-light); }
+.sd-done { color: var(--color-success); }
 </style>

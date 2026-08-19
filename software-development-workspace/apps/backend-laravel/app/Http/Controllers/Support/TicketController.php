@@ -91,6 +91,16 @@ class TicketController extends Controller
                 'worklogs' => fn ($q) => $q->with('user:id,name')->orderByDesc('performed_on'),
                 'sla.sla', 'slaEvents' => fn ($q) => $q->orderBy('occurred_at'),
                 'team', 'children:id,reference,subject,ticket_status_id,parent_ticket_id',
+                'serviceCategory', 'analyst:id,name', 'escalationOwner:id,name',
+                /*
+                 * The hand-off trail and the escalations. Written since the
+                 * routing revision and, until now, loaded by nothing — which is
+                 * the whole failure this rebuild keeps finding in the old
+                 * module: a record nothing can read.
+                 */
+                'events' => fn ($q) => $q->with('actor:id,name')->orderBy('occurred_at'),
+                'escalations' => fn ($q) => $q->with(['to:id,name', 'by:id,name'])
+                    ->orderByDesc('escalated_at'),
             ]),
             'minutes_logged' => $record->minutesLogged(),
             /*
