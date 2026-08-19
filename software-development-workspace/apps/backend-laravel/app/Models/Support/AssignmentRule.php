@@ -19,20 +19,34 @@ class AssignmentRule extends Model
 
     protected $table = 'support_assignment_rules';
 
-    public const MODE_NONE        = 'none';
-    public const MODE_ROUND_ROBIN = 'round_robin';
-    public const MODE_LEAST_BUSY  = 'least_busy';
-    public const MODE_SPECIFIC    = 'specific';
+    /*
+     * Round-robin and least-busy are deliberately gone. Both distribute by
+     * availability and ignore who knows the customer's estate, which is the
+     * only thing that reliably makes support faster. What is left is: leave it
+     * on the queue, or name one person as a genuine exception.
+     */
+    public const MODE_NONE     = 'none';
+    public const MODE_SPECIFIC = 'specific';
+
+    /** contract_engineer | team_only */
+    public const PREFER_CONTRACT = 'contract_engineer';
+    public const PREFER_TEAM     = 'team_only';
 
     protected $fillable = [
         'organization_id', 'name', 'position', 'is_active',
-        'match_account_id', 'match_type_id', 'match_priority_id', 'match_domain', 'match_keyword',
-        'assign_team_id', 'assign_mode', 'assign_user_id',
+        'match_account_id', 'match_type_id', 'match_priority_id', 'match_service_category_id',
+        'match_domain', 'match_keyword',
+        'assign_team_id', 'assign_mode', 'prefer', 'assign_user_id',
     ];
 
     protected $casts = ['is_active' => 'boolean', 'position' => 'integer'];
 
-    protected $attributes = ['is_active' => true, 'assign_mode' => self::MODE_NONE, 'position' => 0];
+    protected $attributes = [
+        'is_active'   => true,
+        'assign_mode' => self::MODE_NONE,
+        'prefer'      => self::PREFER_CONTRACT,
+        'position'    => 0,
+    ];
 
     public function team(): BelongsTo
     {
@@ -57,6 +71,11 @@ class AssignmentRule extends Model
         }
 
         if ($this->match_priority_id && $ticket->priority_id !== $this->match_priority_id) {
+            return false;
+        }
+
+        if ($this->match_service_category_id
+            && $ticket->service_category_id !== $this->match_service_category_id) {
             return false;
         }
 

@@ -62,7 +62,8 @@ class TicketService
                 'requester_email'   => $data['requester_email'] ?? null,
                 'requester_user_id' => $data['requester_user_id'] ?? null,
 
-                'ticket_type_id'   => $data['ticket_type_id'] ?? null,
+                'ticket_type_id'      => $data['ticket_type_id'] ?? null,
+                'service_category_id' => $data['service_category_id'] ?? null,
                 'ticket_status_id' => $status->id,
                 'urgency_id'       => $data['urgency_id'] ?? null,
                 'impact_id'        => $data['impact_id'] ?? null,
@@ -104,10 +105,11 @@ class TicketService
 
             /*
              * Routed after the clock, because a rule can match on priority and
-             * the priority is settled by then. Never overrides an assignment
-             * the caller supplied — see AssignmentEngine.
+             * the priority is settled by then. Routing goes to the engineer who
+             * knows the customer rather than to whoever is free — see
+             * RoutingEngine. It never overrides an assignment the caller made.
              */
-            app(AssignmentEngine::class)->apply($ticket);
+            app(RoutingEngine::class)->route($ticket);
 
             return $ticket->fresh(['status', 'priority', 'sla', 'team', 'assignee']);
         });
@@ -193,10 +195,12 @@ class TicketService
     public function reclassify(Ticket $ticket, array $data): Ticket
     {
         $ticket->fill(array_filter([
-            'ticket_type_id' => $data['ticket_type_id'] ?? null,
-            'urgency_id'     => $data['urgency_id'] ?? null,
-            'impact_id'      => $data['impact_id'] ?? null,
-            'account_id'     => $data['account_id'] ?? null,
+            'ticket_type_id'      => $data['ticket_type_id'] ?? null,
+            'service_category_id' => $data['service_category_id'] ?? null,
+            'urgency_id'          => $data['urgency_id'] ?? null,
+            'impact_id'           => $data['impact_id'] ?? null,
+            'account_id'          => $data['account_id'] ?? null,
+            'account_contract_id' => $data['account_contract_id'] ?? null,
         ], fn ($v) => $v !== null));
 
         $ticket->priority_id = $this->priorityFor($ticket->organization_id, [
@@ -213,7 +217,14 @@ class TicketService
          */
         $this->clock()->attach($ticket->fresh());
 
-        return $ticket->fresh(['priority', 'type', 'urgency', 'impact', 'sla']);
+        /*
+         * Re-routed after triage, because the service category is usually set
+         * here and it is what decides which engineer on the contract takes it.
+         * A ticket somebody has already picked up is left alone.
+         */
+        app(RoutingEngine::class)->route($ticket->fresh());
+
+        return $ticket->fresh(['priority', 'type', 'urgency', 'impact', 'sla', 'team', 'assignee']);
     }
 
     public function logTime(Ticket $ticket, User $user, array $data): TicketWorklog

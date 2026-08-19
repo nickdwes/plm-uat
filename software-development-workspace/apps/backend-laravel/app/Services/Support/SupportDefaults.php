@@ -6,6 +6,8 @@ use App\Models\Support\Calendar;
 use App\Models\Support\CalendarHoliday;
 use App\Models\Support\CalendarWindow;
 use App\Models\Support\PriorityMatrix;
+use App\Models\Support\ServiceCategory;
+use App\Models\Support\Team;
 use App\Models\Support\TicketImpact;
 use App\Models\Support\TicketPriority;
 use App\Models\Support\TicketStatus;
@@ -148,6 +150,7 @@ class SupportDefaults
             }
 
             $this->buildMatrix($organizationId);
+            $this->seedCategories($organizationId);
         });
     }
 
@@ -228,6 +231,53 @@ class SupportDefaults
                 );
             }
         }
+    }
+
+    /**
+     * The disciplines that own work, and the desk itself.
+     *
+     * A second axis from the ticket type: "Incident" says what happened,
+     * "Network" says who fixes it. Two of these are deliberately not technical
+     * — a billing query is support work and must not be forced into an
+     * engineer's queue.
+     */
+    private function seedCategories(int $organizationId): void
+    {
+        $categories = [
+            ['Network',            true],
+            ['Infrastructure',     true],
+            ['Cloud',              true],
+            ['Applications',       true],
+            ['Security and IAM',   true],
+            ['End-user support',   true],
+            ['Billing and contracts', false],
+            ['General enquiry',    false],
+        ];
+
+        foreach ($categories as $i => [$name, $technical]) {
+            ServiceCategory::create([
+                'organization_id' => $organizationId,
+                'name'         => $name,
+                'slug'         => \Str::slug($name),
+                'is_technical' => $technical,
+                'position'     => $i,
+            ]);
+        }
+
+        /*
+         * The desk's own queue, created here so routing always has a last
+         * resort. A ticket nobody can place still has to land somewhere a
+         * person looks — the old module left those unassigned, which is how
+         * things sat untouched for a week.
+         */
+        Team::create([
+            'organization_id' => $organizationId,
+            'name'            => 'Service Desk',
+            'slug'            => 'service-desk',
+            'description'     => 'Everything that has not been placed yet.',
+            'is_service_desk' => true,
+            'is_default'      => true,
+        ]);
     }
 
     /** Every impact/urgency pair gets an answer, so triage can never fall through. */

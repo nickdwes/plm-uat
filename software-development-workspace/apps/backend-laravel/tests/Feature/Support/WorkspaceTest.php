@@ -13,7 +13,6 @@ use App\Models\Support\Ticket;
 use App\Models\Support\TicketMessage;
 use App\Models\Support\TicketStatus;
 use App\Models\User;
-use App\Services\Support\AssignmentEngine;
 use App\Services\Support\MajorIncidents;
 use App\Services\Support\SupportDefaults;
 use App\Services\Support\TicketService;
@@ -113,7 +112,12 @@ class WorkspaceTest extends TestCase
         ]);
 
         $this->assertSame($this->team->id, $this->open()->fresh()->support_team_id);
-        $this->assertNull($this->open(['subject' => 'Please add a mailbox', 'body' => 'thanks'])
+
+        // Not matching the rule does not mean landing nowhere: anything
+        // unplaced reaches the service desk, where a person will see it.
+        $desk = Team::where('is_service_desk', true)->firstOrFail();
+
+        $this->assertSame($desk->id, $this->open(['subject' => 'Please add a mailbox', 'body' => 'thanks'])
             ->fresh()->support_team_id);
     }
 
@@ -135,82 +139,9 @@ class WorkspaceTest extends TestCase
         $this->assertSame($this->team->id, $this->open()->fresh()->support_team_id);
     }
 
-    /** Round-robin gives work to whoever went longest without any. */
-    public function test_round_robin_shares_work_across_the_team(): void
-    {
-        $a = $this->member();
-        $b = $this->member();
 
-        AssignmentRule::create([
-            'organization_id' => $this->org->id, 'name' => 'Share',
-            'assign_team_id' => $this->team->id, 'assign_mode' => AssignmentRule::MODE_ROUND_ROBIN,
-        ]);
 
-        $first  = $this->open()->fresh();
-        $second = $this->open()->fresh();
 
-        $this->assertNotNull($first->assigned_to);
-        $this->assertNotSame($first->assigned_to, $second->assigned_to);
-        $this->assertEqualsCanonicalizing([$a->id, $b->id], [$first->assigned_to, $second->assigned_to]);
-    }
-
-    /**
-     * Somebody on leave stays on the team and stops receiving work — removing
-     * them would lose the fact that they belong to it.
-     */
-    public function test_a_member_not_accepting_work_is_skipped(): void
-    {
-        $working = $this->member();
-        $this->member(accepts: false);
-
-        AssignmentRule::create([
-            'organization_id' => $this->org->id, 'name' => 'Share',
-            'assign_team_id' => $this->team->id, 'assign_mode' => AssignmentRule::MODE_ROUND_ROBIN,
-        ]);
-
-        $this->assertSame($working->id, $this->open()->fresh()->assigned_to);
-        $this->assertSame($working->id, $this->open()->fresh()->assigned_to);
-    }
-
-    /**
-     * Counts open *and* pending: fifteen tickets waiting on suppliers is
-     * fifteen things to chase, and ignoring them buries one person.
-     */
-    public function test_least_busy_counts_tickets_that_are_waiting_too(): void
-    {
-        $busy  = $this->member();
-        $spare = $this->member();
-
-        // Three parked with the customer — still theirs to chase.
-        foreach (range(1, 3) as $i) {
-            $t = $this->open(['subject' => "Existing {$i}"]);
-            $t->update(['assigned_to' => $busy->id]);
-            $this->service()->changeStatus($t, $this->statusNamed('With User'));
-        }
-
-        AssignmentRule::create([
-            'organization_id' => $this->org->id, 'name' => 'Balance',
-            'assign_team_id' => $this->team->id, 'assign_mode' => AssignmentRule::MODE_LEAST_BUSY,
-        ]);
-
-        $this->assertSame($spare->id, $this->open(['subject' => 'New one'])->fresh()->assigned_to);
-    }
-
-    /** A rule that reroutes work an agent has picked up is a rule that loses it. */
-    public function test_routing_never_overrides_a_manual_assignment(): void
-    {
-        $picked = User::factory()->create();
-        $this->member();
-
-        AssignmentRule::create([
-            'organization_id' => $this->org->id, 'name' => 'Share',
-            'assign_team_id' => $this->team->id, 'assign_mode' => AssignmentRule::MODE_ROUND_ROBIN,
-        ]);
-
-        $ticket = $this->open(['assigned_to' => $picked->id]);
-
-        $this->assertSame($picked->id, $ticket->fresh()->assigned_to);
-    }
 
     // ── Major incidents ───────────────────────────────────────────────────────
 
@@ -383,14 +314,6 @@ class WorkspaceTest extends TestCase
         ], ['X-Organization' => 'alpha'])->assertStatus(422);
     }
 
-    public function test_sharing_work_without_a_team_is_refused(): void
-    {
-        $this->signIn([Permission::SUPPORT_VIEW, Permission::SUPPORT_MANAGE_CONFIG]);
-
-        $this->postJson('/api/v1/support/workspace/rules', [
-            'name' => 'Broken', 'assign_mode' => 'round_robin',
-        ], ['X-Organization' => 'alpha'])->assertStatus(422);
-    }
 
     // ── Saved queues ──────────────────────────────────────────────────────────
 

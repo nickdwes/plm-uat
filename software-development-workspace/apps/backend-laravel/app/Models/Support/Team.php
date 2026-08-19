@@ -15,9 +15,29 @@ class Team extends Model
 
     protected $table = 'support_teams';
 
-    protected $fillable = ['organization_id', 'name', 'slug', 'description', 'is_default', 'is_active'];
+    protected $fillable = [
+        'organization_id', 'name', 'slug', 'description',
+        'org_practice_id', 'org_business_unit_id',
+        'is_default', 'is_service_desk', 'is_vendor_queue', 'is_active',
+    ];
 
-    protected $casts = ['is_default' => 'boolean', 'is_active' => 'boolean'];
+    protected $casts = [
+        'is_default'      => 'boolean',
+        'is_service_desk' => 'boolean',
+        'is_vendor_queue' => 'boolean',
+        'is_active'       => 'boolean',
+    ];
+
+    /** The practice this queue belongs to, where it maps onto one. */
+    public function practice(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(\App\Models\OrgPractice::class, 'org_practice_id');
+    }
+
+    public function businessUnit(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(\App\Models\OrgBusinessUnit::class, 'org_business_unit_id');
+    }
 
     protected $attributes = ['is_default' => false, 'is_active' => true];
 

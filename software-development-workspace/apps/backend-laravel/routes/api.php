@@ -20,6 +20,7 @@ use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
 use App\Http\Controllers\Support\MailWebhookController;
 use App\Http\Controllers\Support\MailboxController;
+use App\Http\Controllers\Support\RoutingController;
 use App\Http\Controllers\Support\SlaController;
 use App\Http\Controllers\Support\TicketController;
 use App\Http\Controllers\Support\WorkspaceController;
@@ -908,6 +909,23 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/detach', [TicketController::class, 'detach']);
         Route::post('/tickets/{ticket}/broadcast', [TicketController::class, 'broadcast']);
         Route::post('/tickets/bulk',            [TicketController::class, 'bulk']);
+
+        // The service desk analyst's work: placing, moving and escalating.
+        Route::get('/desk',                          [RoutingController::class, 'deskBoard']);
+        Route::get('/tickets/{ticket}/suggest',      [RoutingController::class, 'suggest']);
+        Route::post('/tickets/{ticket}/reroute',     [RoutingController::class, 'reroute']);
+        Route::post('/tickets/{ticket}/reassign',    [RoutingController::class, 'reassign']);
+        Route::post('/tickets/{ticket}/escalate',    [RoutingController::class, 'escalate']);
+        Route::post('/tickets/{ticket}/escalations/{escalation}/resolve',
+            [RoutingController::class, 'resolveEscalation']);
+
+        // The structure that decides where a ticket goes.
+        Route::get('/contracts',                     [RoutingController::class, 'contracts']);
+        Route::post('/contracts/{contract}/support', [RoutingController::class, 'saveContractSupport']);
+        Route::post('/contracts/{contract}/engineers', [RoutingController::class, 'saveContractEngineer']);
+        Route::delete('/contracts/{contract}/engineers/{engineer}', [RoutingController::class, 'removeContractEngineer']);
+        Route::post('/engineers',                    [RoutingController::class, 'saveEngineer']);
+        Route::post('/service-categories',           [RoutingController::class, 'saveCategory']);
 
         // Teams, routing, canned answers and saved queues.
         Route::get('/workspace',                [WorkspaceController::class, 'index']);

@@ -26,7 +26,9 @@ class Ticket extends Model
         'organization_id', 'reference', 'account_id', 'account_contract_id',
         'subject', 'body',
         'requester_name', 'requester_email', 'requester_user_id', 'account_contact_id',
-        'ticket_type_id', 'ticket_status_id', 'urgency_id', 'impact_id', 'priority_id',
+        'ticket_type_id', 'service_category_id', 'ticket_status_id',
+        'urgency_id', 'impact_id', 'priority_id',
+        'service_desk_user_id', 'escalation_owner_id', 'account_contract_engineer_id',
         'assigned_to', 'support_team_id', 'parent_ticket_id', 'merged_at', 'source',
         'opened_at', 'first_response_at', 'resolved_at', 'closed_at', 'created_by',
     ];
@@ -52,6 +54,26 @@ class Ticket extends Model
     public function assignee(): BelongsTo  { return $this->belongsTo(User::class, 'assigned_to'); }
     public function parent(): BelongsTo    { return $this->belongsTo(self::class, 'parent_ticket_id'); }
     public function team(): BelongsTo      { return $this->belongsTo(Team::class, 'support_team_id'); }
+    public function serviceCategory(): BelongsTo { return $this->belongsTo(ServiceCategory::class, 'service_category_id'); }
+    public function analyst(): BelongsTo   { return $this->belongsTo(User::class, 'service_desk_user_id'); }
+    public function escalationOwner(): BelongsTo { return $this->belongsTo(User::class, 'escalation_owner_id'); }
+    public function contractEngineer(): BelongsTo { return $this->belongsTo(ContractEngineer::class, 'account_contract_engineer_id'); }
+
+    /** Every hand-off, in order — who sent this here and why. */
+    public function events(): HasMany
+    {
+        return $this->hasMany(TicketEvent::class, 'support_ticket_id');
+    }
+
+    public function escalations(): HasMany
+    {
+        return $this->hasMany(Escalation::class, 'support_ticket_id');
+    }
+
+    public function openEscalation(): ?Escalation
+    {
+        return $this->escalations()->whereNull('resolved_at')->latest('escalated_at')->first();
+    }
 
     /** The clock, where this ticket has one. */
     public function sla(): \Illuminate\Database\Eloquent\Relations\HasOne

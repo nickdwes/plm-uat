@@ -290,7 +290,7 @@ class TicketController extends Controller
      * action that skips those rules is how a queue gets tidied and the SLA
      * figures quietly stop meaning anything.
      */
-    public function bulk(Request $request, \App\Services\Support\AssignmentEngine $assignment): JsonResponse
+    public function bulk(Request $request): JsonResponse
     {
         $data = $request->validate([
             'ticket_ids'   => ['required', 'array', 'min:1', 'max:200'],

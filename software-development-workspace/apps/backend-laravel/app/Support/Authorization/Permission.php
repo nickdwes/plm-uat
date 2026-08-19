@@ -192,6 +192,21 @@ final class Permission
     public const SUPPORT_LOG_TIME  = 'support.log_time';
 
     /*
+     * The service desk analyst's job, which is not the engineer's.
+     *
+     * Triage validates the customer and contract, sets the category and
+     * priority, and places the ticket. Reassignment is kept apart from a plain
+     * update so that ordinary agents cannot quietly take work off each other —
+     * moving somebody's ticket is a decision the desk or a lead makes.
+     */
+    public const SUPPORT_TRIAGE   = 'support.triage';
+    public const SUPPORT_REASSIGN = 'support.reassign';
+    public const SUPPORT_ESCALATE = 'support.escalate';
+
+    /** Contracts, engineers, competencies and service categories. */
+    public const SUPPORT_MANAGE_CONTRACTS = 'support.manage_contracts';
+
+    /*
      * Statuses, types and the priority matrix. Changing the matrix silently
      * re-prioritises how the whole desk is worked, which is a different
      * question from whether somebody may answer a ticket.
@@ -335,6 +350,8 @@ final class Permission
                 self::SUPPORT_VIEW, self::SUPPORT_VIEW_OWN, self::SUPPORT_CREATE,
                 self::SUPPORT_UPDATE, self::SUPPORT_ASSIGN, self::SUPPORT_CLOSE,
                 self::SUPPORT_LOG_TIME, self::SUPPORT_MANAGE_CONFIG,
+                self::SUPPORT_TRIAGE, self::SUPPORT_REASSIGN, self::SUPPORT_ESCALATE,
+                self::SUPPORT_MANAGE_CONTRACTS,
             ],
             'payslip'       => [self::PAYSLIP_VIEW_OWN],
             'organizations' => [self::ORGANIZATIONS_VIEW, self::ORGANIZATIONS_MANAGE],

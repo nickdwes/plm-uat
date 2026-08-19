@@ -51,6 +51,40 @@ class TicketPolicy extends BasePolicy
         return $this->can($user, Permission::SUPPORT_CLOSE);
     }
 
+    /**
+     * Triage: validating the customer and contract, categorising, placing.
+     *
+     * The service desk analyst's job. Kept separate from answering a ticket
+     * because it is a different competence — knowing the contract structure
+     * rather than knowing the technology.
+     */
+    public function triage(User $user): bool
+    {
+        return $this->canAny($user, Permission::SUPPORT_TRIAGE, Permission::SUPPORT_ASSIGN);
+    }
+
+    /**
+     * Moving a ticket that somebody already holds.
+     *
+     * Its own permission so ordinary agents cannot take work off each other.
+     * Every reassignment records who moved it and why.
+     */
+    public function reassign(User $user): bool
+    {
+        return $this->canAny($user, Permission::SUPPORT_REASSIGN, Permission::SUPPORT_TRIAGE);
+    }
+
+    public function escalate(User $user): bool
+    {
+        return $this->canAny($user, Permission::SUPPORT_ESCALATE, Permission::SUPPORT_TRIAGE);
+    }
+
+    /** Contract support structures, engineers and their competencies. */
+    public function manageContracts(User $user): bool
+    {
+        return $this->canAny($user, Permission::SUPPORT_MANAGE_CONTRACTS, Permission::SUPPORT_MANAGE_CONFIG);
+    }
+
     public function logTime(User $user): bool
     {
         return $this->canAny($user, Permission::SUPPORT_LOG_TIME, Permission::SUPPORT_UPDATE);
