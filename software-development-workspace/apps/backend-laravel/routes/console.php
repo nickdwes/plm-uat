@@ -52,3 +52,13 @@ Schedule::command('attendance:remind-open-commitments')->hourly()->withoutOverla
  * guarded by its timestamp, so re-running is safe.
  */
 Schedule::command('support:escalate')->everyFifteenMinutes()->withoutOverlapping();
+
+/*
+ * Scheduled support rules — chasing parked tickets, closing ones nobody came
+ * back on.
+ *
+ * Hourly rather than every few minutes. These rules reach customers, and the
+ * granularity of "three days without a reply" does not reward checking more
+ * often than the cooldowns allow anyway.
+ */
+Schedule::command('support:automations')->hourly()->withoutOverlapping();

@@ -2,6 +2,7 @@
 
 namespace App\Services\Support;
 
+use App\Models\Support\Automation;
 use App\Models\Support\PriorityMatrix;
 use App\Models\Support\Ticket;
 use App\Models\Support\TicketMessage;
@@ -111,6 +112,13 @@ class TicketService
              */
             app(RoutingEngine::class)->route($ticket);
 
+            /*
+             * Automation runs last, after routing and the clock, so a rule can
+             * see the queue and the priority the ticket actually ended up with
+             * rather than the blank it was created with.
+             */
+            app(AutomationEngine::class)->run($ticket->fresh(), Automation::ON_CREATED);
+
             return $ticket->fresh(['status', 'priority', 'sla', 'team', 'assignee']);
         });
     }
@@ -188,7 +196,10 @@ class TicketService
             $this->clock()->onResolved($fresh, $fresh->resolved_at);
         }
 
-        return $fresh;
+        // The engine ignores this while it is applying its own actions.
+        app(AutomationEngine::class)->run($fresh, Automation::ON_UPDATED);
+
+        return $fresh->fresh(['status']);
     }
 
     /** Reclassify, and let the priority follow rather than be argued about. */

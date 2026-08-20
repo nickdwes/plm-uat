@@ -758,6 +758,125 @@ async function deleteView(v: ViewRow): Promise<void> {
   }
 }
 
+// ── Automation ─────────────────────────────────────────────────────────────────
+/*
+ * Rules that do the obvious thing so nobody has to. All triage in the old
+ * module was manual — somebody read every ticket, set every priority and chased
+ * every parked one, which is a person's morning.
+ *
+ * Rules are written, rehearsed, then armed. The rehearsal is not a nicety: a
+ * rule that closes tickets should be readable, arguable and tried against real
+ * tickets before it is allowed near any.
+ */
+const automations = ref<any[]>([]);
+const runs  = ref<any[]>([]);
+const ruleBusy = ref(false);
+const ruleError = ref("");
+const ruleNote  = ref("");
+const rehearsal = ref<any>(null);
+const rulePane  = ref<"rules" | "log">("rules");
+
+const autoDraft = ref({
+  id: null as number | null,
+  name: "", description: "", trigger: "created",
+  conditions: { keyword: "", sender_domain: "", state: "", silent_hours: "", unassigned: "" },
+  actions: { add_note: "", reply: "", set_status: "", set_priority: "", set_team: "" },
+  once_per_ticket: true, cooldown_hours: "", is_active: false, is_dry_run: true,
+});
+
+async function loadRules(): Promise<void> {
+  ruleBusy.value = true; ruleError.value = "";
+  try {
+    const res = await api<{ automations: any[]; runs: any[] }>(
+      "GET", "/api/v1/support/automations", { org: org() },
+    );
+    automations.value = res.automations;
+    runs.value = res.runs;
+  } catch (e) {
+    ruleError.value = e instanceof Error ? e.message : "Could not load the rules.";
+  } finally { ruleBusy.value = false; }
+}
+
+/** Blank fields are dropped, so an unset condition is genuinely unset. */
+function pruned(obj: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== "" && v !== null));
+}
+
+async function saveRule(): Promise<void> {
+  ruleBusy.value = true; ruleError.value = ""; ruleNote.value = "";
+  try {
+    await api("POST", "/api/v1/support/automations", {
+      org: org(),
+      body: {
+        id: autoDraft.value.id,
+        name: autoDraft.value.name,
+        description: autoDraft.value.description || null,
+        trigger: autoDraft.value.trigger,
+        conditions: pruned(autoDraft.value.conditions),
+        actions: pruned(autoDraft.value.actions),
+        once_per_ticket: autoDraft.value.once_per_ticket,
+        cooldown_hours: autoDraft.value.cooldown_hours ? Number(autoDraft.value.cooldown_hours) : null,
+        is_active: autoDraft.value.is_active,
+        is_dry_run: autoDraft.value.is_dry_run,
+      },
+    });
+    ruleNote.value = autoDraft.value.is_dry_run
+      ? "Saved as a rehearsal — it will record what it would do and change nothing."
+      : "Saved and armed.";
+    resetRule();
+    await loadRules();
+    setTimeout(() => { ruleNote.value = ""; }, 8000);
+  } catch (e) {
+    // The server refuses a conditionless sweep and an uncooled chase, by name.
+    ruleError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { ruleBusy.value = false; }
+}
+
+function resetRule(): void {
+  autoDraft.value = {
+    id: null, name: "", description: "", trigger: "created",
+    conditions: { keyword: "", sender_domain: "", state: "", silent_hours: "", unassigned: "" },
+    actions: { add_note: "", reply: "", set_status: "", set_priority: "", set_team: "" },
+    once_per_ticket: true, cooldown_hours: "", is_active: false, is_dry_run: true,
+  };
+}
+
+function editRule(r: any): void {
+  autoDraft.value = {
+    id: r.id, name: r.name, description: r.description ?? "", trigger: r.trigger,
+    conditions: { keyword: "", sender_domain: "", state: "", silent_hours: "", unassigned: "", ...(r.conditions ?? {}) },
+    actions: { add_note: "", reply: "", set_status: "", set_priority: "", set_team: "", ...(r.actions ?? {}) },
+    once_per_ticket: r.once_per_ticket, cooldown_hours: r.cooldown_hours ?? "",
+    is_active: r.is_active, is_dry_run: r.is_dry_run,
+  };
+}
+
+/** Try it against real tickets, changing nothing. */
+async function rehearse(id: number): Promise<void> {
+  ruleError.value = "";
+  try {
+    rehearsal.value = await api("GET", `/api/v1/support/automations/${id}/rehearse`, { org: org() });
+  } catch (e) {
+    ruleError.value = e instanceof Error ? e.message : "Could not rehearse it.";
+  }
+}
+
+async function armRule(r: any, armed: boolean): Promise<void> {
+  ruleBusy.value = true; ruleError.value = "";
+  try {
+    await api("POST", "/api/v1/support/automations", {
+      org: org(),
+      body: { id: r.id, name: r.name, trigger: r.trigger,
+              conditions: r.conditions ?? {}, actions: r.actions,
+              once_per_ticket: r.once_per_ticket, cooldown_hours: r.cooldown_hours,
+              is_active: r.is_active, is_dry_run: !armed },
+    });
+    await loadRules();
+  } catch (e) {
+    ruleError.value = e instanceof ApiError ? e.message : "Could not change it.";
+  } finally { ruleBusy.value = false; }
+}
+
 // ── Problems, changes and sign-off ─────────────────────────────────────────────
 /*
  * The old module had "Problem" as a ticket type — which makes a cause into one
@@ -1407,7 +1526,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge" | "changes";
+type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge" | "changes" | "rules";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -1620,6 +1739,7 @@ watch(tab, (t) => {
   if (t === "catalogue") void loadCatalogue();
   if (t === "knowledge") void loadArticles();
   if (t === "changes") void loadChanges();
+  if (t === "rules") void loadRules();
 });
 </script>
 
@@ -1651,6 +1771,7 @@ watch(tab, (t) => {
       <button :class="['sd-tabbtn', { on: tab === 'contracts' }]" @click="tab = 'contracts'">Contract engineers</button>
       <button :class="['sd-tabbtn', { on: tab === 'catalogue' }]" @click="tab = 'catalogue'">Catalogue &amp; CSAT</button>
       <button :class="['sd-tabbtn', { on: tab === 'knowledge' }]" @click="tab = 'knowledge'">Knowledge</button>
+      <button :class="['sd-tabbtn', { on: tab === 'rules' }]" @click="tab = 'rules'">Rules</button>
       <button :class="['sd-tabbtn', { on: tab === 'changes' }]" @click="tab = 'changes'">
         Problems &amp; Changes
         <span v-if="chg?.my_approvals?.length" class="sd-badge">{{ chg.my_approvals.length }}</span>
@@ -3151,6 +3272,205 @@ watch(tab, (t) => {
             <button class="btn btn-primary btn-sm" :disabled="chgBusy || !stageDraft.stage.trim()"
                     @click="saveStage">Add stage</button>
           </div>
+        </div>
+      </template>
+    </template>
+
+    <!-- ── Automation ──────────────────────────────────────────────────────── -->
+    <template v-if="tab === 'rules'">
+      <p v-if="ruleError" class="error">{{ ruleError }}</p>
+      <p v-if="ruleNote" class="sd-ok">{{ ruleNote }}</p>
+
+      <div class="sd-tabs" style="margin-bottom:12px">
+        <button :class="['sd-tabbtn', { on: rulePane === 'rules' }]" @click="rulePane = 'rules'">Rules</button>
+        <button :class="['sd-tabbtn', { on: rulePane === 'log' }]" @click="rulePane = 'log'">What they did</button>
+      </div>
+
+      <template v-if="rulePane === 'rules'">
+        <p class="sd-lede">
+          All triage used to be manual — somebody read every ticket, set every priority and chased
+          every parked one. Rules are written, rehearsed against real tickets, then armed. A rule
+          that closes tickets should be arguable before it goes near any.
+        </p>
+
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead>
+              <tr><th>Rule</th><th>When</th><th>State</th><th class="text-right">Fired</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in automations" :key="r.id">
+                <td>
+                  <span class="sd-subject">{{ r.name }}</span>
+                  <span v-if="r.description" class="sd-meta">{{ r.description }}</span>
+                </td>
+                <td class="sd-meta">
+                  {{ r.trigger === "created" ? "A ticket arrives"
+                     : r.trigger === "updated" ? "A ticket changes" : "On a schedule" }}
+                </td>
+                <td>
+                  <!--
+                    Rehearsal and armed are shown as different things, not as a
+                    single on/off. A rule quietly left rehearsing is one
+                    somebody thinks is working.
+                  -->
+                  <span v-if="!r.is_active" class="sd-pill sd-off-pill">Off</span>
+                  <span v-else-if="r.is_dry_run" class="sd-pill sd-warn-pill">Rehearsing</span>
+                  <span v-else class="sd-pill sd-ok-pill">Armed</span>
+                </td>
+                <td class="text-right sd-mono">{{ r.runs_count }}</td>
+                <td class="text-right sd-row-actions">
+                  <button class="btn btn-ghost btn-sm" style="font-size:.72rem" @click="rehearse(r.id)">Rehearse</button>
+                  <button class="btn btn-ghost btn-sm" style="font-size:.72rem" @click="editRule(r)">Edit</button>
+                  <button v-if="r.is_dry_run" class="btn btn-secondary btn-sm" style="font-size:.72rem"
+                          @click="armRule(r, true)">Arm</button>
+                  <button v-else class="btn btn-ghost btn-sm" style="font-size:.72rem"
+                          @click="armRule(r, false)">Back to rehearsal</button>
+                </td>
+              </tr>
+              <tr v-if="!automations.length && !ruleBusy">
+                <td colspan="5" class="sd-empty">No rules. Every ticket is triaged by hand.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div v-if="rehearsal" class="sd-card sd-pad">
+          <h4 class="sd-h4">Rehearsal</h4>
+          <p class="sd-note">{{ rehearsal.note }}</p>
+          <p class="sd-lede">
+            Matches <strong>{{ rehearsal.matched }}</strong> open
+            {{ rehearsal.matched === 1 ? "ticket" : "tickets" }},
+            of which <strong>{{ rehearsal.acting }}</strong> would be acted on — the rest are held
+            back by the rule's own once-per-ticket or cooldown setting.
+          </p>
+          <ul class="sd-split-pick">
+            <li v-for="t in rehearsal.tickets" :key="t.reference">
+              <span class="sd-mono">{{ t.reference }}</span> {{ t.subject }}
+              <span class="sd-meta">{{ t.would_act ? "" : "— held back" }}</span>
+            </li>
+          </ul>
+          <div class="sd-right"><button class="link" @click="rehearsal = null">Close</button></div>
+        </div>
+
+        <div class="sd-card sd-pad">
+          <h4 class="sd-h4">{{ autoDraft.id ? "Edit rule" : "Write a rule" }}</h4>
+
+          <div class="sd-grid">
+            <label class="sd-field"><span>Name</span>
+              <input v-model="autoDraft.name" class="control" placeholder="Chase tickets waiting on the customer" />
+            </label>
+            <label class="sd-field"><span>When</span>
+              <select v-model="autoDraft.trigger" class="control">
+                <option value="created">A ticket arrives</option>
+                <option value="updated">A ticket changes</option>
+                <option value="scheduled">On a schedule, hourly</option>
+              </select>
+            </label>
+          </div>
+
+          <h4 class="sd-h4" style="margin-top:10px">Only when</h4>
+          <div class="sd-grid">
+            <label class="sd-field"><span>Subject or body contains</span>
+              <input v-model="autoDraft.conditions.keyword" class="control" placeholder="password" />
+            </label>
+            <label class="sd-field"><span>Sender's domain is</span>
+              <input v-model="autoDraft.conditions.sender_domain" class="control" placeholder="client.co.ke" />
+            </label>
+            <label class="sd-field"><span>State is</span>
+              <select v-model="autoDraft.conditions.state" class="control">
+                <option value="">Any</option>
+                <option value="open">Open — with us</option>
+                <option value="pending">Pending — waiting on somebody else</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Nobody has said anything for</span>
+              <input v-model="autoDraft.conditions.silent_hours" class="control" type="number"
+                     placeholder="72 hours" />
+            </label>
+          </div>
+          <!--
+            The distinction that matters on a chase rule, and the one people get
+            wrong.
+          -->
+          <p class="sd-note">
+            Silence is measured from the last message, not from when the ticket opened. One raised
+            three weeks ago and answered this morning is not stale.
+          </p>
+
+          <h4 class="sd-h4" style="margin-top:10px">Then</h4>
+          <div class="sd-grid">
+            <label class="sd-field"><span>Set the status to</span>
+              <select v-model="autoDraft.actions.set_status" class="control">
+                <option value="">Leave it</option>
+                <option v-for="st in taxonomy.statuses" :key="st.id" :value="String(st.id)">{{ st.name }}</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Move it to</span>
+              <select v-model="autoDraft.actions.set_team" class="control">
+                <option value="">Leave it</option>
+                <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
+              </select>
+            </label>
+          </div>
+          <label class="sd-field"><span>Add an internal note</span>
+            <input v-model="autoDraft.actions.add_note" class="control" placeholder="Only the desk sees this" />
+          </label>
+          <label class="sd-field"><span>Reply to the customer</span>
+            <textarea v-model="autoDraft.actions.reply" class="control" rows="2"
+                      placeholder="Goes to the customer. Never counted as a first response — a robot answering is not somebody answering."></textarea>
+          </label>
+
+          <div class="sd-grid" style="margin-top:8px">
+            <label class="sd-check">
+              <input v-model="autoDraft.once_per_ticket" type="checkbox" />
+              <span>Only ever once per ticket</span>
+            </label>
+            <label v-if="!autoDraft.once_per_ticket" class="sd-field"><span>Wait this long before repeating (hours)</span>
+              <input v-model="autoDraft.cooldown_hours" class="control" type="number" placeholder="24" />
+            </label>
+            <label class="sd-check">
+              <input v-model="autoDraft.is_active" type="checkbox" />
+              <span>Switched on</span>
+            </label>
+            <label class="sd-check">
+              <input v-model="autoDraft.is_dry_run" type="checkbox" />
+              <span>Rehearse only — record, change nothing</span>
+            </label>
+          </div>
+
+          <div class="sd-right">
+            <button v-if="autoDraft.id" class="link" @click="resetRule">Cancel</button>
+            <button class="btn btn-primary btn-sm" :disabled="ruleBusy || !autoDraft.name.trim()"
+                    @click="saveRule">Save</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── What they did ───────────────────────────────────────────────── -->
+      <template v-else>
+        <p class="sd-lede">
+          Every firing, in words. "Why did this ticket close itself?" cannot be answered from a
+          rule alone — the rule may have changed since, and the ticket may have matched for a
+          reason nobody would guess.
+        </p>
+
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead><tr><th>When</th><th>Rule</th><th>Ticket</th><th>What it did</th></tr></thead>
+            <tbody>
+              <tr v-for="r in runs" :key="r.id">
+                <td class="sd-mono">{{ r.fired_at?.slice(0, 16).replace("T", " ") }}</td>
+                <td>
+                  {{ r.automation?.name }}
+                  <span v-if="r.was_dry_run" class="sd-pill sd-warn-pill">rehearsal</span>
+                </td>
+                <td class="sd-mono">{{ r.ticket?.reference }}</td>
+                <td class="sd-meta">{{ r.summary }}</td>
+              </tr>
+              <tr v-if="!runs.length"><td colspan="4" class="sd-empty">Nothing has fired yet.</td></tr>
+            </tbody>
+          </table>
         </div>
       </template>
     </template>

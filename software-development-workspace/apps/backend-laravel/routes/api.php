@@ -18,6 +18,7 @@ use App\Http\Controllers\Leave\LeaveController;
 use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
+use App\Http\Controllers\Support\AutomationController;
 use App\Http\Controllers\Support\CatalogueController;
 use App\Http\Controllers\Support\ChangeController;
 use App\Http\Controllers\Support\KnowledgeController;
@@ -935,6 +936,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/split',  [TicketController::class, 'split']);
 
         // The catalogue, portal links and the satisfaction survey.
+        // Rules that do the obvious thing so nobody has to.
+        Route::get('/automations',               [AutomationController::class, 'index']);
+        Route::post('/automations',              [AutomationController::class, 'save']);
+        Route::get('/automations/{automation}/rehearse', [AutomationController::class, 'rehearse']);
+        Route::get('/tickets/{ticket}/automation-runs',  [AutomationController::class, 'forTicket']);
+
         // Problems, changes and sign-off.
         Route::get('/changes',                   [ChangeController::class, 'index']);
         Route::post('/problems',                 [ChangeController::class, 'saveProblem']);
