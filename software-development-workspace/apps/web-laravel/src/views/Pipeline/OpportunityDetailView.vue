@@ -17,6 +17,7 @@ import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 import OpportunityPipeline from "./OpportunityPipeline.vue";
+import { safeHtml } from "../../lib/richText";
 
 const props = defineProps<{ id: string | number }>();
 
@@ -301,7 +302,7 @@ onMounted(load);
 
       <div v-if="deal.description" class="op-card">
         <h3 class="op-card-label">Description</h3>
-        <p class="op-prose">{{ deal.description }}</p>
+        <div class="op-prose rich" v-html="safeHtml(deal.description)"></div>
       </div>
       </template>
 

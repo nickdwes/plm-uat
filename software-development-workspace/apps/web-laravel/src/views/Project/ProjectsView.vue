@@ -17,6 +17,7 @@ import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 import AccountPicker from "../../components/AccountPicker.vue";
+import { excerpt, hasText } from "../../lib/richText";
 
 interface Person { id: number | null; name: string | null }
 interface Project {
@@ -184,7 +185,11 @@ onMounted(load);
         </span>
 
         <h3 class="pj-card-title">{{ p.name }}</h3>
-        <p v-if="p.description" class="pj-card-sub">{{ p.description }}</p>
+        <!-- A card is an excerpt, not a document. The description is HTML from the
+             old system's editor, much of it pasted from Word — rendered here it
+             showed its own tags, and one 3KB description stretched a card past a
+             thousand pixels and broke the grid row it sat in. -->
+        <p v-if="hasText(p.description)" class="pj-card-sub">{{ excerpt(p.description) }}</p>
         <p v-else-if="p.account" class="pj-card-sub">For {{ p.account.name }}</p>
 
         <!-- Null progress is said, not drawn as an empty bar: a bar at zero
@@ -341,7 +346,13 @@ onMounted(load);
 }
 .pj-card:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); }
 .pj-card-title { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); margin: 0; }
-.pj-card-sub { font-size: var(--text-xs-size); color: var(--color-text-muted); margin: 0; line-height: 1.5; }
+.pj-card-sub {
+  font-size: var(--text-xs-size); color: var(--color-text-muted); margin: 0; line-height: 1.5;
+  /* Three lines, whatever arrives. Without this one imported description
+     decides how tall every card in its row is. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; overflow-wrap: anywhere;
+}
 .pj-card-foot { @apply flex flex-wrap items-center justify-between; gap: var(--space-2); padding-top: var(--space-2); border-top: 1px solid var(--color-border); }
 .pj-card-meta { @apply inline-flex items-center; gap: var(--space-3); }
 .pj-meta-item { font-size: var(--text-xs-size); color: var(--color-text-light); white-space: nowrap; }

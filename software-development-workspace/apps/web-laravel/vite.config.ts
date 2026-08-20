@@ -31,4 +31,15 @@ export default defineConfig({
     host: true,
     port: 4174,
   },
+
+  /*
+   * A DOM, because the sanitiser needs one.
+   *
+   * DOMPurify works by parsing markup into a real document and walking it —
+   * that is precisely why it is trustworthy where a regular expression over
+   * angle brackets is not — so its tests cannot run in a bare Node context.
+   */
+  test: {
+    environment: "jsdom",
+  },
 });

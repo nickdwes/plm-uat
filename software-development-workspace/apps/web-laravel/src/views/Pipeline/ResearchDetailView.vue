@@ -12,6 +12,7 @@ import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
+import { safeHtml, hasText } from "../../lib/richText";
 
 const props = defineProps<{ id: string | number }>();
 
@@ -220,7 +221,8 @@ onMounted(load);
               <strong>{{ s.label }}</strong><span class="rd-muted"> — {{ SCOPE_HELP[s.key] }}</span>
             </li>
           </ul>
-          <p v-if="research.description" class="rd-prose">{{ research.description }}</p>
+          <div v-if="hasText(research.description)" class="rd-prose rich"
+               v-html="safeHtml(research.description)"></div>
         </div>
 
         <div class="rd-two">

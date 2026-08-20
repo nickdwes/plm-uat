@@ -23,6 +23,7 @@ import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 import AccountPicker from "../../components/AccountPicker.vue";
 import VendorPartnerPicker from "../../components/VendorPartnerPicker.vue";
+import { excerpt, hasText } from "../../lib/richText";
 
 interface Person { id: number | null; name: string | null }
 interface TaskRow {
@@ -492,7 +493,7 @@ onMounted(refresh);
                  schedule raises it again. -->
             <span v-if="t.is_generated" class="tk-auto" :title="`Raised automatically (${t.source})`">auto</span>
           </h3>
-          <p v-if="t.description" class="tk-card-body">{{ t.description }}</p>
+          <p v-if="hasText(t.description)" class="tk-card-body">{{ excerpt(t.description) }}</p>
 
           <!-- An open issue is not the same thing as the column the card is
                in: a task can be In Progress and still be stuck. -->

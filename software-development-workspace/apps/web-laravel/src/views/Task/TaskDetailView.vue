@@ -20,6 +20,7 @@ import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 import AccountPicker from "../../components/AccountPicker.vue";
 import VendorPartnerPicker from "../../components/VendorPartnerPicker.vue";
+import { safeHtml, hasText } from "../../lib/richText";
 
 const props = defineProps<{ id: string }>();
 const emit  = defineEmits<{ (e: "changed"): void }>();
@@ -567,7 +568,12 @@ function badge(name: Tab): number {
           <!-- ── Description ────────────────────────────────────────────── -->
           <template v-if="tab === 'Description'">
             <h2 class="tp-section">Description</h2>
-            <p v-if="task.description" class="tp-text">{{ task.description }}</p>
+            <!-- Sanitised rather than escaped: the lists and emphasis in an
+                 imported scope document carry meaning. Structure survives and
+                 every style attribute is dropped, so a Word paste renders in
+                 our own typography instead of hard-coded Calibri. -->
+            <div v-if="hasText(task.description)" class="tp-text rich"
+                 v-html="safeHtml(task.description)"></div>
             <p v-else class="tp-muted tp-quiet">Nothing written yet.</p>
 
             <h2 class="tp-section">Attachments</h2>
@@ -699,7 +705,7 @@ function badge(name: Tab): number {
                 <button @click="pin(c); menuFor = null">{{ c.is_pinned ? "Unpin" : "Pin" }} comment</button>
               </div>
 
-              <p class="tp-comment-body">{{ c.body }}</p>
+              <div class="tp-comment-body rich" v-html="safeHtml(c.body)"></div>
 
               <div v-if="Object.keys(c.reactions).length" class="tp-reactions">
                 <button v-for="(n, e) in c.reactions" :key="e" class="tp-reaction" @click="react(c, String(e))">

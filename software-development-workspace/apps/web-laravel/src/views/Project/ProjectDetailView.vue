@@ -17,6 +17,7 @@ import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import { notifySaved, notifyFailed } from "../../lib/toast";
 import EmployeePicker from "../../components/EmployeePicker.vue";
+import { safeHtml, hasText } from "../../lib/richText";
 
 const props = defineProps<{ id: string | number }>();
 
@@ -624,7 +625,7 @@ onMounted(load);
                   <strong>{{ c.author.name ?? "Somebody" }}</strong>
                   <span class="pd-comment-when">{{ ago(c.created_at) }}</span>
                 </p>
-                <p class="pd-comment-text">{{ c.body }}</p>
+                <div class="pd-comment-text rich" v-html="safeHtml(c.body)"></div>
                 <button class="link-btn pd-reply" @click="replyTo = c">Reply</button>
               </div>
             </div>
@@ -637,7 +638,7 @@ onMounted(load);
                     <strong>{{ r.author.name ?? "Somebody" }}</strong>
                     <span class="pd-comment-when">{{ ago(r.created_at) }}</span>
                   </p>
-                  <p class="pd-comment-text">{{ r.body }}</p>
+                  <div class="pd-comment-text rich" v-html="safeHtml(r.body)"></div>
                 </div>
               </li>
             </ul>
@@ -660,7 +661,7 @@ onMounted(load);
                 <strong>{{ a.actor.name ?? "System" }}</strong>
                 <span class="pd-comment-when">{{ ago(a.occurred_at) }}</span>
               </p>
-              <p class="pd-comment-text">{{ a.body }}</p>
+              <div class="pd-comment-text rich" v-html="safeHtml(a.body)"></div>
             </div>
           </li>
         </ul>
@@ -682,7 +683,8 @@ onMounted(load);
           <div v-if="openTask.parent_task_id"><dt>Parent</dt><dd>Sub-task</dd></div>
         </dl>
 
-        <p v-if="openTask.description" class="pd-prose">{{ openTask.description }}</p>
+        <div v-if="hasText(openTask.description)" class="pd-prose rich"
+             v-html="safeHtml(openTask.description)"></div>
 
         <!-- Sub-tasks -->
         <div class="pd-block">
