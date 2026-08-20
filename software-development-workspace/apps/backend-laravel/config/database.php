@@ -97,6 +97,28 @@ return [
             'sslmode' => 'prefer',
         ],
 
+        /*
+         * The old PLM, read-only.
+         *
+         * A temporary connection that exists for the migration and should be
+         * removed when it is done. Configured but unset by default, so an
+         * environment without PLM_DB_HOST simply has no legacy connection
+         * rather than a broken one — and nothing in the application reaches
+         * for it outside the import commands.
+         */
+        'plm' => [
+            'driver'   => 'mysql',
+            'host'     => env('PLM_DB_HOST'),
+            'port'     => env('PLM_DB_PORT', '3306'),
+            'database' => env('PLM_DB_DATABASE', 'plm'),
+            'username' => env('PLM_DB_USERNAME', 'root'),
+            'password' => env('PLM_DB_PASSWORD', ''),
+            'charset'  => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix'   => '',
+            'strict'   => false,
+        ],
+
         'sqlsrv' => [
             'driver' => 'sqlsrv',
             'url' => env('DB_URL'),
