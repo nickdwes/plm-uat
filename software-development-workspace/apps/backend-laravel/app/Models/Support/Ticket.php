@@ -106,6 +106,27 @@ class Ticket extends Model
         return $this->messages()->where('visibility', TicketMessage::VISIBILITY_PUBLIC);
     }
 
+    /** Kit this ticket was about. */
+    public function assets(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        /*
+         * Both keys named explicitly. Eloquent infers `ticket_id` from the
+         * model name and the column is `support_ticket_id`, so the convention
+         * quietly builds a query against a column that does not exist.
+         */
+        return $this->belongsToMany(
+            \App\Models\Asset\Asset::class,
+            'support_ticket_assets',
+            'support_ticket_id',
+            'asset_id',
+        )->withPivot(['relationship', 'linked_by'])->withTimestamps();
+    }
+
+    public function articleLinks(): HasMany
+    {
+        return $this->hasMany(ArticleLink::class, 'support_ticket_id');
+    }
+
     public function answers(): HasMany
     {
         return $this->hasMany(TicketAnswer::class, 'support_ticket_id');

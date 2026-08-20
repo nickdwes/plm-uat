@@ -55,6 +55,7 @@ interface Worklog {
 
 interface TicketDetail extends TicketRow {
   body: string | null;
+  assets?: { id: number; name: string; asset_tag: string | null }[];
   split_from?: { id: number; reference: string; subject: string } | null;
   splits?: { id: number; reference: string; subject: string }[];
   service_category?: { id: number; name: string; is_technical: boolean } | null;
@@ -137,6 +138,7 @@ async function openTicket(row: TicketRow): Promise<void> {
     open.value = res.data;
     minutesLogged.value = res.minutes_logged;
     void loadSuggestions();
+    void loadSuggested();
     slaUsed.value = res.sla_minutes_used;
     elapsed.value = res.elapsed_minutes;
   } catch (e) {
@@ -756,6 +758,168 @@ async function deleteView(v: ViewRow): Promise<void> {
   }
 }
 
+// ── Knowledge ──────────────────────────────────────────────────────────────────
+/*
+ * Answers worth keeping. There was no knowledge base anywhere in the old
+ * system, so every answer was retyped from memory and the same fault got a
+ * different explanation depending on who picked it up.
+ */
+interface ArticleRow {
+  id: number; title: string; slug: string; summary: string | null;
+  status: string; visibility: string; view_count: number;
+  helpful_count: number; unhelpful_count: number; misleading: boolean;
+  published_at: string | null; updated_at: string;
+}
+
+const articles   = ref<ArticleRow[]>([]);
+const kbCounts   = ref<Record<string, number>>({});
+const kbBusy     = ref(false);
+const kbError    = ref("");
+const kbNote     = ref("");
+const kbFilter   = ref("");
+const kbSearch   = ref("");
+const editing    = ref<any>(null);
+
+async function loadArticles(): Promise<void> {
+  kbBusy.value = true; kbError.value = "";
+  try {
+    const params = new URLSearchParams();
+    if (kbFilter.value) params.set("status", kbFilter.value);
+    if (kbSearch.value.trim()) params.set("q", kbSearch.value.trim());
+
+    const res = await api<{ data: ArticleRow[]; counts: Record<string, number> }>(
+      "GET", `/api/v1/support/articles?${params}`, { org: org() },
+    );
+    articles.value = res.data;
+    kbCounts.value = res.counts;
+  } catch (e) {
+    kbError.value = e instanceof Error ? e.message : "Could not load the articles.";
+  } finally { kbBusy.value = false; }
+}
+
+function newArticle(): void {
+  editing.value = { id: null, title: "", summary: "", body: "", visibility: "internal", service_category_id: "" };
+}
+
+async function openArticle(id: number): Promise<void> {
+  try {
+    const res = await api<{ data: any }>("GET", `/api/v1/support/articles/${id}`, { org: org() });
+    editing.value = { ...res.data, service_category_id: res.data.service_category_id ?? "" };
+  } catch (e) { kbError.value = e instanceof Error ? e.message : "Could not open it."; }
+}
+
+async function saveArticle(): Promise<void> {
+  if (!editing.value?.title?.trim() || !editing.value?.body?.trim()) return;
+  kbBusy.value = true; kbError.value = ""; kbNote.value = "";
+  try {
+    const res = await api<{ message?: string }>("POST", "/api/v1/support/articles", {
+      org: org(),
+      body: {
+        id: editing.value.id,
+        title: editing.value.title,
+        summary: editing.value.summary || null,
+        body: editing.value.body,
+        visibility: editing.value.visibility,
+        service_category_id: editing.value.service_category_id
+          ? Number(editing.value.service_category_id) : null,
+      },
+    });
+    // The server says when an edit sent a live article back for review.
+    kbNote.value = res.message ?? "Saved.";
+    editing.value = null;
+    await loadArticles();
+    setTimeout(() => { kbNote.value = ""; }, 7000);
+  } catch (e) {
+    kbError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { kbBusy.value = false; }
+}
+
+async function setArticleStatus(id: number, status: string): Promise<void> {
+  kbError.value = "";
+  try {
+    await api("POST", `/api/v1/support/articles/${id}/status`, { org: org(), body: { status } });
+    await loadArticles();
+  } catch (e) {
+    // Publishing is gated apart from writing; the server says so.
+    kbError.value = e instanceof ApiError ? e.message : "Could not change it.";
+  }
+}
+
+// ── Suggestions and assets on a ticket ─────────────────────────────────────────
+const suggested = ref<any[]>([]);
+const assetQuery = ref("");
+const assetHits  = ref<any[]>([]);
+
+async function loadSuggested(): Promise<void> {
+  if (!open.value) return;
+  try {
+    const res = await api<{ data: any[] }>(
+      "GET", `/api/v1/support/tickets/${open.value.id}/suggested-articles`, { org: org() },
+    );
+    suggested.value = res.data;
+  } catch { suggested.value = []; }
+}
+
+/** Drop an article's text into the reply box rather than retyping it. */
+async function useArticle(id: number): Promise<void> {
+  if (!open.value) return;
+  try {
+    const res = await api<{ body: string; title: string }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/attach-article`,
+      { org: org(), body: { article_id: id } },
+    );
+    reply.value.body = reply.value.body ? `${reply.value.body}\n\n${res.body}` : res.body;
+  } catch (e) {
+    openError.value = e instanceof Error ? e.message : "Could not attach it.";
+  }
+}
+
+/** Write it up while it is fresh — as a draft, never published. */
+async function draftArticle(): Promise<void> {
+  if (!open.value) return;
+  openError.value = "";
+  try {
+    const res = await api<{ message: string }>(
+      "POST", `/api/v1/support/tickets/${open.value.id}/draft-article`, { org: org(), body: {} },
+    );
+    bulkNote.value = res.message;
+    setTimeout(() => { bulkNote.value = ""; }, 8000);
+  } catch (e) {
+    openError.value = e instanceof Error ? e.message : "Could not draft it.";
+  }
+}
+
+async function findAssets(): Promise<void> {
+  if (!assetQuery.value.trim()) { assetHits.value = []; return; }
+  try {
+    const res = await api<{ data: any[] }>(
+      "GET", `/api/v1/assets?search=${encodeURIComponent(assetQuery.value)}&per_page=8`, { org: org() },
+    );
+    assetHits.value = res.data ?? [];
+  } catch { assetHits.value = []; }
+}
+
+async function linkAsset(assetId: number): Promise<void> {
+  if (!open.value) return;
+  try {
+    await api("POST", `/api/v1/support/tickets/${open.value.id}/assets`, {
+      org: org(), body: { asset_id: assetId },
+    });
+    assetQuery.value = ""; assetHits.value = [];
+    await refreshOpen();
+  } catch (e) {
+    openError.value = e instanceof Error ? e.message : "Could not link it.";
+  }
+}
+
+async function unlinkAsset(assetId: number): Promise<void> {
+  if (!open.value) return;
+  try {
+    await api("DELETE", `/api/v1/support/tickets/${open.value.id}/assets/${assetId}`, { org: org() });
+    await refreshOpen();
+  } catch (e) { openError.value = e instanceof Error ? e.message : "Could not unlink it."; }
+}
+
 // ── The portal ─────────────────────────────────────────────────────────────────
 /*
  * A link to the customer's own view of their ticket, and the survey afterwards.
@@ -1122,7 +1286,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue";
+type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -1333,6 +1497,7 @@ watch(tab, (t) => {
   if (t === "desk") void loadDesk();
   if (t === "contracts") void loadContracts();
   if (t === "catalogue") void loadCatalogue();
+  if (t === "knowledge") void loadArticles();
 });
 </script>
 
@@ -1363,6 +1528,7 @@ watch(tab, (t) => {
       <button :class="['sd-tabbtn', { on: tab === 'workspace' }]" @click="tab = 'workspace'">Teams &amp; routing</button>
       <button :class="['sd-tabbtn', { on: tab === 'contracts' }]" @click="tab = 'contracts'">Contract engineers</button>
       <button :class="['sd-tabbtn', { on: tab === 'catalogue' }]" @click="tab = 'catalogue'">Catalogue &amp; CSAT</button>
+      <button :class="['sd-tabbtn', { on: tab === 'knowledge' }]" @click="tab = 'knowledge'">Knowledge</button>
     </div>
 
     <template v-if="tab === 'queue'">
@@ -2486,6 +2652,110 @@ watch(tab, (t) => {
       </div>
     </template>
 
+    <!-- ── Knowledge ───────────────────────────────────────────────────────── -->
+    <template v-if="tab === 'knowledge'">
+      <p v-if="kbError" class="error">{{ kbError }}</p>
+      <p v-if="kbNote" class="sd-ok">{{ kbNote }}</p>
+
+      <template v-if="!editing">
+        <div class="sd-filters">
+          <input v-model="kbSearch" class="control sd-search" placeholder="Search titles"
+                 @keyup.enter="loadArticles" />
+          <select v-model="kbFilter" class="control sd-select" @change="loadArticles">
+            <option value="">Everything</option>
+            <option value="draft">Drafts ({{ kbCounts.draft ?? 0 }})</option>
+            <option value="in_review">In review ({{ kbCounts.in_review ?? 0 }})</option>
+            <option value="published">Published ({{ kbCounts.published ?? 0 }})</option>
+          </select>
+          <button class="btn btn-primary btn-sm" @click="newArticle">New article</button>
+        </div>
+
+        <p class="sd-lede">
+          There was no knowledge base in the old system at all, so the same fault got a different
+          explanation depending on who picked it up. Articles marked for customers are the only ones
+          the portal will ever show.
+        </p>
+
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead>
+              <tr><th>Article</th><th>Status</th><th>Shown to</th>
+                  <th class="text-right">Views</th><th class="text-right">Helpful</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="a in articles" :key="a.id" class="sd-row" @click="openArticle(a.id)">
+                <td>
+                  <span class="sd-subject">{{ a.title }}</span>
+                  <span v-if="a.summary" class="sd-meta">{{ a.summary }}</span>
+                  <!--
+                    Surfaced rather than buried. An article opened often and
+                    marked wrong is worse than none — it is confidently wrong
+                    and being followed.
+                  -->
+                  <span v-if="a.misleading" class="sd-meta sd-esc">Marked unhelpful more often than helpful</span>
+                </td>
+                <td>
+                  <span class="sd-pill" :class="a.status === 'published' ? 'sd-ok-pill'
+                    : a.status === 'in_review' ? 'sd-warn-pill' : 'sd-off-pill'">{{ a.status }}</span>
+                </td>
+                <td class="sd-meta">{{ a.visibility === "customer" ? "Customers" : "The desk only" }}</td>
+                <td class="text-right sd-mono">{{ a.view_count }}</td>
+                <td class="text-right sd-mono">{{ a.helpful_count }} / {{ a.unhelpful_count }}</td>
+                <td class="text-right" @click.stop>
+                  <button v-if="a.status !== 'published'" class="btn btn-ghost btn-sm"
+                          style="font-size:.72rem" @click="setArticleStatus(a.id, 'published')">Publish</button>
+                  <button v-else class="btn btn-ghost btn-sm" style="font-size:.72rem"
+                          @click="setArticleStatus(a.id, 'archived')">Archive</button>
+                </td>
+              </tr>
+              <tr v-if="!articles.length && !kbBusy">
+                <td colspan="6" class="sd-empty">
+                  Nothing written yet. The cheapest place to start is a closed ticket — there is a
+                  "write this up" button on every one.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </template>
+
+      <div v-else class="sd-card sd-pad">
+        <button class="link" @click="editing = null">← All articles</button>
+        <label class="sd-field"><span>Title</span>
+          <input v-model="editing.title" class="control" placeholder="VPN disconnects every few minutes" />
+        </label>
+        <label class="sd-field"><span>One line about it</span>
+          <input v-model="editing.summary" class="control" placeholder="What to check when the VPN drops" />
+        </label>
+        <div class="sd-grid">
+          <label class="sd-field"><span>Shown to</span>
+            <select v-model="editing.visibility" class="control">
+              <option value="internal">The desk only</option>
+              <option value="customer">Customers, in the portal</option>
+            </select>
+          </label>
+          <label class="sd-field"><span>Discipline</span>
+            <select v-model="editing.service_category_id" class="control">
+              <option value="">Not categorised</option>
+              <option v-for="c in categories" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
+            </select>
+          </label>
+        </div>
+        <label class="sd-field"><span>The article</span>
+          <textarea v-model="editing.body" class="control" rows="14"></textarea>
+        </label>
+        <p class="sd-note">
+          Write it for somebody who was not there. If it is marked for customers, assume it will be
+          read by somebody who cannot tell a good instruction from a dangerous one.
+        </p>
+        <div class="sd-right">
+          <button class="btn btn-primary btn-sm"
+                  :disabled="kbBusy || !editing.title?.trim() || !editing.body?.trim()"
+                  @click="saveArticle">Save</button>
+        </div>
+      </div>
+    </template>
+
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->
     <div v-if="open" class="sd-overlay" @click.self="open = null">
       <div class="sd-panel" role="dialog" aria-modal="true">
@@ -2839,6 +3109,58 @@ watch(tab, (t) => {
             copied into a reply the agent is already writing rather than sent as
             a second email to reconcile with the first.
           -->
+          <!--
+            What might already answer this. Offered, never applied — an article
+            auto-attached is an answer nobody read going out in the company's
+            name.
+          -->
+          <div v-if="suggested.length" class="sd-field">
+            <span>Might already be answered</span>
+            <ul class="sd-suggest">
+              <li v-for="a in suggested" :key="a.id">
+                <button class="sd-suggest-btn" @click="useArticle(a.id)">
+                  <strong>{{ a.title }}</strong>
+                  <span class="sd-meta">{{ a.summary }}</span>
+                  <span v-if="a.misleading" class="sd-meta sd-esc">
+                    People have marked this unhelpful — check before sending it.
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <!--
+            The link the old system had a schema for and nought rows in, which
+            is why "what keeps breaking?" has never been answerable.
+          -->
+          <div class="sd-field">
+            <span>Kit involved</span>
+            <ul v-if="open.assets?.length" class="sd-splits">
+              <li v-for="a in open.assets" :key="a.id">
+                {{ a.name }}<span v-if="a.asset_tag" class="sd-meta"> {{ a.asset_tag }}</span>
+                <button class="link" @click="unlinkAsset(a.id)">Remove</button>
+              </li>
+            </ul>
+            <input v-model="assetQuery" class="control" placeholder="Find an asset by name or tag"
+                   @keyup.enter="findAssets" />
+            <ul v-if="assetHits.length" class="sd-split-pick">
+              <li v-for="a in assetHits" :key="a.id">
+                <button class="link" @click="linkAsset(a.id)">
+                  {{ a.name }} <span class="sd-meta">{{ a.asset_tag }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+
+          <div class="sd-field">
+            <span>Knowledge</span>
+            <!--
+              Written up while it is fresh, and always as a draft: an article is
+              written for somebody who was not there.
+            -->
+            <button class="link" @click="draftArticle">Write this up as an article</button>
+          </div>
+
           <div class="sd-field">
             <span>Customer portal</span>
             <div v-if="portalLink" class="sd-linkbox">

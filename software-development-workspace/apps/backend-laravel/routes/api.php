@@ -19,6 +19,7 @@ use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
 use App\Http\Controllers\Support\CatalogueController;
+use App\Http\Controllers\Support\KnowledgeController;
 use App\Http\Controllers\Support\MailWebhookController;
 use App\Http\Controllers\Support\PortalController;
 use App\Http\Controllers\Support\MailboxController;
@@ -128,6 +129,9 @@ Route::prefix('v1/support/portal')->middleware('throttle:60,1')->group(function 
     Route::post('/reply',     [PortalController::class, 'reply']);
     Route::get('/catalogue',  [PortalController::class, 'catalogue']);
     Route::post('/request',   [PortalController::class, 'submit']);
+    Route::get('/help',       [PortalController::class, 'help']);
+    Route::get('/article',    [PortalController::class, 'article']);
+    Route::post('/article/rate', [PortalController::class, 'rateArticle']);
     Route::get('/survey',     [PortalController::class, 'survey']);
     Route::post('/survey',    [PortalController::class, 'respond']);
 });
@@ -930,6 +934,18 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/split',  [TicketController::class, 'split']);
 
         // The catalogue, portal links and the satisfaction survey.
+        // The knowledge base, and the kit a ticket was about.
+        Route::get('/articles',                  [KnowledgeController::class, 'index']);
+        Route::get('/articles/{article}',        [KnowledgeController::class, 'show']);
+        Route::post('/articles',                 [KnowledgeController::class, 'save']);
+        Route::post('/articles/{article}/status', [KnowledgeController::class, 'transition']);
+        Route::get('/tickets/{ticket}/suggested-articles', [KnowledgeController::class, 'suggest']);
+        Route::post('/tickets/{ticket}/attach-article',    [KnowledgeController::class, 'attach']);
+        Route::post('/tickets/{ticket}/draft-article',     [KnowledgeController::class, 'draftFromTicket']);
+        Route::post('/tickets/{ticket}/assets',            [KnowledgeController::class, 'linkAsset']);
+        Route::delete('/tickets/{ticket}/assets/{asset}',  [KnowledgeController::class, 'unlinkAsset']);
+        Route::get('/assets/{asset}/tickets',    [KnowledgeController::class, 'assetHistory']);
+
         Route::get('/catalogue',                 [CatalogueController::class, 'index']);
         Route::post('/catalogue/services',       [CatalogueController::class, 'saveService']);
         Route::post('/tickets/{ticket}/portal-link', [CatalogueController::class, 'portalLink']);

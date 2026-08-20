@@ -30,6 +30,16 @@ const chosen = ref<any>(null);
 const answers = ref<Record<string, string>>({});
 const summary = ref("");
 const rating = ref(0);
+
+/*
+ * Help before the form. The cheapest ticket is the one nobody needed to raise,
+ * and the moment somebody is about to describe a problem is the only moment
+ * they will read about it.
+ */
+const help = ref<any[]>([]);
+const helpQuery = ref("");
+const reading = ref<any>(null);
+const rated = ref(false);
 const surveyDraft = ref({ satisfaction: "", timeliness: "", resolved_fully: "", comment: "" });
 
 const base = `${import.meta.env.VITE_LARAVEL_API_URL ?? ""}/api/v1/support/portal`;
@@ -84,6 +94,40 @@ async function sendReply(): Promise<void> {
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Could not send that.";
   } finally { busy.value = false; }
+}
+
+async function findHelp(): Promise<void> {
+  if (!helpQuery.value.trim()) { help.value = []; return; }
+  try {
+    help.value = (await call(
+      `/help?token=${encodeURIComponent(token.value)}&q=${encodeURIComponent(helpQuery.value)}`,
+    )).data;
+  } catch { help.value = []; }
+}
+
+async function readArticle(slug: string): Promise<void> {
+  busy.value = true;
+  try {
+    reading.value = (await call(
+      `/article?token=${encodeURIComponent(token.value)}&slug=${encodeURIComponent(slug)}`,
+    )).data;
+    rated.value = false;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Could not open that.";
+  } finally { busy.value = false; }
+}
+
+/** Two counters and no comment box — a free-text field on an anonymous link
+ *  is a moderation problem nobody asked for. */
+async function rateArticle(helpful: boolean): Promise<void> {
+  if (!reading.value) return;
+  try {
+    await call("/article/rate", {
+      method: "POST",
+      body: JSON.stringify({ token: token.value, slug: reading.value.slug, helpful }),
+    });
+    rated.value = true;
+  } catch { rated.value = true; }
 }
 
 async function submitRequest(): Promise<void> {
@@ -184,8 +228,39 @@ onMounted(load);
 
       <!-- ── The catalogue ───────────────────────────────────────────────── -->
       <template v-if="mode === 'portal-catalogue'">
-        <template v-if="!chosen">
-          <h2 class="pt-subject">What do you need?</h2>
+        <!-- Reading an article, rather than raising anything. -->
+        <template v-if="reading">
+          <button class="pt-back" @click="reading = null">← Back</button>
+          <h2 class="pt-subject">{{ reading.title }}</h2>
+          <p v-if="reading.summary" class="pt-meta">{{ reading.summary }}</p>
+          <div class="pt-article">{{ reading.body }}</div>
+          <div v-if="!rated" class="pt-rate">
+            <span>Did this help?</span>
+            <button class="pt-btn-ghost" @click="rateArticle(true)">Yes</button>
+            <button class="pt-btn-ghost" @click="rateArticle(false)">No</button>
+          </div>
+          <p v-else class="pt-quiet">Thank you.</p>
+        </template>
+
+        <template v-else-if="!chosen">
+          <h2 class="pt-subject">Before you ask</h2>
+          <label class="pt-field">
+            <span>Describe the problem in a few words</span>
+            <input v-model="helpQuery" placeholder="vpn keeps disconnecting" @keyup.enter="findHelp" />
+          </label>
+          <ul v-if="help.length" class="pt-help">
+            <li v-for="a in help" :key="a.slug">
+              <button @click="readArticle(a.slug)">
+                <strong>{{ a.title }}</strong>
+                <span>{{ a.summary }}</span>
+              </button>
+            </li>
+          </ul>
+          <p v-else-if="helpQuery && !busy" class="pt-quiet">
+            Nothing written about that yet — pick what you need below.
+          </p>
+
+          <h2 class="pt-subject" style="margin-top:14px">Or tell us what you need</h2>
           <div class="pt-cards">
             <button v-for="s in services" :key="s.slug" class="pt-card" @click="chosen = s; done = ''">
               <strong>{{ s.name }}</strong>
@@ -350,4 +425,17 @@ onMounted(load);
 
 .pt-foot { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--color-border);
   font-size: .78rem; color: var(--color-text-muted); }
+
+.pt-article { white-space: pre-wrap; font-size: .92rem; line-height: 1.6; color: var(--color-text);
+  padding: 14px; border-radius: 10px; background: var(--color-surface-sunken); margin-top: 6px; }
+.pt-rate { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: .86rem; }
+.pt-btn-ghost { padding: 5px 14px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--color-border-strong); background: var(--color-surface);
+  color: var(--color-text); font-size: .84rem; }
+.pt-help { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pt-help button { width: 100%; text-align: left; cursor: pointer; padding: 11px 13px;
+  border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-surface);
+  display: flex; flex-direction: column; gap: 2px; font-size: .88rem; color: var(--color-text); }
+.pt-help button:hover { border-color: var(--color-brand-base); }
+.pt-help span { font-size: .78rem; color: var(--color-text-light); }
 </style>

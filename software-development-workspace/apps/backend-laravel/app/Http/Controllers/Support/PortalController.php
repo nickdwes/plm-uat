@@ -245,6 +245,100 @@ class PortalController extends Controller
         ], 201);
     }
 
+    // ── Help before a ticket ──────────────────────────────────────────────────
+
+    /**
+     * Search the published, customer-visible articles.
+     *
+     * Offered before the catalogue form, because the cheapest ticket is the one
+     * nobody needed to raise. Internal articles are excluded by the query, not
+     * filtered afterwards — a filter is one refactor away from being dropped.
+     */
+    public function help(Request $request, \App\Services\Support\KnowledgeBase $kb): JsonResponse
+    {
+        $token = PortalToken::resolve($request->query('token'));
+
+        if (! $token) {
+            return $this->refuse();
+        }
+
+        $phrase = trim((string) $request->query('q'));
+
+        return response()->json([
+            'data' => $phrase === ''
+                ? []
+                : $kb->search($token->organization_id, $phrase, customerOnly: true, limit: 6),
+        ]);
+    }
+
+    /** One article, as a customer reads it. */
+    public function article(Request $request): JsonResponse
+    {
+        $token = PortalToken::resolve($request->query('token'));
+
+        if (! $token) {
+            return $this->refuse();
+        }
+
+        $article = \App\Models\Support\Article::withoutGlobalScope('organization')
+            ->where('organization_id', $token->organization_id)
+            ->where('slug', $request->query('slug'))
+            ->forCustomers()
+            ->first();
+
+        if (! $article) {
+            return $this->refuse();
+        }
+
+        $article->increment('view_count');
+        $article->forceFill(['last_viewed_at' => now()])->save();
+
+        return response()->json([
+            'data' => [
+                'slug'    => $article->slug,
+                'title'   => $article->title,
+                'summary' => $article->summary,
+                'body'    => $article->body,
+            ],
+        ]);
+    }
+
+    /**
+     * Was it any use?
+     *
+     * Two counters and no comment box. A customer who wants to say more raises
+     * a ticket, and a free-text field on an anonymous link is a moderation
+     * problem nobody asked for.
+     */
+    public function rateArticle(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'token'   => ['required', 'string'],
+            'slug'    => ['required', 'string', 'max:220'],
+            'helpful' => ['required', 'boolean'],
+        ]);
+
+        $token = PortalToken::resolve($data['token']);
+
+        if (! $token) {
+            return $this->refuse();
+        }
+
+        $article = \App\Models\Support\Article::withoutGlobalScope('organization')
+            ->where('organization_id', $token->organization_id)
+            ->where('slug', $data['slug'])
+            ->forCustomers()
+            ->first();
+
+        if (! $article) {
+            return $this->refuse();
+        }
+
+        $article->increment($data['helpful'] ? 'helpful_count' : 'unhelpful_count');
+
+        return response()->json(['message' => 'Thank you.']);
+    }
+
     // ── The survey ────────────────────────────────────────────────────────────
 
     public function survey(Request $request): JsonResponse
