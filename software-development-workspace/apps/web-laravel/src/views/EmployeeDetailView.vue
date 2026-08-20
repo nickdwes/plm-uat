@@ -1345,7 +1345,7 @@ onMounted(load);
 
 <style scoped>
 /* Root */
-.ed-root { padding: 24px; max-width: 1100px; }
+.ed-root { padding: 24px; max-width: 88rem; }
 
 /* Breadcrumb */
 .ed-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #94a3b8; margin-bottom: 20px; }

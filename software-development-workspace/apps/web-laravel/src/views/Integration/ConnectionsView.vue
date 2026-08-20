@@ -238,7 +238,7 @@ onMounted(load);
 </script>
 
 <template>
-  <div class="view">
+  <div class="view view--stacked">
     <div class="view-header">
       <div>
         <h2>Connected tenants</h2>

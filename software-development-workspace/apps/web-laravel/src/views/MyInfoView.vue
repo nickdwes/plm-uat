@@ -989,7 +989,7 @@ onMounted(async () => {
 
 <style scoped>
 /* Root */
-.ed-root { padding: 24px; max-width: 1100px; }
+.ed-root { padding: 24px; max-width: 88rem; }
 
 .mi-page-title { font-size: 1.25rem; font-weight: 700; color: #0f172a; margin: 0 0 16px; }
 

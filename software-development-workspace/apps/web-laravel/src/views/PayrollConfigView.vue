@@ -733,7 +733,7 @@ function formatRate(r: StatutoryRate) {
 </template>
 
 <style scoped>
-.pc-wrap      { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }
+.pc-wrap      { max-width: none; padding: 24px clamp(1rem, 2.5vw, 3rem) 60px; }
 .pc-header    { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
 .pc-title     { font-size: 22px; font-weight: 700; margin: 4px 0 2px; }
 .pc-sub       { font-size: 13px; color: var(--color-text-muted); margin: 0; }

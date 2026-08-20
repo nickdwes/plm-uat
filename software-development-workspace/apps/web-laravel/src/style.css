@@ -35,7 +35,12 @@ html {
 .app-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-8);
+  /*
+   * Breathing room that grows with the window. A fixed 2rem gutter looks
+   * generous at 1280px and mean at 2500px, where the content ends up hard
+   * against the chrome on both sides.
+   */
+  padding: var(--space-6) clamp(1rem, 2.5vw, 3rem) var(--space-8);
   background: var(--color-bg);
 }
 
@@ -147,7 +152,50 @@ html {
 }
 
 /* ── View shell ────────────────────────────────────────────────────────── */
-.view { max-width: 1140px; }
+/*
+ * Screens fill the window they are given.
+ *
+ * Every view used to stop at 1140px, which was reasonable when the widest
+ * thing in the application was a form. It is not reasonable now: on a 2500px
+ * monitor it left half the screen empty while a project grid showed four cards
+ * across and a hundred-and-twenty-four-row employee table squeezed six columns
+ * into a third of the display.
+ *
+ * Width is safe to give away here because the things that must not stretch
+ * already cap themselves — search boxes, selects and form fields carry their
+ * own max-widths, and the card grids are `auto-fill` and simply lay out more
+ * columns. What genuinely suffers from a long line is prose, and that is
+ * limited by measure below rather than by narrowing the whole page.
+ *
+ * `--view-max` is the escape hatch for a screen that wants a ceiling; set it
+ * on the view's own class rather than reintroducing a global one.
+ */
+.view {
+  width: 100%;
+  max-width: var(--view-max, none);
+}
+
+/*
+ * Reading measure, for the few places that are genuinely paragraphs.
+ *
+ * A line of text 2,000 pixels wide is one the eye loses its place in on the
+ * way back to the left margin. Roughly 90 characters is the usual limit, and
+ * it applies to the text rather than to the layout around it.
+ */
+.view-subtitle,
+.rich,
+.prose { max-width: 90ch; }
+
+/*
+ * A ceiling for the handful of screens that are a single column of stacked
+ * cards rather than a grid or a table.
+ *
+ * A card grid gains a column when it is given room; one card stretched across
+ * a 2,500px monitor just puts its own contents further apart. These few opt
+ * out of filling the width, and everything else — every table, every board,
+ * every auto-fill grid — takes it.
+ */
+.view--stacked { --view-max: 78rem; }
 
 .view-header {
   display: flex;

@@ -444,7 +444,7 @@ onBeforeUnmount(() => document.removeEventListener("click", closeMenus));
 </template>
 
 <style scoped>
-.cv-wrap { max-width: 1300px; margin: 0 auto; padding: 24px 16px 60px; }
+.cv-wrap { max-width: none; padding: 24px clamp(1rem, 2.5vw, 3rem) 60px; }
 .cv-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
 .cv-header-left { display: flex; align-items: flex-start; gap: 12px; }
 .back-btn { background: none; border: none; cursor: pointer; color: var(--color-text-muted); font-size: 13px; margin-bottom: 4px; display: block; padding: 0; }

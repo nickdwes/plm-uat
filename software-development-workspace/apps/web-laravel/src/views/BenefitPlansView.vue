@@ -1220,7 +1220,7 @@ function statusBadge(s: string) {
 </template>
 
 <style scoped>
-.page-wrap  { padding: 24px 28px; max-width: 1200px; }
+.page-wrap  { padding: 24px clamp(1rem, 2.5vw, 3rem); max-width: none; }
 .page-title { font-size: 22px; font-weight: 700; margin-bottom: 2px; }
 .page-sub   { font-size: 13px; color: var(--color-text-muted); margin-bottom: 20px; }
 .page-header{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }

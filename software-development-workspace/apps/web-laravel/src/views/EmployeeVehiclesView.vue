@@ -208,7 +208,7 @@ onMounted(load);
 </template>
 
 <style scoped>
-.veh-root { padding: 24px; max-width: 1100px; }
+.veh-root { padding: 24px; max-width: 88rem; }
 .veh-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #94a3b8; margin-bottom: 20px; }
 .veh-bc-link { cursor: pointer; color: var(--color-brand-base); font-weight: 500; }
 .veh-bc-link:hover { text-decoration: underline; }

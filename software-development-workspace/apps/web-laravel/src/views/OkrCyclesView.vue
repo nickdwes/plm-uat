@@ -475,7 +475,7 @@ watch(currentOrgSlug, () => { cycles.value = []; selected.value = null; loadCycl
 
 <style scoped>
 /* ── Layout ─────────────────────────────────────────────────────────────────── */
-.okr-root { max-width: 1400px; }
+.okr-root { max-width: none; }
 
 .okr-page-hdr {
   display: flex; align-items: flex-start; justify-content: space-between;

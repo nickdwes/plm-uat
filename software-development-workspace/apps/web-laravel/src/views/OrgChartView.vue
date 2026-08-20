@@ -107,11 +107,19 @@ watch(currentOrgSlug, init);
         {{ chart.reporting.length }} people have no manager set, so the chart has
         {{ chart.reporting.length }} tops rather than one.
       </p>
-      <p v-if="chart.unassigned.length" class="oc-note">
-        {{ chart.unassigned.length }} active
-        {{ chart.unassigned.length === 1 ? "person is" : "people are" }} in no department:
-        {{ chart.unassigned.map((u: any) => u.name).join(", ") }}
-      </p>
+      <!--
+        The count leads and the names fold away. Fifty-two of them printed
+        inline was four lines of prose above the chart, which pushed the thing
+        somebody opened the page for below the fold — and a warning that
+        crowds out what it is warning about gets skipped.
+      -->
+      <details v-if="chart.unassigned.length" class="oc-note oc-fold">
+        <summary>
+          {{ chart.unassigned.length }} active
+          {{ chart.unassigned.length === 1 ? "person is" : "people are" }} in no department
+        </summary>
+        <p class="oc-fold-body">{{ chart.unassigned.map((u: any) => u.name).join(", ") }}</p>
+      </details>
 
       <div class="oc-canvas">
         <ul class="oc-root">
@@ -221,13 +229,21 @@ watch(currentOrgSlug, init);
   border: none; cursor: pointer; color: var(--color-text-light); }
 .oc-switch-btn.on { background: var(--color-brand-subtle); color: var(--color-brand-base); font-weight: 600; }
 .oc-find { max-width: 20rem; }
+.oc-fold summary { cursor: pointer; }
+.oc-fold summary:hover { color: var(--color-text); }
+.oc-fold-body { margin: 6px 0 0; max-width: 90ch; }
 .oc-depth { display: inline-flex; align-items: center; gap: 6px; font-size: .82rem; color: var(--color-text-light); }
 .oc-depth .input { width: auto; }
 .oc-count { margin-left: auto; font-size: .8rem; color: var(--color-text-light); }
 .oc-note { font-size: .82rem; color: var(--color-text-light); margin: 0 0 8px; }
 
 /* Wide charts scroll inside their own box; the page never scrolls sideways. */
-.oc-canvas { overflow-x: auto; padding: 8px 4px 28px; }
+/*
+ * The chart is as wide as the company is, so it scrolls sideways inside its
+ * own box rather than widening the page. It fills the height left under the
+ * controls, so a deep tree scrolls in place instead of pushing the window.
+ */
+.oc-canvas { overflow: auto; padding: 8px 4px 28px; min-height: 55vh; }
 .oc-root { display: flex; justify-content: flex-start; gap: 24px; margin: 0; padding: 0; list-style: none; min-width: min-content; }
 
 .oc-units { display: flex; flex-direction: column; gap: 14px; }
