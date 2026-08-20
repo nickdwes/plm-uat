@@ -299,6 +299,25 @@ class ChangeTest extends TestCase
             ['X-Organization' => 'alpha'])->assertOk();
     }
 
+    /**
+     * A polymorphic relation has no foreign key, so the database cannot cascade.
+     * Left behind, the approvals show in every pending count as work waiting on
+     * somebody for a change that no longer exists.
+     */
+    public function test_deleting_a_change_takes_its_approvals_with_it(): void
+    {
+        $approver = User::factory()->create();
+        $this->stage('CAB', 1, $approver);
+
+        $change = $this->change();
+        $this->approvals()->requestForChange($change);
+        $this->assertSame(1, Approval::count());
+
+        $change->delete();
+
+        $this->assertSame(0, Approval::count());
+    }
+
     public function test_the_calendar_only_shows_what_is_coming(): void
     {
         $this->change(['status' => Change::SCHEDULED, 'window_start' => now()->addWeek()]);

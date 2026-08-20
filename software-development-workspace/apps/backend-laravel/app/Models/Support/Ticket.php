@@ -42,6 +42,21 @@ class Ticket extends Model
         'merged_at'         => 'datetime',
     ];
 
+    /** Same reason as Change: polymorphic approvals cannot be cascaded by the database. */
+    protected static function booted(): void
+    {
+        static::deleting(function (self $ticket) {
+            Approval::where('approvable_type', self::class)
+                ->where('approvable_id', $ticket->id)
+                ->delete();
+        });
+    }
+
+    public function approvals(): \Illuminate\Database\Eloquent\Relations\MorphMany
+    {
+        return $this->morphMany(Approval::class, 'approvable');
+    }
+
     // ── Relations ─────────────────────────────────────────────────────────────
 
     public function status(): BelongsTo    { return $this->belongsTo(TicketStatus::class, 'ticket_status_id'); }

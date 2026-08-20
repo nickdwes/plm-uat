@@ -61,6 +61,19 @@ class Change extends Model
         'status'      => self::DRAFT,
     ];
 
+    /**
+     * A polymorphic relation has no foreign key, so the database cannot cascade
+     * for us. Deleting a change would otherwise leave its approvals behind —
+     * rows pointing at nothing, which show up in every "pending approvals"
+     * count as work waiting on somebody for a change that no longer exists.
+     */
+    protected static function booted(): void
+    {
+        static::deleting(function (self $change) {
+            $change->approvals()->delete();
+        });
+    }
+
     public function problem(): BelongsTo
     {
         return $this->belongsTo(Problem::class, 'support_problem_id');
