@@ -86,6 +86,14 @@ class Calendar extends Model
      * queue is drawn from and what an escalation is triggered by, and neither
      * can be done in working minutes without recomputing the calendar on every
      * render.
+     *
+     * ── Always returned in the application timezone ──
+     *
+     * The arithmetic happens in the calendar's timezone, because that is where
+     * "opens at eight" means anything. The result is converted back before it
+     * leaves: Eloquent writes a Carbon by formatting it, without converting, so
+     * a Nairobi instant stored in a UTC column lands three hours late — and
+     * every pause and resume reads it back and shifts it again.
      */
     public function addWorkingMinutes(CarbonInterface $from, int $minutes): CarbonInterface
     {
@@ -94,7 +102,7 @@ class Calendar extends Model
         $remaining = $minutes;
 
         if ($remaining <= 0) {
-            return $cursor->copy();
+            return $this->forStorage($cursor);
         }
 
         // A year of days is a generous bound; a calendar with no open days at
@@ -113,7 +121,7 @@ class Calendar extends Model
                 $available = $slotStart->diffInMinutes($closes);
 
                 if ($available >= $remaining) {
-                    return $slotStart->copy()->addMinutes($remaining);
+                    return $this->forStorage($slotStart->copy()->addMinutes($remaining));
                 }
 
                 $remaining -= $available;
@@ -126,7 +134,19 @@ class Calendar extends Model
          * screen as obviously wrong — which is better than a silent null that
          * disables the countdown and looks fine.
          */
-        return $cursor->copy();
+        return $this->forStorage($cursor);
+    }
+
+    /**
+     * Back to the application's timezone, for storage and comparison.
+     *
+     * The instant is unchanged; only its representation is. Everything
+     * downstream — the countdown on a queue, the escalation threshold, the
+     * column itself — assumes the application timezone.
+     */
+    private function forStorage(CarbonInterface $moment): CarbonInterface
+    {
+        return $moment->copy()->setTimezone(config('app.timezone', 'UTC'));
     }
 
     /** Whether the desk is open at a given instant. */

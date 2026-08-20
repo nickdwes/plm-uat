@@ -110,9 +110,14 @@ class SlaClockTest extends TestCase
         ));
 
         // Four hours promised on Friday evening is due at noon on Monday.
+        // Compared in Nairobi explicitly: the calendar now hands back the
+        // application timezone, which is the instant that gets stored.
         $due = $this->calendar->addWorkingMinutes($friday5pm, 240);
 
-        $this->assertSame('2026-08-24 12:00', $due->format('Y-m-d H:i'));
+        $this->assertSame(
+            '2026-08-24 12:00',
+            $due->copy()->setTimezone('Africa/Nairobi')->format('Y-m-d H:i'),
+        );
     }
 
     public function test_a_public_holiday_does_not_count(): void
@@ -143,6 +148,69 @@ class SlaClockTest extends TestCase
         $this->assertTrue($names->contains('Mashujaa Day'));
         $this->assertFalse($names->contains('Good Friday'));
         $this->assertFalse($names->contains('Eid al-Fitr'));
+    }
+
+    /**
+     * A due date is stored in the application timezone, not the calendar's.
+     *
+     * Eloquent writes a Carbon by formatting it and does not convert, so a
+     * Nairobi instant saved to a UTC column lands three hours late. Found by
+     * running the whole desk end to end: the drift is invisible on one ticket
+     * and compounds every time a clock is paused and resumed, because each
+     * resume reads the wrong value back and shifts it again.
+     */
+    public function test_a_due_date_is_stored_in_the_application_timezone(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-19 08:10', 'Africa/Nairobi'));
+
+        $ticket = $this->critical();
+        $due    = $ticket->fresh()->sla->resolution_due_at;
+
+        /*
+         * 540 working minutes from 08:10: 530 of them reach 17:00, and the
+         * remaining ten fall in the first ten minutes of the next working day.
+         */
+        $this->assertSame('Africa/Nairobi', $this->calendar->timezone);
+        $this->assertSame(
+            '2026-08-20 08:10',
+            $due->copy()->setTimezone('Africa/Nairobi')->format('Y-m-d H:i'),
+        );
+
+        Carbon::setTestNow();
+    }
+
+    /** And a pause that banks no time must not move it at all. */
+    public function test_pausing_and_resuming_immediately_does_not_shift_the_due_date(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-19 09:00', 'Africa/Nairobi'));
+
+        $ticket = $this->critical();
+        $before = $ticket->fresh()->sla->resolution_due_at->toDateTimeString();
+
+        $this->service()->changeStatus($ticket, $this->statusNamed('With Supplier'));
+        $this->service()->changeStatus($ticket->fresh(), $this->statusNamed('In Progress'));
+
+        $this->assertSame($before, $ticket->fresh()->sla->resolution_due_at->toDateTimeString());
+
+        Carbon::setTestNow();
+    }
+
+    /** Repeatedly, because the old drift compounded with every cycle. */
+    public function test_five_pause_cycles_do_not_walk_the_due_date_forward(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-19 09:00', 'Africa/Nairobi'));
+
+        $ticket = $this->critical();
+        $before = $ticket->fresh()->sla->resolution_due_at->toDateTimeString();
+
+        foreach (range(1, 5) as $_) {
+            $this->service()->changeStatus($ticket->fresh(), $this->statusNamed('With User'));
+            $this->service()->changeStatus($ticket->fresh(), $this->statusNamed('In Progress'));
+        }
+
+        $this->assertSame($before, $ticket->fresh()->sla->resolution_due_at->toDateTimeString());
+
+        Carbon::setTestNow();
     }
 
     // ── Attaching ─────────────────────────────────────────────────────────────

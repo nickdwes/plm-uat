@@ -96,6 +96,37 @@ class MailIngestionTest extends TestCase
         $this->assertSame('ann@client.co.ke', $result['ticket']->requester_email);
     }
 
+    /**
+     * A ticket from a known customer must arrive attached to them.
+     *
+     * The sender policy already looks the contact up to decide whether to let
+     * the mail in, and used to throw the answer away — so an emailed ticket
+     * had no account, which meant no contract, no service level, no contract
+     * engineer, and nothing in that customer's portal history. Found by running
+     * the desk end to end rather than by any single-phase test.
+     */
+    public function test_mail_from_a_known_contact_is_attached_to_their_account(): void
+    {
+        $ticket = $this->ingest()['ticket'];
+
+        $this->assertNotNull($ticket->account_id);
+        $this->assertNotNull($ticket->account_contact_id);
+        $this->assertSame('Client Ltd', $ticket->account->name);
+    }
+
+    /** An address nobody knows still opens a ticket, just without an account. */
+    public function test_mail_from_an_allowed_but_unknown_address_has_no_account(): void
+    {
+        SenderRule::create([
+            'organization_id' => $this->org->id,
+            'kind' => 'domain', 'value' => 'newco.test', 'action' => 'allow',
+        ]);
+
+        $ticket = $this->ingest(['from_email' => 'someone@newco.test'])['ticket'];
+
+        $this->assertNull($ticket->account_id);
+    }
+
     /** Every recipient is kept, because "who else was copied?" gets asked. */
     public function test_recipients_and_attachments_are_recorded(): void
     {

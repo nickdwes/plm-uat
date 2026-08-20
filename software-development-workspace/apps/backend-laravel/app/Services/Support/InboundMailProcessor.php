@@ -155,14 +155,39 @@ class InboundMailProcessor
 
     private function ticketAttributes(Mailbox $mailbox, array $message): array
     {
+        $contact = $this->contactFor($mailbox->organization_id, $message['from_email'] ?? null);
+
         return [
             'subject'         => $this->cleanSubject($message['subject'] ?? '(no subject)'),
             'body'            => $message['body_html'] ?? $message['body_preview'] ?? '',
             'requester_name'  => $message['from_name'] ?? null,
             'requester_email' => $message['from_email'] ?? null,
+            /*
+             * The customer, where the address is one we already know.
+             *
+             * The sender policy looks this contact up to decide whether to let
+             * the mail in, and used to throw the answer away — so a ticket from
+             * a known customer arrived attached to nobody, which meant no
+             * contract, no service level, no contract engineer and nothing in
+             * their portal history. The lookup was already being paid for.
+             */
+            'account_contact_id' => $contact?->id,
+            'account_id'         => $contact?->account_id,
             'ticket_type_id'  => $mailbox->default_type_id,
             'source'          => 'email',
         ];
+    }
+
+    private function contactFor(int $organizationId, ?string $address): ?\App\Models\Account\AccountContact
+    {
+        if (blank($address)) {
+            return null;
+        }
+
+        return \App\Models\Account\AccountContact::withoutGlobalScope('organization')
+            ->where('organization_id', $organizationId)
+            ->whereRaw('lower(email) = ?', [mb_strtolower(trim($address))])
+            ->first();
     }
 
     /**
