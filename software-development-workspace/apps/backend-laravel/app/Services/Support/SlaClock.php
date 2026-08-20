@@ -154,10 +154,17 @@ class SlaClock
         // Allowed against elapsed, the right way round.
         $met = $clock->response_minutes === null || $used <= $clock->response_minutes;
 
+        /*
+         * A breach the sweep already stamped stands. It was true when it was
+         * written, and moving it to the day somebody finally replied would
+         * shift the ticket into a later month's figures — out of the one it
+         * actually failed in.
+         */
         $clock->forceFill([
             'response_minutes_used' => $used,
             'response_met'          => $met,
-            'response_breached_at'  => $met ? null : $at,
+            'response_breached_at'  => $clock->response_breached_at ?? ($met ? null : $at),
+            'response_settled_at'   => $clock->response_settled_at ?? $at,
         ])->save();
 
         $this->record($ticket, SlaEvent::RESPONDED, 'response',
@@ -188,7 +195,8 @@ class SlaClock
         $clock->forceFill([
             'resolution_minutes_used' => $used,
             'resolution_met'          => $met,
-            'resolution_breached_at'  => $met ? null : $at,
+            'resolution_breached_at'  => $clock->resolution_breached_at ?? ($met ? null : $at),
+            'resolution_settled_at'   => $clock->resolution_settled_at ?? $at,
         ])->save();
 
         $this->record($ticket, SlaEvent::RESOLVED, 'resolution',
@@ -198,6 +206,86 @@ class SlaClock
             $this->record($ticket, SlaEvent::BREACHED, 'resolution',
                 "Resolution took {$used} working minutes against {$clock->resolution_minutes}", $at, $used);
         }
+    }
+
+    /**
+     * Stamp the targets that have quietly gone past with nobody acting.
+     *
+     * Until this ran, a breach was only ever recorded at the moment somebody
+     * answered or resolved — so a ticket that blew its target and was then
+     * ignored had no breach on it at all, and the longer it was ignored the
+     * longer it stayed out of every compliance figure. The report would have
+     * been at its most flattering on exactly the tickets a customer would raise
+     * in the meeting.
+     *
+     * Paused clocks are left alone: waiting on a supplier is not the desk
+     * failing, which is the same rule the ladder climbs by.
+     *
+     * The verdict flags are deliberately not written here. A target passed is a
+     * miss, and `rate()` counts it as one, but leaving `response_met` null
+     * keeps two things working: the real minutes are still recorded when
+     * somebody eventually answers, and the escalation ladder — which stops at
+     * a settled clock — carries on climbing towards whoever can get it moving.
+     *
+     * @return int  clocks stamped
+     */
+    public function markPassedTargets(?CarbonInterface $now = null): int
+    {
+        $now = $now ?? now();
+
+        $stamped = 0;
+
+        $due = TicketSla::with('ticket.status')
+            ->whereNull('paused_at')
+            ->where(fn ($q) => $q
+                ->where(fn ($r) => $r->whereNull('response_settled_at')
+                    ->whereNotNull('response_due_at')->where('response_due_at', '<', $now))
+                ->orWhere(fn ($r) => $r->whereNull('resolution_settled_at')
+                    ->whereNotNull('resolution_due_at')->where('resolution_due_at', '<', $now)))
+            ->get();
+
+        foreach ($due as $clock) {
+            $ticket = $clock->ticket;
+
+            if (! $ticket) {
+                continue;
+            }
+
+            app()->instance('current.organization_id', $ticket->organization_id);
+
+            $changes = [];
+
+            if ($clock->response_settled_at === null
+                && $clock->response_due_at !== null
+                && $clock->response_due_at->lessThan($now)
+                && $ticket->first_response_at === null) {
+                $changes['response_breached_at'] = $clock->response_due_at;
+                $changes['response_settled_at']  = $clock->response_due_at;
+
+                $this->record($ticket, SlaEvent::BREACHED, 'response',
+                    'Response target passed with no answer', $clock->response_due_at,
+                    $clock->response_minutes);
+            }
+
+            if ($clock->resolution_settled_at === null
+                && $clock->resolution_due_at !== null
+                && $clock->resolution_due_at->lessThan($now)
+                && ! ($ticket->status?->isTerminal() ?? false)) {
+                $changes['resolution_breached_at'] = $clock->resolution_due_at;
+                $changes['resolution_settled_at']  = $clock->resolution_due_at;
+
+                $this->record($ticket, SlaEvent::BREACHED, 'resolution',
+                    'Resolution target passed and the ticket is still open',
+                    $clock->resolution_due_at, $clock->resolution_minutes);
+            }
+
+            if ($changes) {
+                $clock->forceFill($changes)->save();
+                $stamped++;
+            }
+        }
+
+        return $stamped;
     }
 
     /**

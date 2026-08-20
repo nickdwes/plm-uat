@@ -14,7 +14,7 @@
  */
 import { computed, onMounted, ref, watch } from "vue";
 import { api, ApiError } from "../lib/api";
-import { currentOrgSlug } from "../stores/auth";
+import { currentOrgSlug, getToken } from "../stores/auth";
 
 const org = () => currentOrgSlug.value;
 
@@ -1526,7 +1526,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge" | "changes" | "rules";
+type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge" | "changes" | "rules" | "review";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -1729,6 +1729,167 @@ function init(): void {
 onMounted(init);
 watch(currentOrgSlug, init);
 watch([stateFilter, showAll, teamFilter, unassignedOnly], loadList);
+// ── The service review ─────────────────────────────────────────────────────────
+/*
+ * The month, in numbers somebody has to defend in a meeting.
+ *
+ * Everything here shows its denominator. A compliance figure without the count
+ * behind it cannot be checked, and a customer who cannot check a figure stops
+ * believing any of them. Where there is nothing to measure the screen says so
+ * rather than drawing a confident nought or a flattering hundred.
+ */
+interface Rate {
+  met: number; missed: number; outstanding: number; total: number; rate: number | null;
+}
+interface Spread { count: number; median: number | null; p90: number | null; worst: number | null; }
+interface Slice { label: string; total: number; }
+
+interface Pack {
+  window: { from: string; until: string; timezone: string; label: string; days: number };
+  volumes: {
+    raised: number; resolved: number; net: number; reopened: number; per_day: number;
+    by_priority: Slice[]; by_type: Slice[]; by_category: Slice[];
+    by_source: Record<string, number>;
+  };
+  sla: {
+    response: Rate; resolution: Rate;
+    by_priority: { priority: string; response: Rate; resolution: Rate }[];
+    excluded: { no_sla: number; merged: number; note: string | null };
+    worst: { reference: string; subject: string; priority: string | null;
+             target: number | null; took: number | null; over_by: number | null;
+             still_open: boolean; since: string }[];
+  };
+  response: { response: Spread; resolution: Spread; note: string };
+  backlog: {
+    total: number; unassigned: number; breached: number;
+    buckets: { label: string; total: number; breached: number;
+               unassigned: number; with_customer: number }[];
+    oldest: { reference: string; subject: string; account: string | null; status: string | null;
+              priority: string | null; assignee: string | null; days: number; breached: boolean }[];
+  };
+  satisfaction: {
+    sent: number; responded: number; response_rate: number | null; average: number | null;
+    ratings: Record<string, number>;
+    satisfaction: Record<string, number>; timeliness: Record<string, number>;
+    resolved_fully: Record<string, number>;
+    comments: { reference: string | null; subject: string | null; rating: number | null;
+                comment: string; on: string | null }[];
+    note: string | null;
+  };
+  themes: { by_category: Slice[]; by_asset: Slice[]; repeat_note: string | null };
+  escalations: { total: number; open: number; by_level: Record<string, number> };
+}
+
+const pack       = ref<Pack | null>(null);
+const packBusy   = ref(false);
+const packError  = ref("");
+const packDenied = ref(false);
+const reviewAccounts = ref<{ id: number; name: string }[]>([]);
+const reviewAccount  = ref<number | "">("");
+
+/** Defaults to the month that has finished, which is the one being reviewed. */
+function lastMonth(): { from: string; to: string } {
+  const now  = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const to   = new Date(now.getFullYear(), now.getMonth(), 0);
+  const iso  = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return { from: iso(from), to: iso(to) };
+}
+
+const reviewFrom = ref(lastMonth().from);
+const reviewTo   = ref(lastMonth().to);
+
+function reviewQuery(): string {
+  const p = new URLSearchParams({ from: reviewFrom.value, to: reviewTo.value });
+  if (reviewAccount.value !== "") p.set("account_id", String(reviewAccount.value));
+  return p.toString();
+}
+
+async function loadPack(): Promise<void> {
+  packBusy.value = true; packError.value = ""; packDenied.value = false;
+  try {
+    const res = await api<{ data: Pack; accounts: { id: number; name: string }[]; account: string | null }>(
+      "GET", `/api/v1/support/reports/service-review?${reviewQuery()}`, { org: org() },
+    );
+    pack.value = res.data;
+    reviewAccounts.value = res.accounts;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) packDenied.value = true;
+    else packError.value = e instanceof Error ? e.message : "Could not build the report.";
+  } finally { packBusy.value = false; }
+}
+
+function thisMonth(): void {
+  const now = new Date();
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  reviewFrom.value = iso(new Date(now.getFullYear(), now.getMonth(), 1));
+  reviewTo.value   = iso(now);
+  void loadPack();
+}
+
+function previousMonth(): void {
+  const m = lastMonth();
+  reviewFrom.value = m.from; reviewTo.value = m.to;
+  void loadPack();
+}
+
+/**
+ * Working minutes as hours and minutes, and never as days.
+ *
+ * A "day" would have to be the calendar's working day, which is nine hours on
+ * one contract and twenty-four on another — so "2 days" would mean two
+ * different waits on the same screen.
+ */
+function workingTime(minutes: number | null): string {
+  if (minutes === null) return "—";
+  if (minutes < 60) return `${minutes}m`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m ? `${h}h ${m}m` : `${h}h`;
+}
+
+/** A rate, or an honest admission that there is nothing to rate. */
+function rateText(r: Rate | undefined): string {
+  if (!r || r.total === 0) return "No tickets";
+  return `${r.rate}%`;
+}
+
+function rateTone(r: Rate | undefined): string {
+  if (!r || r.total === 0 || r.rate === null) return "sd-off-pill";
+  if (r.rate >= 95) return "sd-ok-pill";
+  return r.rate >= 85 ? "sd-warn-pill" : "sd-block-pill";
+}
+
+async function exportReview(): Promise<void> {
+  packError.value = "";
+  try {
+    /*
+     * Fetched rather than linked. The API wants a bearer token and an
+     * organisation header, and an anchor can carry neither — a plain link would
+     * either fail or, worse, fall back to whichever tenant the session last
+     * touched.
+     */
+    const res = await fetch(
+      `${import.meta.env.VITE_LARAVEL_API_URL ?? ""}/api/v1/support/reports/export?${reviewQuery()}`,
+      { headers: { Authorization: `Bearer ${getToken() ?? ""}`, "X-Organization": org() ?? "" } },
+    );
+
+    if (!res.ok) {
+      packError.value = "Could not export the list.";
+      return;
+    }
+
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `service-review-${reviewFrom.value}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    packError.value = e instanceof Error ? e.message : "Could not export the list.";
+  }
+}
+
 watch(tab, (t) => {
   if (t === "held") void loadHeld();
   if (t === "settings") void loadSettings();
@@ -1740,6 +1901,7 @@ watch(tab, (t) => {
   if (t === "knowledge") void loadArticles();
   if (t === "changes") void loadChanges();
   if (t === "rules") void loadRules();
+  if (t === "review") void loadPack();
 });
 </script>
 
@@ -1772,6 +1934,7 @@ watch(tab, (t) => {
       <button :class="['sd-tabbtn', { on: tab === 'catalogue' }]" @click="tab = 'catalogue'">Catalogue &amp; CSAT</button>
       <button :class="['sd-tabbtn', { on: tab === 'knowledge' }]" @click="tab = 'knowledge'">Knowledge</button>
       <button :class="['sd-tabbtn', { on: tab === 'rules' }]" @click="tab = 'rules'">Rules</button>
+      <button :class="['sd-tabbtn', { on: tab === 'review' }]" @click="tab = 'review'">Service review</button>
       <button :class="['sd-tabbtn', { on: tab === 'changes' }]" @click="tab = 'changes'">
         Problems &amp; Changes
         <span v-if="chg?.my_approvals?.length" class="sd-badge">{{ chg.my_approvals.length }}</span>
@@ -3475,6 +3638,332 @@ watch(tab, (t) => {
       </template>
     </template>
 
+
+    <!-- ── Service review ──────────────────────────────────────────────────── -->
+    <template v-if="tab === 'review'">
+      <p v-if="packError" class="error">{{ packError }}</p>
+
+      <p v-if="packDenied" class="sd-empty">
+        You do not have permission to read the desk's figures. Ask for
+        <span class="sd-mono">support.report</span> — it is separate from answering tickets on
+        purpose, because these numbers cover every account.
+      </p>
+
+      <template v-else>
+        <p class="sd-lede">
+          The month, in figures somebody has to defend across a table. Every rate shows the count
+          it came from and what was held out of it, and where there is nothing to measure it says
+          so — a hundred per cent on an account that raised nothing is how a report gets thrown
+          out of the room.
+        </p>
+
+        <div class="sd-filters">
+          <select v-model="reviewAccount" class="control sd-select" @change="loadPack()">
+            <option value="">Every account</option>
+            <option v-for="a in reviewAccounts" :key="a.id" :value="a.id">{{ a.name }}</option>
+          </select>
+          <input v-model="reviewFrom" type="date" class="control" style="max-width:10rem" @change="loadPack()" />
+          <input v-model="reviewTo" type="date" class="control" style="max-width:10rem" @change="loadPack()" />
+          <button class="btn btn-ghost btn-sm" @click="previousMonth()">Last month</button>
+          <button class="btn btn-ghost btn-sm" @click="thisMonth()">This month so far</button>
+          <button class="btn btn-secondary btn-sm" style="margin-left:auto" @click="exportReview()">
+            Export the list
+          </button>
+        </div>
+
+        <p v-if="packBusy" class="sd-empty">Building the report…</p>
+
+        <template v-else-if="pack">
+          <p class="sd-meta" style="margin:-6px 0 12px">
+            {{ pack.window.label }} · {{ pack.window.timezone }} · {{ pack.window.days }} days
+          </p>
+
+          <!-- What came in against what went out. -->
+          <div class="sd-figs">
+            <div class="sd-fig">
+              <span class="sd-fig-n">{{ pack.volumes.raised }}</span>
+              <span class="sd-fig-l">Raised</span>
+              <span class="sd-fig-s">{{ pack.volumes.per_day }} a day</span>
+            </div>
+            <div class="sd-fig">
+              <span class="sd-fig-n">{{ pack.volumes.resolved }}</span>
+              <span class="sd-fig-l">Resolved</span>
+              <span v-if="pack.volumes.reopened" class="sd-fig-s">{{ pack.volumes.reopened }} came back</span>
+            </div>
+            <div class="sd-fig">
+              <!--
+                The number that decides whether the backlog grows. A desk can
+                hit every target and still be losing, and this is the only
+                figure on the page that says so.
+              -->
+              <span :class="['sd-fig-n', pack.volumes.net > 0 ? 'bad' : 'good']">
+                {{ pack.volumes.net > 0 ? "+" : "" }}{{ pack.volumes.net }}
+              </span>
+              <span class="sd-fig-l">Net</span>
+              <span class="sd-fig-s">
+                {{ pack.volumes.net > 0 ? "backlog grew" : pack.volumes.net < 0 ? "backlog shrank" : "level" }}
+              </span>
+            </div>
+            <div class="sd-fig">
+              <span class="sd-fig-n">{{ pack.backlog.total }}</span>
+              <span class="sd-fig-l">Open now</span>
+              <span v-if="pack.backlog.breached" class="sd-fig-s bad">{{ pack.backlog.breached }} past target</span>
+            </div>
+          </div>
+
+          <!-- ── Did we meet the targets ── -->
+          <h3 class="sd-h3">Service levels</h3>
+          <div class="sd-card sd-pad">
+            <div class="sd-compliance">
+              <div v-for="c in [
+                    { key: 'response', label: 'Answered in time', r: pack.sla.response },
+                    { key: 'resolution', label: 'Fixed in time', r: pack.sla.resolution }]"
+                   :key="c.key" class="sd-comp">
+                <span :class="['sd-pill', rateTone(c.r)]" style="font-size:1.15rem;padding:6px 14px">
+                  {{ rateText(c.r) }}
+                </span>
+                <span class="sd-fig-l">{{ c.label }}</span>
+                <!--
+                  The denominator, always. A rate nobody can check is a rate
+                  nobody believes the second it is inconvenient.
+                -->
+                <span v-if="c.r.total" class="sd-fig-s">
+                  {{ c.r.met }} of {{ c.r.total }} met<template v-if="c.r.outstanding">,
+                  {{ c.r.outstanding }} still waiting</template>
+                </span>
+                <span v-else class="sd-fig-s">Nothing settled in this period</span>
+              </div>
+            </div>
+
+            <p v-if="pack.sla.excluded.note" class="sd-note">{{ pack.sla.excluded.note }}</p>
+
+            <div v-if="pack.sla.by_priority.length" class="table-scroll" style="margin-top:4px">
+              <table class="sd-table">
+                <thead>
+                  <tr><th>Priority</th><th>Answered</th><th>Fixed</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="p in pack.sla.by_priority" :key="p.priority">
+                    <td>{{ p.priority }}</td>
+                    <td>
+                      <span :class="['sd-pill', rateTone(p.response)]">{{ rateText(p.response) }}</span>
+                      <span v-if="p.response.total" class="sd-meta">{{ p.response.met }} of {{ p.response.total }}</span>
+                    </td>
+                    <td>
+                      <span :class="['sd-pill', rateTone(p.resolution)]">{{ rateText(p.resolution) }}</span>
+                      <span v-if="p.resolution.total" class="sd-meta">{{ p.resolution.met }} of {{ p.resolution.total }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ── How long people actually waited ── -->
+          <h3 class="sd-h3">How long people waited</h3>
+          <div class="sd-card sd-pad">
+            <div class="table-scroll">
+              <table class="sd-table">
+                <thead>
+                  <tr><th></th><th>Typical</th><th>Nine in ten within</th><th>Worst</th><th class="text-right">Tickets</th></tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>To a first answer</td>
+                    <td class="sd-mono">{{ workingTime(pack.response.response.median) }}</td>
+                    <td class="sd-mono">{{ workingTime(pack.response.response.p90) }}</td>
+                    <td class="sd-mono">{{ workingTime(pack.response.response.worst) }}</td>
+                    <td class="text-right sd-mono">{{ pack.response.response.count }}</td>
+                  </tr>
+                  <tr>
+                    <td>To a fix</td>
+                    <td class="sd-mono">{{ workingTime(pack.response.resolution.median) }}</td>
+                    <td class="sd-mono">{{ workingTime(pack.response.resolution.p90) }}</td>
+                    <td class="sd-mono">{{ workingTime(pack.response.resolution.worst) }}</td>
+                    <td class="text-right sd-mono">{{ pack.response.resolution.count }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <!--
+              "Typical" rather than "average" because it is the median. One
+              ticket answered after a bank holiday drags a mean far enough to
+              describe nobody's experience.
+            -->
+            <p class="sd-note">
+              The middle ticket, not the average — one bad weekend would drag a mean past
+              describing anybody. {{ pack.response.note }}
+            </p>
+          </div>
+
+          <!-- ── What is still open ── -->
+          <h3 class="sd-h3">What is still open</h3>
+          <div class="sd-card sd-pad">
+            <ul class="sd-ages">
+              <li v-for="b in pack.backlog.buckets" :key="b.label">
+                <span class="sd-age-l">{{ b.label }}</span>
+                <span class="sd-age-bar">
+                  <span class="sd-age-fill"
+                        :style="{ width: (pack.backlog.total ? (b.total / pack.backlog.total * 100) : 0) + '%' }"></span>
+                </span>
+                <span class="sd-age-n sd-mono">{{ b.total }}</span>
+                <!--
+                  An old ticket waiting on the customer is not the same failure
+                  as an old ticket waiting on us, and a bar that merges the two
+                  invites the wrong argument.
+                -->
+                <span class="sd-age-w">
+                  <span v-if="b.breached" class="sd-pill sd-block-pill">{{ b.breached }} past target</span>
+                  <span v-if="b.with_customer" class="sd-pill sd-off-pill">{{ b.with_customer }} with customer</span>
+                  <span v-if="b.unassigned" class="sd-pill sd-warn-pill">{{ b.unassigned }} unassigned</span>
+                </span>
+              </li>
+            </ul>
+
+            <template v-if="pack.backlog.oldest.length">
+              <h4 class="sd-h4" style="margin-top:14px">The ones that have waited longest</h4>
+              <div class="table-scroll">
+                <table class="sd-table">
+                  <thead>
+                    <tr><th>Ticket</th><th>Status</th><th>With</th><th class="text-right">Days</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="t in pack.backlog.oldest" :key="t.reference">
+                      <td>
+                        <span class="sd-mono sd-ref">{{ t.reference }}</span>
+                        <span class="sd-subject">{{ t.subject }}</span>
+                        <span v-if="t.account" class="sd-meta">{{ t.account }}</span>
+                      </td>
+                      <td>
+                        {{ t.status }}
+                        <span v-if="t.breached" class="sd-error-note">past target</span>
+                      </td>
+                      <td class="sd-meta">{{ t.assignee ?? "Nobody" }}</td>
+                      <td class="text-right sd-mono">{{ t.days }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </template>
+          </div>
+
+          <!-- ── The misses, named ── -->
+          <template v-if="pack.sla.worst.length">
+            <h3 class="sd-h3">Where we were slowest</h3>
+            <!--
+              Listed rather than summarised. A customer arrives at the meeting
+              with two or three of these in mind, and a report that shows only
+              a percentage looks like it is hiding them.
+            -->
+            <div class="sd-card table-scroll">
+              <table class="sd-table">
+                <thead>
+                  <tr><th>Ticket</th><th>Priority</th><th>Target</th><th>Took</th><th class="text-right">Over by</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-for="t in pack.sla.worst" :key="t.reference">
+                    <td>
+                      <span class="sd-mono sd-ref">{{ t.reference }}</span>
+                      <span class="sd-subject">{{ t.subject }}</span>
+                    </td>
+                    <td class="sd-meta">{{ t.priority }}</td>
+                    <td class="sd-mono">{{ workingTime(t.target) }}</td>
+                    <!--
+                      A ticket still running has no time taken, and drawing a
+                      dash where a number goes reads as missing data rather
+                      than as the worst case on the page. It says so instead.
+                    -->
+                    <td v-if="t.still_open" colspan="2" class="text-right">
+                      <span class="sd-pill sd-block-pill">Never fixed — still open</span>
+                    </td>
+                    <template v-else>
+                      <td class="sd-mono">{{ workingTime(t.took) }}</td>
+                      <td class="text-right sd-mono" style="color:var(--color-error)">
+                        {{ workingTime(t.over_by) }}
+                      </td>
+                    </template>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </template>
+
+          <!-- ── What customers said ── -->
+          <h3 class="sd-h3">What customers said</h3>
+          <div class="sd-card sd-pad">
+            <div class="sd-figs">
+              <div class="sd-fig">
+                <span class="sd-fig-n">{{ pack.satisfaction.average ?? "—" }}</span>
+                <span class="sd-fig-l">Average rating</span>
+                <span class="sd-fig-s">out of 5</span>
+              </div>
+              <div class="sd-fig">
+                <!--
+                  Beside the score, never behind it. A 4.9 from four people out
+                  of two hundred is four people's opinion, and a report that
+                  prints one without the other invites a decision on it.
+                -->
+                <span class="sd-fig-n">{{ pack.satisfaction.response_rate ?? "—" }}<template v-if="pack.satisfaction.response_rate !== null">%</template></span>
+                <span class="sd-fig-l">Answered the survey</span>
+                <span class="sd-fig-s">{{ pack.satisfaction.responded }} of {{ pack.satisfaction.sent }} asked</span>
+              </div>
+            </div>
+
+            <p v-if="pack.satisfaction.note" class="sd-note">{{ pack.satisfaction.note }}</p>
+
+            <template v-if="pack.satisfaction.comments.length">
+              <h4 class="sd-h4" style="margin-top:12px">In their words</h4>
+              <ul class="sd-comments">
+                <li v-for="(c, i) in pack.satisfaction.comments" :key="i">
+                  <span class="sd-comment-head">
+                    <span class="sd-mono sd-ref">{{ c.reference }}</span>
+                    <span v-if="c.rating" class="sd-pill sd-off-pill">{{ c.rating }}/5</span>
+                    <span class="sd-when">{{ c.on }}</span>
+                  </span>
+                  <span class="sd-comment-body">{{ c.comment }}</span>
+                </li>
+              </ul>
+            </template>
+          </div>
+
+          <!-- ── What kept coming back ── -->
+          <h3 class="sd-h3">What kept coming back</h3>
+          <div class="sd-card sd-pad">
+            <p v-if="pack.themes.repeat_note" class="sd-lede" style="margin:0 0 6px">
+              {{ pack.themes.repeat_note }}
+            </p>
+            <div class="sd-grid">
+              <div>
+                <h4 class="sd-h4">By category</h4>
+                <ul class="sd-slices">
+                  <li v-for="s in pack.themes.by_category.slice(0, 8)" :key="s.label">
+                    <span>{{ s.label }}</span><span class="sd-mono">{{ s.total }}</span>
+                  </li>
+                  <li v-if="!pack.themes.by_category.length" class="sd-meta">Nothing raised.</li>
+                </ul>
+              </div>
+              <div>
+                <h4 class="sd-h4">By equipment</h4>
+                <ul class="sd-slices">
+                  <li v-for="s in pack.themes.by_asset" :key="s.label">
+                    <span>{{ s.label }}</span><span class="sd-mono">{{ s.total }}</span>
+                  </li>
+                  <li v-if="!pack.themes.by_asset.length" class="sd-meta">
+                    No ticket was linked to a piece of kit.
+                  </li>
+                </ul>
+              </div>
+            </div>
+
+            <p v-if="pack.escalations.total" class="sd-note">
+              {{ pack.escalations.total }} escalation{{ pack.escalations.total === 1 ? "" : "s" }} in the
+              period<template v-if="pack.escalations.open">, {{ pack.escalations.open }} still open</template>.
+            </p>
+          </div>
+        </template>
+      </template>
+    </template>
+
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->
     <div v-if="open" class="sd-overlay" @click.self="open = null">
       <div class="sd-panel" role="dialog" aria-modal="true">
@@ -4193,6 +4682,41 @@ watch(tab, (t) => {
 .sd-view-x:hover { color: var(--color-error); }
 .sd-view-save { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .sd-view-save .control { max-width: 15rem; }
+
+/* ── The service review ─────────────────────────────────────────────────── */
+.sd-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 10px; }
+.sd-fig { display: flex; flex-direction: column; gap: 1px; padding: 12px 14px;
+  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; }
+.sd-fig-n { font-size: 1.6rem; font-weight: 600; color: var(--color-text); line-height: 1.1; }
+.sd-fig-n.good { color: var(--color-success); }
+.sd-fig-n.bad  { color: var(--color-error); }
+.sd-fig-l { font-size: .78rem; color: var(--color-text); }
+.sd-fig-s { font-size: .72rem; color: var(--color-text-light); }
+.sd-fig-s.bad { color: var(--color-error); }
+
+.sd-compliance { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 12px; }
+.sd-comp { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+
+.sd-ages { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.sd-ages li { display: flex; align-items: center; gap: 10px; font-size: .82rem; flex-wrap: wrap; }
+.sd-age-l { width: 8rem; color: var(--color-text-light); flex: 0 0 auto; }
+.sd-age-bar { flex: 1 1 6rem; height: 8px; min-width: 4rem; border-radius: 999px;
+  background: var(--color-surface-sunken); overflow: hidden; }
+.sd-age-fill { display: block; height: 100%; background: var(--color-brand-base); }
+.sd-age-n { width: 2.5rem; text-align: right; flex: 0 0 auto; }
+.sd-age-w { display: flex; gap: 4px; flex-wrap: wrap; flex: 0 0 auto; }
+
+.sd-comments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.sd-comments li { display: flex; flex-direction: column; gap: 3px; padding: 9px 11px;
+  background: var(--color-surface-sunken); border-radius: 8px; }
+.sd-comment-head { display: flex; align-items: baseline; gap: 8px; font-size: .74rem; }
+.sd-comment-body { font-size: .85rem; color: var(--color-text); white-space: pre-wrap; }
+
+.sd-slices { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.sd-slices li { display: flex; justify-content: space-between; gap: 10px; font-size: .84rem;
+  padding: 3px 0; border-bottom: 1px solid var(--color-border); }
+.sd-slices li:last-child { border-bottom: none; }
+
 
 .sd-splits { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column;
   gap: 3px; font-size: .78rem; color: var(--color-text-light); }

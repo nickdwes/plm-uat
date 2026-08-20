@@ -5,6 +5,7 @@ namespace App\Services\Support;
 use App\Models\Support\Automation;
 use App\Models\Support\PriorityMatrix;
 use App\Models\Support\Ticket;
+use App\Models\Support\TicketEvent;
 use App\Models\Support\TicketMessage;
 use App\Models\Support\TicketStatus;
 use App\Models\Support\TicketWorklog;
@@ -169,6 +170,8 @@ class TicketService
             throw new RuntimeException('That status belongs to another organisation.');
         }
 
+        $was = $ticket->status;
+
         $changes = ['ticket_status_id' => $status->id];
 
         $changes['resolved_at'] = match ($status->state) {
@@ -183,6 +186,8 @@ class TicketService
         $ticket->forceFill($changes)->save();
 
         $fresh = $ticket->fresh(['status', 'sla']);
+
+        $this->recordStatusChange($fresh, $was, $status, $actor);
 
         /*
          * Pause and resume follow the state, and reaching a terminal state
@@ -200,6 +205,59 @@ class TicketService
         app(AutomationEngine::class)->run($fresh, Automation::ON_UPDATED);
 
         return $fresh->fresh(['status']);
+    }
+
+    /**
+     * Write the status move down, and mark the two crossings that matter.
+     *
+     * The trail exists because a ticket's columns only say where it is now:
+     * "who closed this, and when" had no answer, and reopening one erased the
+     * resolution date the reports were counted from — so last month's figures
+     * changed after the fact. A resolved event is recorded on every entry into
+     * a terminal state and a reopened event on every departure from one; both
+     * are written once and never revised, which is what makes a report run in
+     * October say the same thing about July as it did in August.
+     */
+    private function recordStatusChange(
+        Ticket $ticket,
+        ?TicketStatus $was,
+        TicketStatus $now,
+        ?User $actor,
+    ): void {
+        if ($was?->id === $now->id) {
+            return;
+        }
+
+        $common = [
+            'support_ticket_id' => $ticket->id,
+            'actor_id'          => $actor?->id,
+            'automatic'         => $actor === null,
+            'occurred_at'       => now(),
+        ];
+
+        TicketEvent::create($common + [
+            'event'      => TicketEvent::STATUS,
+            'field'      => 'status',
+            'from_value' => $was?->name,
+            'to_value'   => $now->name,
+        ]);
+
+        $wasTerminal = $was?->isTerminal() ?? false;
+
+        if ($now->isTerminal() && ! $wasTerminal) {
+            TicketEvent::create($common + [
+                'event'    => TicketEvent::RESOLVED,
+                'to_value' => $now->name,
+            ]);
+        }
+
+        if ($wasTerminal && ! $now->isTerminal()) {
+            TicketEvent::create($common + [
+                'event'      => TicketEvent::REOPENED,
+                'from_value' => $was?->name,
+                'to_value'   => $now->name,
+            ]);
+        }
     }
 
     /** Reclassify, and let the priority follow rather than be argued about. */
@@ -320,7 +378,7 @@ class TicketService
                 'source'     => 'system',
             ], $actor);
 
-            \App\Models\Support\TicketEvent::create([
+            TicketEvent::create([
                 'support_ticket_id' => $ticket->id,
                 'event'      => 'split',
                 'field'      => 'ticket',

@@ -135,6 +135,19 @@ class TicketPolicy extends BasePolicy
         return $this->canAny($user, Permission::SUPPORT_LOG_TIME, Permission::SUPPORT_UPDATE);
     }
 
+    /**
+     * Reading the service review figures.
+     *
+     * Deliberately not `manageConfig`. The person who writes the monthly review
+     * needs the numbers, not the ability to change what the desk is judged
+     * against — and letting the second imply the first would mean nobody could
+     * be given the report without also being handed the priority matrix.
+     */
+    public function report(User $user): bool
+    {
+        return $this->canAny($user, Permission::SUPPORT_REPORT, Permission::SUPPORT_MANAGE_CONFIG);
+    }
+
     /** Statuses, types and the matrix that decides how the desk is prioritised. */
     public function manageConfig(User $user): bool
     {

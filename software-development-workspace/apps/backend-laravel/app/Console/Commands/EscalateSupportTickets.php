@@ -39,6 +39,22 @@ class EscalateSupportTickets extends Command
     {
         $dry = (bool) $this->option('dry-run');
 
+        /*
+         * Stamp the targets that have gone past before climbing anything.
+         *
+         * The two belong in one pass: the ladder and the compliance report must
+         * agree about which tickets are in trouble, and running them on
+         * separate schedules is how a ticket comes to be escalated to the CTO
+         * while the month's figures still show it as unjudged.
+         */
+        if (! $dry) {
+            $stamped = $clock->markPassedTargets();
+
+            if ($stamped > 0) {
+                $this->line("     {$stamped} target(s) passed with nobody acting — recorded as breached.");
+            }
+        }
+
         $clocks = TicketSla::with(['ticket.status', 'ticket.assignee', 'target'])
             ->whereNull('paused_at')
             ->whereNull('resolution_met')

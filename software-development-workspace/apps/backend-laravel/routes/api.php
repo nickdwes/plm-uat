@@ -24,6 +24,7 @@ use App\Http\Controllers\Support\ChangeController;
 use App\Http\Controllers\Support\KnowledgeController;
 use App\Http\Controllers\Support\MailWebhookController;
 use App\Http\Controllers\Support\PortalController;
+use App\Http\Controllers\Support\ReportController;
 use App\Http\Controllers\Support\MailboxController;
 use App\Http\Controllers\Support\RoutingController;
 use App\Http\Controllers\Support\SlaController;
@@ -941,6 +942,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/automations',              [AutomationController::class, 'save']);
         Route::get('/automations/{automation}/rehearse', [AutomationController::class, 'rehearse']);
         Route::get('/tickets/{ticket}/automation-runs',  [AutomationController::class, 'forTicket']);
+
+        /*
+         * The service review. Its own permission: writing the monthly report
+         * should not require the one that edits the priority matrix.
+         */
+        Route::get('/reports/service-review', [ReportController::class, 'pack']);
+        Route::get('/reports/export',         [ReportController::class, 'export']);
 
         // Problems, changes and sign-off.
         Route::get('/changes',                   [ChangeController::class, 'index']);

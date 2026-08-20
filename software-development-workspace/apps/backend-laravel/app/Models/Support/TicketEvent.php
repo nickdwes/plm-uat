@@ -24,6 +24,20 @@ class TicketEvent extends Model
     public const DEESCALATED  = 'de-escalated';
     public const TRIAGED      = 'triaged';
 
+    /*
+     * The status trail.
+     *
+     * A ticket's own columns say where it is now, and reopening one clears its
+     * resolved_at — correctly, because a resolution date on a ticket that is
+     * open again is a false fact. But it meant last month's resolved count
+     * changed whenever somebody reopened an old ticket, so a report run twice
+     * gave two answers. These rows are written once and never revised, and the
+     * resolution figures are counted from them for that reason.
+     */
+    public const STATUS   = 'status';
+    public const RESOLVED = 'resolved';
+    public const REOPENED = 'reopened';
+
     protected $fillable = [
         'support_ticket_id', 'event', 'field', 'from_value', 'to_value',
         'reason', 'actor_id', 'automatic', 'occurred_at',

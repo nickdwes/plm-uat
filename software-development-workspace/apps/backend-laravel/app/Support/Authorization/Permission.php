@@ -222,6 +222,17 @@ final class Permission
      */
     public const SUPPORT_MANAGE_CONFIG = 'support.manage_config';
 
+    /*
+     * Reading the desk's figures, kept apart from running it.
+     *
+     * A service delivery manager writes the monthly review and should never
+     * need the permission that edits the priority matrix to do it — and the
+     * reports carry every account's compliance, so this is a wider view of
+     * customers than answering tickets requires. Two reasons to be its own
+     * permission rather than folded into either neighbour.
+     */
+    public const SUPPORT_REPORT = 'support.report';
+
     // ── Assets ────────────────────────────────────────────────────────────
     public const ASSETS_VIEW          = 'assets.view';
     public const ASSETS_VIEW_OWN      = 'assets.view_own';
@@ -361,6 +372,7 @@ final class Permission
                 self::SUPPORT_LOG_TIME, self::SUPPORT_MANAGE_CONFIG,
                 self::SUPPORT_TRIAGE, self::SUPPORT_REASSIGN, self::SUPPORT_ESCALATE,
                 self::SUPPORT_MANAGE_CONTRACTS, self::SUPPORT_APPROVE,
+                self::SUPPORT_REPORT,
             ],
             'payslip'       => [self::PAYSLIP_VIEW_OWN],
             'organizations' => [self::ORGANIZATIONS_VIEW, self::ORGANIZATIONS_MANAGE],

@@ -28,6 +28,7 @@ class TicketSla extends Model
         'clock_started_at', 'paused_at',
         'response_met', 'resolution_met',
         'response_breached_at', 'resolution_breached_at',
+        'response_settled_at', 'resolution_settled_at',
         'escalation_level', 'hod_escalated_at', 'cto_escalated_at', 'ceo_escalated_at',
     ];
 
@@ -37,6 +38,8 @@ class TicketSla extends Model
         'clock_started_at'       => 'datetime',
         'paused_at'              => 'datetime',
         'response_breached_at'   => 'datetime',
+        'response_settled_at'    => 'datetime',
+        'resolution_settled_at'  => 'datetime',
         'resolution_breached_at' => 'datetime',
         'hod_escalated_at'       => 'datetime',
         'cto_escalated_at'       => 'datetime',
