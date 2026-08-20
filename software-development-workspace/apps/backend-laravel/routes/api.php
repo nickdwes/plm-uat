@@ -19,6 +19,7 @@ use App\Http\Controllers\Leave\LeaveAdminController;
 use App\Http\Controllers\Payroll\PayrollController;
 use App\Http\Controllers\Payroll\PaymentFileController;
 use App\Http\Controllers\Support\CatalogueController;
+use App\Http\Controllers\Support\ChangeController;
 use App\Http\Controllers\Support\KnowledgeController;
 use App\Http\Controllers\Support\MailWebhookController;
 use App\Http\Controllers\Support\PortalController;
@@ -934,6 +935,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/split',  [TicketController::class, 'split']);
 
         // The catalogue, portal links and the satisfaction survey.
+        // Problems, changes and sign-off.
+        Route::get('/changes',                   [ChangeController::class, 'index']);
+        Route::post('/problems',                 [ChangeController::class, 'saveProblem']);
+        Route::post('/problems/{problem}/tickets', [ChangeController::class, 'linkTicket']);
+        Route::post('/changes',                  [ChangeController::class, 'saveChange']);
+        Route::post('/changes/{change}/submit',  [ChangeController::class, 'submit']);
+        Route::post('/changes/{change}/outcome', [ChangeController::class, 'recordOutcome']);
+        Route::post('/approvals/{approval}',     [ChangeController::class, 'decide']);
+        Route::post('/approval-stages',          [ChangeController::class, 'saveStage']);
+
         // The knowledge base, and the kit a ticket was about.
         Route::get('/articles',                  [KnowledgeController::class, 'index']);
         Route::get('/articles/{article}',        [KnowledgeController::class, 'show']);

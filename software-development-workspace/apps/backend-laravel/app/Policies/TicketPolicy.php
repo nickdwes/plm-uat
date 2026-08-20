@@ -112,6 +112,18 @@ class TicketPolicy extends BasePolicy
         return $this->canAny($user, Permission::SUPPORT_ESCALATE, Permission::SUPPORT_TRIAGE);
     }
 
+    /**
+     * Signing off a change or a service request.
+     *
+     * The opposite job from raising one. Whoever asks for a change should not
+     * be able to wave it through, and folding this into support.update would
+     * make every approval a formality.
+     */
+    public function approveChange(User $user): bool
+    {
+        return $this->can($user, Permission::SUPPORT_APPROVE);
+    }
+
     /** Contract support structures, engineers and their competencies. */
     public function manageContracts(User $user): bool
     {

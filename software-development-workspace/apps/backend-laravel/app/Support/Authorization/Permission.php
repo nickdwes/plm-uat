@@ -207,6 +207,15 @@ final class Permission
     public const SUPPORT_MANAGE_CONTRACTS = 'support.manage_contracts';
 
     /*
+     * Signing off a change or a service request.
+     *
+     * Its own permission, because approving is the opposite job from raising:
+     * whoever asks for a change should not be able to wave it through, and a
+     * single support.update covering both makes the approval a formality.
+     */
+    public const SUPPORT_APPROVE = 'support.approve';
+
+    /*
      * Statuses, types and the priority matrix. Changing the matrix silently
      * re-prioritises how the whole desk is worked, which is a different
      * question from whether somebody may answer a ticket.
@@ -351,7 +360,7 @@ final class Permission
                 self::SUPPORT_UPDATE, self::SUPPORT_ASSIGN, self::SUPPORT_CLOSE,
                 self::SUPPORT_LOG_TIME, self::SUPPORT_MANAGE_CONFIG,
                 self::SUPPORT_TRIAGE, self::SUPPORT_REASSIGN, self::SUPPORT_ESCALATE,
-                self::SUPPORT_MANAGE_CONTRACTS,
+                self::SUPPORT_MANAGE_CONTRACTS, self::SUPPORT_APPROVE,
             ],
             'payslip'       => [self::PAYSLIP_VIEW_OWN],
             'organizations' => [self::ORGANIZATIONS_VIEW, self::ORGANIZATIONS_MANAGE],

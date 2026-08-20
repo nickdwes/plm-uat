@@ -758,6 +758,127 @@ async function deleteView(v: ViewRow): Promise<void> {
   }
 }
 
+// ── Problems, changes and sign-off ─────────────────────────────────────────────
+/*
+ * The old module had "Problem" as a ticket type — which makes a cause into one
+ * more thing in the queue — and approval as a word on a status that nothing
+ * acted on. This is the machinery those words were describing.
+ */
+const chg = ref<any>(null);
+const chgBusy = ref(false);
+const chgError = ref("");
+const chgNote = ref("");
+const chgPane = ref<"changes" | "problems" | "approvals" | "stages">("changes");
+
+const problemDraft = ref({
+  id: null as number | null, title: "", statement: "", root_cause: "",
+  workaround: "", status: "investigating", owner_id: "",
+});
+const changeDraft = ref({
+  id: null as number | null, title: "", description: "", change_type: "normal",
+  risk: "medium", implementation_plan: "", rollback_plan: "",
+  window_start: "", window_end: "", implementer_id: "",
+});
+const stageDraft = ref({
+  stage: "", sequence: 1, applies_to: "change", risk: "", approver_id: "",
+});
+const decision = ref<Record<number, string>>({});
+
+async function loadChanges(): Promise<void> {
+  chgBusy.value = true; chgError.value = "";
+  try {
+    chg.value = await api("GET", "/api/v1/support/changes", { org: org() });
+  } catch (e) {
+    chgError.value = e instanceof Error ? e.message : "Could not load this.";
+  } finally { chgBusy.value = false; }
+}
+
+async function saveProblem(): Promise<void> {
+  chgBusy.value = true; chgError.value = "";
+  try {
+    await api("POST", "/api/v1/support/problems", {
+      org: org(),
+      body: { ...problemDraft.value, owner_id: problemDraft.value.owner_id
+        ? Number(problemDraft.value.owner_id) : null },
+    });
+    problemDraft.value = { id: null, title: "", statement: "", root_cause: "",
+      workaround: "", status: "investigating", owner_id: "" };
+    await loadChanges();
+  } catch (e) {
+    // The server refuses a known error with no workaround, and says why.
+    chgError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { chgBusy.value = false; }
+}
+
+async function saveChange(): Promise<void> {
+  chgBusy.value = true; chgError.value = "";
+  try {
+    await api("POST", "/api/v1/support/changes", {
+      org: org(),
+      body: {
+        ...changeDraft.value,
+        window_start: changeDraft.value.window_start || null,
+        window_end: changeDraft.value.window_end || null,
+        implementer_id: changeDraft.value.implementer_id ? Number(changeDraft.value.implementer_id) : null,
+      },
+    });
+    changeDraft.value = { id: null, title: "", description: "", change_type: "normal",
+      risk: "medium", implementation_plan: "", rollback_plan: "",
+      window_start: "", window_end: "", implementer_id: "" };
+    await loadChanges();
+  } catch (e) {
+    // The rollback plan is refused by name when it is missing.
+    chgError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { chgBusy.value = false; }
+}
+
+async function submitChange(id: number): Promise<void> {
+  chgError.value = ""; chgNote.value = "";
+  try {
+    const res = await api<{ message: string }>(
+      "POST", `/api/v1/support/changes/${id}/submit`, { org: org() },
+    );
+    chgNote.value = res.message;
+    await loadChanges();
+    setTimeout(() => { chgNote.value = ""; }, 7000);
+  } catch (e) {
+    // "No stage covers a high-risk change" comes back in full.
+    chgError.value = e instanceof ApiError ? e.message : "Could not send it for approval.";
+  }
+}
+
+async function decide(id: number, verdict: "approved" | "rejected"): Promise<void> {
+  chgError.value = "";
+  try {
+    await api("POST", `/api/v1/support/approvals/${id}`, {
+      org: org(), body: { decision: verdict, comment: decision.value[id] || null },
+    });
+    delete decision.value[id];
+    await loadChanges();
+  } catch (e) {
+    // A rejection with no reason is refused, and says so.
+    chgError.value = e instanceof ApiError ? e.message : "Could not record that.";
+  }
+}
+
+async function saveStage(): Promise<void> {
+  chgBusy.value = true; chgError.value = "";
+  try {
+    await api("POST", "/api/v1/support/approval-stages", {
+      org: org(),
+      body: {
+        ...stageDraft.value,
+        risk: stageDraft.value.risk || null,
+        approver_id: stageDraft.value.approver_id ? Number(stageDraft.value.approver_id) : null,
+      },
+    });
+    stageDraft.value = { stage: "", sequence: 1, applies_to: "change", risk: "", approver_id: "" };
+    await loadChanges();
+  } catch (e) {
+    chgError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save it.";
+  } finally { chgBusy.value = false; }
+}
+
 // ── Knowledge ──────────────────────────────────────────────────────────────────
 /*
  * Answers worth keeping. There was no knowledge base anywhere in the old
@@ -1286,7 +1407,7 @@ const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === o
  * only moment somebody has the context to decide it. The old module kept its
  * whitelist on a screen of its own, and it stayed empty for two years.
  */
-type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge";
+type Tab = "queue" | "desk" | "held" | "settings" | "sla" | "workspace" | "contracts" | "catalogue" | "knowledge" | "changes";
 const tab = ref<Tab>("queue");
 
 interface Held {
@@ -1498,6 +1619,7 @@ watch(tab, (t) => {
   if (t === "contracts") void loadContracts();
   if (t === "catalogue") void loadCatalogue();
   if (t === "knowledge") void loadArticles();
+  if (t === "changes") void loadChanges();
 });
 </script>
 
@@ -1529,6 +1651,10 @@ watch(tab, (t) => {
       <button :class="['sd-tabbtn', { on: tab === 'contracts' }]" @click="tab = 'contracts'">Contract engineers</button>
       <button :class="['sd-tabbtn', { on: tab === 'catalogue' }]" @click="tab = 'catalogue'">Catalogue &amp; CSAT</button>
       <button :class="['sd-tabbtn', { on: tab === 'knowledge' }]" @click="tab = 'knowledge'">Knowledge</button>
+      <button :class="['sd-tabbtn', { on: tab === 'changes' }]" @click="tab = 'changes'">
+        Problems &amp; Changes
+        <span v-if="chg?.my_approvals?.length" class="sd-badge">{{ chg.my_approvals.length }}</span>
+      </button>
     </div>
 
     <template v-if="tab === 'queue'">
@@ -2754,6 +2880,279 @@ watch(tab, (t) => {
                   @click="saveArticle">Save</button>
         </div>
       </div>
+    </template>
+
+    <!-- ── Problems, changes and sign-off ──────────────────────────────────── -->
+    <template v-if="tab === 'changes'">
+      <p v-if="chgError" class="error">{{ chgError }}</p>
+      <p v-if="chgNote" class="sd-ok">{{ chgNote }}</p>
+
+      <div class="sd-tabs" style="margin-bottom:12px">
+        <button :class="['sd-tabbtn', { on: chgPane === 'changes' }]" @click="chgPane = 'changes'">Changes</button>
+        <button :class="['sd-tabbtn', { on: chgPane === 'problems' }]" @click="chgPane = 'problems'">Problems</button>
+        <button :class="['sd-tabbtn', { on: chgPane === 'approvals' }]" @click="chgPane = 'approvals'">
+          Waiting on me
+          <span v-if="chg?.my_approvals?.length" class="sd-badge">{{ chg.my_approvals.length }}</span>
+        </button>
+        <button :class="['sd-tabbtn', { on: chgPane === 'stages' }]" @click="chgPane = 'stages'">Who signs off</button>
+      </div>
+
+      <!-- ── Changes ─────────────────────────────────────────────────────── -->
+      <template v-if="chgPane === 'changes'">
+        <!--
+          Only what is coming. A calendar showing last month's windows is a
+          list, and the question this answers is "what else is happening that
+          night".
+        -->
+        <h3 class="sd-h3">Coming up</h3>
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead><tr><th>Window</th><th>Change</th><th>Type</th><th>Risk</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr v-for="c in chg?.calendar ?? []" :key="c.id">
+                <td class="sd-mono">{{ c.window_start?.slice(0, 16).replace("T", " ") }}</td>
+                <td><span class="sd-mono">{{ c.reference }}</span> {{ c.title }}</td>
+                <td class="sd-meta">{{ c.change_type }}</td>
+                <td>
+                  <span class="sd-pill" :class="c.risk === 'high' ? 'sd-clock-bad'
+                    : c.risk === 'medium' ? 'sd-clock-warn' : 'sd-clock-ok'">{{ c.risk }}</span>
+                </td>
+                <td class="sd-meta">{{ c.status }}</td>
+              </tr>
+              <tr v-if="!chg?.calendar?.length"><td colspan="5" class="sd-empty">Nothing scheduled.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3 class="sd-h3">All changes</h3>
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead><tr><th>Change</th><th>Type</th><th>Risk</th><th>Status</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="c in chg?.changes ?? []" :key="c.id">
+                <td>
+                  <span class="sd-mono">{{ c.reference }}</span>
+                  <span class="sd-subject">{{ c.title }}</span>
+                  <span v-if="c.problem" class="sd-meta">from {{ c.problem.reference }}</span>
+                </td>
+                <td class="sd-meta">{{ c.change_type }}</td>
+                <td class="sd-meta">{{ c.risk }}</td>
+                <td><span class="sd-pill sd-off-pill">{{ c.status }}</span></td>
+                <td class="text-right">
+                  <button v-if="c.status === 'draft'" class="btn btn-secondary btn-sm"
+                          style="font-size:.72rem" @click="submitChange(c.id)">Send for approval</button>
+                </td>
+              </tr>
+              <tr v-if="!chg?.changes?.length"><td colspan="5" class="sd-empty">No changes raised.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sd-card sd-pad">
+          <h4 class="sd-h4">Raise a change</h4>
+          <div class="sd-grid">
+            <label class="sd-field sd-add-wide"><span>What is changing</span>
+              <input v-model="changeDraft.title" class="control" placeholder="Replace the core switch" />
+            </label>
+            <label class="sd-field"><span>Type</span>
+              <select v-model="changeDraft.change_type" class="control">
+                <option value="standard">Standard — routine, pre-approved</option>
+                <option value="normal">Normal — needs approval first</option>
+                <option value="emergency">Emergency — done first, approved after</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Risk</span>
+              <select v-model="changeDraft.risk" class="control">
+                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Window opens</span>
+              <input v-model="changeDraft.window_start" class="control" type="datetime-local" />
+            </label>
+            <label class="sd-field"><span>Window closes</span>
+              <input v-model="changeDraft.window_end" class="control" type="datetime-local" />
+            </label>
+          </div>
+          <label class="sd-field"><span>How it will be done</span>
+            <textarea v-model="changeDraft.implementation_plan" class="control" rows="3"></textarea>
+          </label>
+          <label class="sd-field"><span>What we do if it goes wrong</span>
+            <textarea v-model="changeDraft.rollback_plan" class="control" rows="3"
+                      placeholder="Required on anything but a standard change."></textarea>
+          </label>
+          <!--
+            Said plainly, because it is the field people skip and the one that
+            matters at 2am.
+          -->
+          <p class="sd-note">
+            If there is genuinely no way back, say so here. That is a fact worth somebody reading
+            before they approve it — not a reason to leave the box empty.
+          </p>
+          <div class="sd-right">
+            <button class="btn btn-primary btn-sm" :disabled="chgBusy || !changeDraft.title.trim()"
+                    @click="saveChange">Save as draft</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── Problems ────────────────────────────────────────────────────── -->
+      <template v-else-if="chgPane === 'problems'">
+        <p class="sd-lede">
+          The cause behind repeated incidents. The old system had "Problem" as a ticket type, which
+          made a cause into one more thing in the queue — forty tickets about one failing switch
+          were forty separate pieces of work, and nothing recorded that they shared a cause.
+        </p>
+
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead><tr><th>Problem</th><th>Status</th><th class="text-right">Tickets</th><th>Workaround</th></tr></thead>
+            <tbody>
+              <tr v-for="p in chg?.problems ?? []" :key="p.id">
+                <td>
+                  <span class="sd-mono">{{ p.reference }}</span>
+                  <span class="sd-subject">{{ p.title }}</span>
+                </td>
+                <td>
+                  <span class="sd-pill" :class="p.status === 'known_error' ? 'sd-warn-pill'
+                    : p.status === 'resolved' ? 'sd-ok-pill' : 'sd-off-pill'">{{ p.status }}</span>
+                </td>
+                <td class="text-right sd-mono">{{ p.links_count }}</td>
+                <td class="sd-meta">{{ p.workaround ? "Yes" : "—" }}</td>
+              </tr>
+              <tr v-if="!chg?.problems?.length"><td colspan="4" class="sd-empty">No problems recorded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sd-card sd-pad">
+          <h4 class="sd-h4">Record a problem</h4>
+          <label class="sd-field"><span>What keeps happening</span>
+            <input v-model="problemDraft.title" class="control" placeholder="Core switch drops packets under load" />
+          </label>
+          <div class="sd-grid">
+            <label class="sd-field"><span>Status</span>
+              <select v-model="problemDraft.status" class="control">
+                <option value="investigating">Investigating</option>
+                <option value="known_error">Known error — cause understood, fix not yet possible</option>
+                <option value="resolved">Resolved</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Owner</span>
+              <select v-model="problemDraft.owner_id" class="control">
+                <option value="">Nobody yet</option>
+                <option v-for="u in staff" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+              </select>
+            </label>
+          </div>
+          <label class="sd-field"><span>Root cause</span>
+            <textarea v-model="problemDraft.root_cause" class="control" rows="2"></textarea>
+          </label>
+          <label class="sd-field"><span>Workaround</span>
+            <textarea v-model="problemDraft.workaround" class="control" rows="2"
+                      placeholder="What the desk should tell people meanwhile."></textarea>
+          </label>
+          <p class="sd-note">
+            A known error needs a workaround. The status tells the desk there is something to tell
+            the customer — if there is not, it is still being investigated.
+          </p>
+          <div class="sd-right">
+            <button class="btn btn-primary btn-sm" :disabled="chgBusy || !problemDraft.title.trim()"
+                    @click="saveProblem">Save</button>
+          </div>
+        </div>
+      </template>
+
+      <!-- ── Waiting on me ───────────────────────────────────────────────── -->
+      <template v-else-if="chgPane === 'approvals'">
+        <p class="sd-lede">
+          Only what is actually next. Being shown a later stage invites deciding it before the
+          person ahead of you has seen it.
+        </p>
+
+        <ul class="sd-held">
+          <li v-for="a in chg?.my_approvals ?? []" :key="a.id" class="sd-held-item">
+            <div class="sd-held-main">
+              <div class="sd-held-from">
+                <strong>{{ a.approvable?.reference ?? "—" }}</strong>
+                <span class="sd-meta">{{ a.stage }} · stage {{ a.sequence }}</span>
+              </div>
+              <div class="sd-held-subject">{{ a.approvable?.title ?? a.approvable?.subject }}</div>
+              <p v-if="a.approvable?.rollback_plan" class="sd-held-preview">
+                Rollback: {{ a.approvable.rollback_plan }}
+              </p>
+              <input v-model="decision[a.id]" class="control" style="margin-top:6px"
+                     placeholder="Your reason — required if you reject it" />
+            </div>
+            <div class="sd-held-actions">
+              <button class="btn btn-primary btn-sm" @click="decide(a.id, 'approved')">Approve</button>
+              <button class="btn btn-secondary btn-sm" @click="decide(a.id, 'rejected')">Reject</button>
+            </div>
+          </li>
+          <li v-if="!chg?.my_approvals?.length" class="sd-empty">Nothing waiting on you.</li>
+        </ul>
+      </template>
+
+      <!-- ── Who signs off ───────────────────────────────────────────────── -->
+      <template v-else>
+        <p class="sd-lede">
+          Stages are asked in order, one at a time. A change with no stage covering it is refused
+          rather than left waiting for a decision nobody was asked to make.
+        </p>
+
+        <div class="sd-card table-scroll">
+          <table class="sd-table">
+            <thead><tr><th>#</th><th>Stage</th><th>Applies to</th><th>Only when</th><th>Approver</th></tr></thead>
+            <tbody>
+              <tr v-for="st in chg?.stages ?? []" :key="st.id">
+                <td class="sd-mono">{{ st.sequence }}</td>
+                <td>{{ st.stage }}</td>
+                <td class="sd-meta">{{ st.applies_to === "change" ? "Changes" : "Service requests" }}</td>
+                <td class="sd-meta">{{ st.risk ? st.risk + " risk" : "always" }}</td>
+                <td class="sd-meta">{{ st.approver?.name ?? "Anyone who can approve" }}</td>
+              </tr>
+              <tr v-if="!chg?.stages?.length">
+                <td colspan="5" class="sd-empty">
+                  No stages. Changes cannot be sent for approval until at least one exists.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="sd-card sd-pad">
+          <h4 class="sd-h4">Add a stage</h4>
+          <div class="sd-grid">
+            <label class="sd-field"><span>Name</span>
+              <input v-model="stageDraft.stage" class="control" placeholder="Technical review" />
+            </label>
+            <label class="sd-field"><span>Order</span>
+              <input v-model.number="stageDraft.sequence" class="control" type="number" min="1" />
+            </label>
+            <label class="sd-field"><span>Applies to</span>
+              <select v-model="stageDraft.applies_to" class="control">
+                <option value="change">Changes</option>
+                <option value="service_request">Service requests</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Only when risk is</span>
+              <select v-model="stageDraft.risk" class="control">
+                <option value="">Any risk</option>
+                <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+              </select>
+            </label>
+            <label class="sd-field"><span>Approver</span>
+              <select v-model="stageDraft.approver_id" class="control">
+                <option value="">Anyone who can approve</option>
+                <option v-for="u in staff" :key="u.id" :value="String(u.id)">{{ u.name }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="sd-right">
+            <button class="btn btn-primary btn-sm" :disabled="chgBusy || !stageDraft.stage.trim()"
+                    @click="saveStage">Add stage</button>
+          </div>
+        </div>
+      </template>
     </template>
 
     <!-- ── Ticket ──────────────────────────────────────────────────────────── -->

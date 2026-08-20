@@ -230,6 +230,16 @@ class PortalController extends Controller
             ]);
         }
 
+        /*
+         * A service marked as needing approval now actually raises one. It was
+         * a flag the portal told people about and nothing acted on — which is
+         * exactly what "Awaiting Approval" was in the old module.
+         */
+        if ($service->needs_approval) {
+            app(\App\Services\Support\ApprovalService::class)
+                ->requestForTicket($ticket, $service->id);
+        }
+
         // Their own link to the ticket they just raised.
         $issued = PortalToken::issue([
             'organization_id'   => $token->organization_id,
