@@ -27,7 +27,29 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        /*
+         * A default for the organisation in context, so reading it never throws.
+         *
+         * `ResolveOrganizationContext` binds this with `instance()`, and for
+         * somebody operating across the whole group it binds **null** — which
+         * means no filter. But the container tests for a bound instance with
+         * `isset()`, and `isset()` is false for null. So a key that was
+         * deliberately bound to null looks unbound, and `app('current.
+         * organization_id')` tries to resolve it as a class and throws
+         * `BindingResolutionException`.
+         *
+         * Two hundred and seventeen places read this key without guarding, so
+         * the fix belongs here rather than at each of them: a default binding
+         * is consulted only when no instance is set, which is exactly the case
+         * that was breaking. A real organisation id still short-circuits to the
+         * instance and never reaches this.
+         *
+         * The symptom was a group administrator opening any list and getting a
+         * 500 — the one account that is meant to see everything was the only
+         * one that could not.
+         */
+        $this->app->bind('current.organization_id', fn () => null);
+        $this->app->bind('current.organization', fn () => null);
     }
 
     public function boot(): void
