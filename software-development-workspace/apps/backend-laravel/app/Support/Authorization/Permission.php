@@ -33,6 +33,18 @@ final class Permission
     public const EMPLOYEES_EXIT      = 'employees.exit';
 
     /*
+     * Moving somebody to another company in the group.
+     *
+     * Its own permission because it is the one action that crosses a tenancy
+     * boundary — the boundary everything else in this application is built to
+     * respect. It changes whose payroll a person is on, withdraws their access
+     * to one organisation and lists them in another, and it is required in
+     * *both* organisations: one company should not be able to push people into
+     * another, nor pull them out of it.
+     */
+    public const EMPLOYEES_TRANSFER  = 'employees.transfer';
+
+    /*
      * Salary, national ID, KRA PIN, blood group, disabilities.
      *
      * Separate from `employees.view` because seeing that somebody works here is
@@ -350,7 +362,7 @@ final class Permission
             'employees'     => [
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,
                 self::EMPLOYEES_CREATE, self::EMPLOYEES_UPDATE, self::EMPLOYEES_DELETE,
-                self::EMPLOYEES_EXIT, self::EMPLOYEES_VIEW_SENSITIVE,
+                self::EMPLOYEES_EXIT, self::EMPLOYEES_TRANSFER, self::EMPLOYEES_VIEW_SENSITIVE,
             ],
             'attendance'    => [
                 self::ATTENDANCE_VIEW, self::ATTENDANCE_VIEW_OWN, self::ATTENDANCE_VIEW_TEAM,

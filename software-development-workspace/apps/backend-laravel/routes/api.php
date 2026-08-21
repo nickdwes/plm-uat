@@ -5,6 +5,7 @@ use App\Http\Controllers\HR\ComplianceController;
 use App\Http\Controllers\Benefits\BenefitController;
 use App\Http\Controllers\HR\DocumentController;
 use App\Http\Controllers\HR\EmployeeController;
+use App\Http\Controllers\HR\EmployeeMovementController;
 use App\Http\Controllers\HR\EmployeeEmergencyContactController;
 use App\Http\Controllers\HR\EmployeeDependentController;
 use App\Http\Controllers\HR\EmployeeVehicleController;
@@ -225,6 +226,15 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::delete('/{employee}/qualifications/{qualification}', [EmployeeController::class, 'destroyQualification']);
 
         // External secondments
+        /*
+         * Moving somebody between the organisations in the group. The preflight
+         * is a separate read because it is asked before anybody commits to
+         * anything — usually several times, while the holdings are cleared.
+         */
+        Route::get('/{employee}/movements',           [EmployeeMovementController::class, 'index']);
+        Route::get('/{employee}/movements/preflight', [EmployeeMovementController::class, 'preflight']);
+        Route::post('/{employee}/movements',          [EmployeeMovementController::class, 'store']);
+
         Route::post('/{employee}/secondments',               [EmployeeController::class, 'storeSecondment']);
         Route::delete('/{employee}/secondments/{secondment}', [EmployeeController::class, 'destroySecondment']);
 

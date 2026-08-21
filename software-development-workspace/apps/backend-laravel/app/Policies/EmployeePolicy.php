@@ -80,6 +80,23 @@ class EmployeePolicy extends BasePolicy
     }
 
     /**
+     * Moving somebody to another company in the group.
+     *
+     * Held in *both* organisations, checked by the caller. It is the one action
+     * that crosses a tenancy boundary, and holding it in the destination alone
+     * would let one company help itself to another's staff; holding it in the
+     * origin alone would let a company post people into an organisation that
+     * has never agreed to employ them.
+     *
+     * Group HR passes on the role rather than the permission, because somebody
+     * who oversees every organisation already holds both ends by definition.
+     */
+    public function transfer(User $user, mixed $employee = null): bool
+    {
+        return $this->can($user, Permission::EMPLOYEES_TRANSFER) || $this->isGlobalHR($user);
+    }
+
+    /**
      * Deleting is not exiting.
      *
      * An employee who has left is exited and kept — payroll, tax and any

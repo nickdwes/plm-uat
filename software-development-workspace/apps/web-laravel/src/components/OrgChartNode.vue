@@ -18,6 +18,10 @@ export interface ChartNode {
   email: string | null;
   photo: string | null;
   is_shared: boolean;
+  /** Not the organisation that employs them. */
+  is_visiting?: boolean;
+  /** A second manager, inside this organisation. */
+  has_dotted_line?: boolean;
   reports: number;
   children: ChartNode[];
 }
@@ -53,7 +57,7 @@ const matches = computed(() => {
   <li class="oc-node">
     <div class="oc-card-wrap">
       <button
-        :class="['oc-card', { match: matches, shared: node.is_shared }]"
+        :class="['oc-card', { match: matches, shared: node.is_shared || node.is_visiting }]"
         @click="emit('pick', node)"
       >
         <span class="oc-avatar" aria-hidden="true">
@@ -66,11 +70,18 @@ const matches = computed(() => {
           <span class="oc-title">{{ node.title ?? "No designation" }}</span>
           <span v-if="node.department" class="oc-dept">{{ node.department }}</span>
           <!--
-            A seconded person appears on their home chart and works somewhere
-            else part of the week. Marking it here stops the chart reading as a
-            full-time headcount it is not.
+            Three arrangements that were one badge until now, and read as the
+            same thing when they are not.
+
+            Visiting — this is not the company that employs them. Shared — they
+            hold a placement somewhere else and are here part of the week.
+            A dotted line — a second manager, inside this one organisation,
+            which is not a cross-company arrangement at all. Forty-nine people
+            here were badged "shared / seconded" for having one.
           -->
-          <span v-if="node.is_shared" class="oc-shared">Shared / seconded</span>
+          <span v-if="node.is_visiting" class="oc-shared">Visiting</span>
+          <span v-else-if="node.is_shared" class="oc-shared">Shared / seconded</span>
+          <span v-else-if="node.has_dotted_line" class="oc-dotted">Second reporting line</span>
         </span>
       </button>
 
@@ -170,6 +181,9 @@ const matches = computed(() => {
 .oc-dept { font-size: .7rem; color: var(--color-text-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-shared { font-size: .66rem; color: var(--color-brand-base); margin-top: 2px; }
+/* Quieter than a placement: it is a fact about who they answer to, not about
+   which company they work for. */
+.oc-dotted { font-size: .66rem; color: var(--color-text-muted); margin-top: 2px; }
 
 .oc-toggle {
   position: absolute;

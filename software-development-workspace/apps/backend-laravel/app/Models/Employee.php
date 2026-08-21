@@ -64,6 +64,7 @@ class Employee extends Model
         'date_exited',
         'exit_reason',
         'is_shared',
+        'has_dotted_line',
         // Extended personal / health
         'linkedin_profile',
         'residential_address',
@@ -108,6 +109,7 @@ class Employee extends Model
         'contract_end_date'   => 'date',
         'date_exited'         => 'date',
         'is_shared'           => 'boolean',
+        'has_dotted_line'     => 'boolean',
         'basic_salary'        => 'decimal:2',
         'house_allowance'     => 'decimal:2',
         'transport_allowance' => 'decimal:2',

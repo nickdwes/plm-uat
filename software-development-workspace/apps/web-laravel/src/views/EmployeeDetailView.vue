@@ -198,6 +198,84 @@ const qualForm = reactive({
   certificate_number: "", notes: "",
 });
 
+// ── Moving somebody to another company in the group ───────────────────────────
+/*
+ * The preflight comes first, always.
+ *
+ * Around twenty-five places in the application validate an assignee against
+ * their primary organisation, so the moment somebody's changes, every open task
+ * and contract in their old company that names them stops being saveable. The
+ * order has to be reassign, then move — and nobody will follow that order
+ * unless the screen shows them what to reassign.
+ */
+interface PreflightItem {
+  key: string; label: string; count: number; why: string; blocking: boolean;
+}
+interface Preflight { blocking: PreflightItem[]; warnings: PreflightItem[]; clear: boolean }
+
+const showMove   = ref(false);
+const moveSaving = ref(false);
+const moveError  = ref("");
+const moveNote   = ref("");
+const preflight  = ref<Preflight | null>(null);
+const movements  = ref<any[]>([]);
+
+const moveForm = reactive({
+  kind: "transfer" as "transfer" | "secondment",
+  organization_id: null as number | null,
+  effective_on: new Date().toISOString().slice(0, 10),
+  reason: "",
+  force: false,
+});
+
+async function openMove(): Promise<void> {
+  showMove.value = true;
+  moveError.value = "";
+  moveNote.value = "";
+  preflight.value = null;
+
+  try {
+    const res = await api<{ data: Preflight }>(
+      "GET", `/api/v1/employees/${props.id}/movements/preflight`, { org: org() });
+    preflight.value = res.data;
+  } catch (e) {
+    moveError.value = e instanceof Error ? e.message : "Could not check what is holding them.";
+  }
+}
+
+async function loadMovements(): Promise<void> {
+  try {
+    const res = await api<{ data: any[] }>(
+      "GET", `/api/v1/employees/${props.id}/movements`, { org: org() });
+    movements.value = res.data;
+  } catch { /* history is decoration; its absence should not break the tab */ }
+}
+
+async function submitMove(): Promise<void> {
+  if (!moveForm.organization_id) { moveError.value = "Pick an organisation."; return; }
+
+  moveSaving.value = true;
+  moveError.value = "";
+
+  try {
+    const res = await api<{ message: string }>(
+      "POST", `/api/v1/employees/${props.id}/movements`,
+      { org: org(), body: { ...moveForm } });
+
+    moveNote.value = res.message;
+    showMove.value = false;
+    await Promise.all([load(), loadMovements()]);
+  } catch (e) {
+    const err = e as any;
+    // 409 means the world is not ready, not that a field is wrong — so the
+    // holdings come back with it and are shown rather than a bare message.
+    if (err?.status === 409 && err?.body?.preflight) preflight.value = err.body.preflight;
+    moveError.value = err?.message ?? "Could not move them.";
+  } finally {
+    moveSaving.value = false;
+  }
+}
+
 // Secondments
 const showSecondmentForm = ref(false);
 const secondmentSaving   = ref(false);
@@ -496,7 +574,12 @@ function qualTypeBadgeColor(type: string): string {
   return { degree: "#3b82f6", diploma: "#8b5cf6", certificate: "#10b981", professional: "#f59e0b" }[type] ?? "#64748b";
 }
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  // History only, and quietly — it is the one thing on this screen that is
+  // usually empty, and a failure to fetch it should not block the record.
+  void loadMovements();
+});
 </script>
 
 <template>
@@ -931,6 +1014,117 @@ onMounted(load);
             </div>
           </div>
           <p v-else-if="!showQualForm" class="ed-empty-hint">No qualifications or certifications recorded.</p>
+        </div>
+
+        <!-- ── Organisation ──────────────────────────────────────────────── -->
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Organisation</h3>
+            <button v-if="hasSensitive" class="btn btn-outline btn-sm" @click="openMove()">
+              Move to another organisation
+            </button>
+          </div>
+
+          <p v-if="moveNote" class="ed-ok">{{ moveNote }}</p>
+
+          <dl class="ed-kv">
+            <div><dt>Employed by</dt><dd>{{ employee?.primary_organization?.name ?? "—" }}</dd></div>
+          </dl>
+
+          <!-- Where they have been. Absent until somebody moves, rather than an
+               empty heading on every employee in the company. -->
+          <template v-if="movements.length">
+            <h4 class="ed-form-label" style="margin-top:14px">Movement history</h4>
+            <ul class="ed-moves">
+              <li v-for="m in movements" :key="m.id">
+                <span class="ed-move-when">{{ m.effective_on }}</span>
+                <span>
+                  {{ m.kind === "transfer" ? "Transferred" : m.kind === "return" ? "Returned" : "Placed" }}
+                  from <strong>{{ m.from?.name }}</strong> to <strong>{{ m.to?.name }}</strong>
+                </span>
+                <span v-if="m.reason" class="ed-move-why">{{ m.reason }}</span>
+              </li>
+            </ul>
+          </template>
+
+          <!-- The move itself: the check first, the form second. -->
+          <div v-if="showMove" class="ed-sub-form" style="margin-top:14px">
+            <p v-if="moveError" class="error" style="margin-bottom:8px">{{ moveError }}</p>
+
+            <p v-if="!preflight" class="ed-muted">Checking what still depends on them…</p>
+
+            <template v-else>
+              <!--
+                What is holding them where they are. Shown before anything is
+                chosen, because the useful order is to clear these first — an
+                open task in the old organisation cannot be re-saved once its
+                assignee works somewhere else.
+              -->
+              <div v-if="preflight.blocking.length || preflight.warnings.length" class="ed-preflight">
+                <p class="ed-form-label" style="margin:0 0 6px">
+                  Still depending on them in {{ employee?.primary_organization?.name }}
+                </p>
+                <ul>
+                  <li v-for="i in preflight.blocking" :key="i.key" class="blocking">
+                    <strong>{{ i.count }} — {{ i.label }}</strong>
+                    <span>{{ i.why }}</span>
+                  </li>
+                  <li v-for="i in preflight.warnings" :key="i.key">
+                    <strong>{{ i.count }} — {{ i.label }}</strong>
+                    <span>{{ i.why }}</span>
+                  </li>
+                </ul>
+              </div>
+              <p v-else class="ed-ok" style="margin-bottom:10px">
+                Nothing in {{ employee?.primary_organization?.name }} still depends on them.
+              </p>
+
+              <div class="ed-comp-form-grid">
+                <div>
+                  <label class="ed-form-label">Kind *</label>
+                  <select v-model="moveForm.kind" class="input">
+                    <!-- Two outcomes of one thing, said plainly enough that
+                         nobody picks the wrong one. -->
+                    <option value="transfer">Transfer — they change employer</option>
+                    <option value="secondment">Secondment — they stay on this payroll</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="ed-form-label">Organisation *</label>
+                  <select v-model="moveForm.organization_id" class="input">
+                    <option :value="null">Select organisation…</option>
+                    <option v-for="o in secondableOrgs" :key="o.id" :value="o.id">{{ o.name }}</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="ed-form-label">Effective from *</label>
+                  <input v-model="moveForm.effective_on" type="date" class="input" />
+                </div>
+                <div style="grid-column:1/-1">
+                  <label class="ed-form-label">Reason</label>
+                  <input v-model="moveForm.reason" class="input"
+                         placeholder="Why they are moving — read back months later" />
+                </div>
+              </div>
+
+              <label v-if="moveForm.kind === 'transfer' && preflight && !preflight.clear"
+                     class="ed-force">
+                <input v-model="moveForm.force" type="checkbox" />
+                <span>
+                  Move them anyway. The things above stay behind in
+                  {{ employee?.primary_organization?.name }} and somebody will have to deal with
+                  them there.
+                </span>
+              </label>
+
+              <div class="ed-sub-actions">
+                <button class="btn btn-ghost btn-sm" @click="showMove = false">Cancel</button>
+                <button class="btn btn-primary btn-sm" :disabled="moveSaving" @click="submitMove()">
+                  {{ moveSaving ? "Moving…" : "Move" }}
+                </button>
+              </div>
+            </template>
+          </div>
         </div>
 
         <!-- Secondments / Placements -->
@@ -1516,4 +1710,26 @@ onMounted(load);
   .ed-profile-card { flex-direction: column; }
   .ed-ec-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Moving between organisations ─────────────────────────────────────────── */
+.ed-moves { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ed-moves li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 13px; }
+.ed-move-when { font-family: ui-monospace, monospace; font-size: 12px; color: var(--color-text-light); width: 6.5rem; }
+.ed-move-why { color: var(--color-text-muted); font-size: 12px; flex-basis: 100%; padding-left: 6.5rem; }
+
+/*
+ * The holdings list. Blocking items are marked, but everything is shown —
+ * a warning somebody cannot see is a warning they will discover in a month.
+ */
+.ed-preflight { margin-bottom: 12px; padding: 10px 12px; border-radius: 8px;
+  background: var(--color-surface-sunken); border: 1px solid var(--color-border); }
+.ed-preflight ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.ed-preflight li { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; }
+.ed-preflight li span { color: var(--color-text-muted); }
+.ed-preflight li.blocking strong { color: var(--color-danger-text, #b91c1c); }
+
+.ed-force { display: flex; gap: 8px; align-items: flex-start; margin: 10px 0 4px;
+  font-size: 12.5px; color: var(--color-text-muted); }
+.ed-force input { margin-top: 2px; }
+.ed-muted { color: var(--color-text-muted); font-size: 13px; }
 </style>

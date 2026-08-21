@@ -70,6 +70,9 @@ class EmployeeResource extends JsonResource
             'date_exited'             => $this->date_exited?->toDateString(),
             'exit_reason'             => $this->exit_reason,
             'is_shared'               => $this->is_shared,
+            // A second manager inside one organisation, which is not the same
+            // thing as working across two.
+            'has_dotted_line'         => (bool) $this->has_dotted_line,
 
             /*
              * Placed here rather than employed here.

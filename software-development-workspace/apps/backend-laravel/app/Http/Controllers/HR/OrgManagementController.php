@@ -431,7 +431,7 @@ class OrgManagementController extends Controller
             ->get([
                 'id', 'employee_number', 'first_name', 'last_name', 'reports_to',
                 'designation_id', 'department_id', 'work_email', 'photo_url', 'is_shared',
-                'primary_organization_id',
+                'has_dotted_line', 'primary_organization_id',
             ]);
 
         \App\Models\Employee::attachPlacements($people, $orgId);
@@ -494,11 +494,18 @@ class OrgManagementController extends Controller
                 'department'  => $employee->host_department ?? $employee->department?->name,
                 'email'       => $employee->work_email,
                 'photo'       => $employee->photo_url,
-                'is_shared'   => (bool) $employee->is_shared,
-                // Placed here rather than employed here. Different from
-                // is_shared, which says somebody works across organisations
-                // without saying whose payroll they are on.
-                'is_visiting' => $employee->isVisiting($orgId),
+                /*
+                 * Three different facts that were previously one badge.
+                 *
+                 * `is_shared` — they hold a placement in another organisation.
+                 * `is_visiting` — this is not the organisation that employs
+                 * them. `has_dotted_line` — a second manager, inside one
+                 * organisation, which is not a cross-company arrangement at all
+                 * and is what forty-nine people here actually have.
+                 */
+                'is_shared'       => (bool) $employee->is_shared,
+                'is_visiting'     => $employee->isVisiting($orgId),
+                'has_dotted_line' => (bool) $employee->has_dotted_line,
                 // The whole subtree, so a collapsed node can say what it hides.
                 'reports'     => $this->countDescendants($children),
                 'children'    => $children,

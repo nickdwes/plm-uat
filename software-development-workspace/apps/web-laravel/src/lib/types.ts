@@ -115,6 +115,8 @@ export interface Employee {
   full_name: string;
   display_name: string;
   primary_organization_id: number;
+  /** Sent when the relation is loaded — the organisation that employs them. */
+  primary_organization?: { id: number; name: string; slug: string } | null;
   department: DeptRef | null;
   designation: DesignationRef | null;
   job_grade: JobGradeRef | null;
@@ -123,6 +125,8 @@ export interface Employee {
   is_shared: boolean;
   /** Placed in the organisation asking, rather than employed by it. */
   is_visiting?: boolean;
+  /** A second manager inside one organisation — not a cross-company placement. */
+  has_dotted_line?: boolean;
   /** The organisation that employs them — sent only when it is not this one. */
   home_organization?: string | null;
   /** The department, title and share of the week their placement gives them here. */
