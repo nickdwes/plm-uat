@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug } from "../stores/auth";
 import type { TeamLocationEntry, WorkLocationType } from "../lib/types";
@@ -129,9 +129,44 @@ const typeSegs = computed((): DonutSeg[] =>
 // ── Line chart ────────────────────────────────────────────────────────────────
 
 const CPAD = { top: 20, right: 16, bottom: 52, left: 52 };
-const CW = 560; const CH = 230;
-const CIW = CW - CPAD.left - CPAD.right;
+const CH = 230;
 const CIH = CH - CPAD.top - CPAD.bottom;
+
+/*
+ * The viewBox width tracks the card; its height never does.
+ *
+ * This was a fixed 560x230 box on an svg set to width:100% with no height,
+ * which means the browser derives the height from the width to preserve the
+ * ratio. On a full-width dashboard card that is about 1750px across, and a
+ * 230-tall chart rendered itself 720px tall — a single data point occupying
+ * most of a screen.
+ *
+ * Capping the height alone would not fix it: with preserveAspectRatio the
+ * drawing would shrink to fit and sit in the middle of the card with empty
+ * gutters either side. Measuring instead keeps the grid spanning the full
+ * width, the height constant, and the labels at their intended size rather
+ * than scaled up with everything else.
+ */
+const chartWrap = ref<HTMLElement | null>(null);
+const CW = ref(560);
+const CIW = computed(() => CW.value - CPAD.left - CPAD.right);
+
+let chartResize: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (!chartWrap.value || typeof ResizeObserver === "undefined") return;
+  chartResize = new ResizeObserver(([entry]) => {
+    // A floor keeps the axis labels from colliding once the card is narrow
+    // enough that the wrapper starts scrolling instead.
+    CW.value = Math.max(360, Math.round(entry.contentRect.width));
+  });
+  chartResize.observe(chartWrap.value);
+});
+
+onBeforeUnmount(() => {
+  chartResize?.disconnect();
+  chartResize = null;
+});
 
 const chartYMax = computed(() => {
   const max = Math.max(1, ...(summary.value?.monthlyHires?.map(h => h.count) ?? [0]));
@@ -152,7 +187,7 @@ const chartPoints = computed(() => {
   if (!hires.length) return [];
   const ymax = chartYMax.value;
   return hires.map((h, i) => ({
-    x: CPAD.left + (hires.length === 1 ? CIW / 2 : (i / (hires.length - 1)) * CIW),
+    x: CPAD.left + (hires.length === 1 ? CIW.value / 2 : (i / (hires.length - 1)) * CIW.value),
     y: CPAD.top  + CIH - (h.count / ymax) * CIH,
     label: formatMonth(h.month),
     count: h.count,
@@ -465,7 +500,7 @@ function formatMonth(ym: string): string {
               <h3 class="card-title">Monthly Hiring Trend</h3>
               <span class="trend-period-badge">{{ summary.monthlyHires.length }} months</span>
             </div>
-            <div class="trend-chart-wrap">
+            <div ref="chartWrap" class="trend-chart-wrap">
               <svg :viewBox="`0 0 ${CW} ${CH}`" class="trend-svg" preserveAspectRatio="xMidYMid meet">
                 <!-- Grid lines -->
                 <line
@@ -490,7 +525,7 @@ function formatMonth(ym: string): string {
                   :x="12" :y="CPAD.top + CIH / 2"
                   class="chart-axis-label chart-axis-rotate"
                   text-anchor="middle"
-                  transform="rotate(-90 12 110)"
+                  :transform="`rotate(-90 12 ${CPAD.top + CIH / 2})`"
                 >New Hires</text>
                 <!-- Area fill -->
                 <path :d="chartAreaPath" class="chart-area"/>
@@ -830,7 +865,9 @@ function formatMonth(ym: string): string {
 }
 
 .trend-chart-wrap { overflow-x: auto; }
-.trend-svg        { width: 100%; min-width: 300px; display: block; }
+/* Height is fixed and the viewBox width is measured to match the card, so the
+   chart keeps one size on a phone and on a 1440 display. */
+.trend-svg        { width: 100%; min-width: 360px; height: 230px; display: block; }
 
 .chart-axis-label {
   font-size: 10px; fill: var(--color-text-muted);
