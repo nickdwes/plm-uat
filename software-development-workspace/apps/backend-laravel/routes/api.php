@@ -893,6 +893,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     // ── Leave ─────────────────────────────────────────────────────────────────
     Route::prefix('leave')->group(function () {
         Route::get('/balance',             [LeaveController::class, 'balance']);   // before /{id} to prevent shadowing
+        Route::get('/summary',             [LeaveController::class, 'summary']);   // likewise — /{id} would swallow it
         Route::post('/calculate',          [LeaveController::class, 'calculate']); // preview day count
         Route::get('/',                    [LeaveController::class, 'index']);
         Route::post('/',                   [LeaveController::class, 'store']);
@@ -910,6 +911,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{leaveRequest}/handover',   [LeaveHandoverController::class, 'store']);
         Route::delete('/{leaveRequest}/handover/{handover}', [LeaveHandoverController::class, 'destroy']);
         Route::post('/{leaveRequest}/reject',  [LeaveController::class, 'reject']);
+
+        // Supporting paperwork. Downloads stream through DocumentVault after
+        // the policy has run; no storage path ever leaves the server.
+        Route::get('/{leaveRequest}/attachments',  [\App\Http\Controllers\Leave\LeaveAttachmentController::class, 'index']);
+        Route::post('/{leaveRequest}/attachments', [\App\Http\Controllers\Leave\LeaveAttachmentController::class, 'store']);
+        Route::get('/{leaveRequest}/attachments/{attachment}/download', [\App\Http\Controllers\Leave\LeaveAttachmentController::class, 'download']);
+        Route::delete('/{leaveRequest}/attachments/{attachment}',       [\App\Http\Controllers\Leave\LeaveAttachmentController::class, 'destroy']);
+
+        // The conversation, which is not the rejection reason.
+        Route::get('/{leaveRequest}/messages',  [\App\Http\Controllers\Leave\LeaveMessageController::class, 'index']);
+        Route::post('/{leaveRequest}/messages', [\App\Http\Controllers\Leave\LeaveMessageController::class, 'store']);
         Route::delete('/{leaveRequest}',   [LeaveController::class, 'destroy']);
     });
 

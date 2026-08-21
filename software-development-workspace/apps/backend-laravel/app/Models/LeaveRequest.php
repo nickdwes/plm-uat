@@ -4,7 +4,10 @@ namespace App\Models;
 
 use App\Models\Concerns\BelongsToOrganization;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\Leave\LeaveRequestAttachment;
+use App\Models\Leave\LeaveRequestMessage;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class LeaveRequest extends Model
@@ -60,6 +63,36 @@ class LeaveRequest extends Model
     public function approvedBy(): BelongsTo
     {
         return $this->belongsTo(Employee::class, 'approved_by');
+    }
+
+    /**
+     * The supporting paperwork — a sick note, a death notice.
+     *
+     * Newest last, because they are read as a pile somebody added to rather
+     * than as a feed.
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(LeaveRequestAttachment::class)->oldest();
+    }
+
+    /** What was said about it, oldest first, the way a thread reads. */
+    public function messages(): HasMany
+    {
+        return $this->hasMany(LeaveRequestMessage::class)->oldest();
+    }
+
+    /**
+     * The reference people quote at each other.
+     *
+     * There is no stored reference column and adding one would need a
+     * generator, a uniqueness guarantee and a backfill for the thousand
+     * requests already imported. The id is already unique and already
+     * permanent, so it is padded and shown rather than duplicated.
+     */
+    public function getReferenceAttribute(): string
+    {
+        return '#' . str_pad((string) $this->id, 4, '0', STR_PAD_LEFT);
     }
 
     public function scopePending($query)

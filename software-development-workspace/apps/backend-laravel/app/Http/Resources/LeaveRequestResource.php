@@ -11,6 +11,9 @@ class LeaveRequestResource extends JsonResource
     {
         return [
             'id'               => $this->id,
+            // What people quote at each other. Derived from the id rather than
+            // stored, so it needs no generator and no backfill.
+            'reference'        => $this->reference,
             'employee_id'      => $this->employee_id,
             'organization_id'  => $this->organization_id,
             'employee'         => $this->whenLoaded('employee', fn () => $this->employee ? [
@@ -42,6 +45,10 @@ class LeaveRequestResource extends JsonResource
             ]),
             'actioned_at'      => $this->actioned_at?->toISOString(),
             'created_at'       => $this->created_at?->toISOString(),
+            // Counted rather than listed: the table shows a paperclip, and the
+            // drawer asks for the files themselves when it opens.
+            'attachments_count' => $this->whenCounted('attachments'),
+            'messages_count'    => $this->whenCounted('messages'),
         ];
     }
 }

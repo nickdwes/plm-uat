@@ -29,6 +29,9 @@ class LeaveService extends BaseService
         $query = LeaveRequest::withoutGlobalScope('organization')
             ->where('organization_id', $orgId)
             ->with(['employee', 'leaveType', 'approvedBy'])
+            // Counted in the same query so a paperclip in the listing does not
+            // cost a round trip per row.
+            ->withCount(['attachments', 'messages'])
             ->latest();
 
         if (isset($filters['status'])) {
@@ -37,6 +40,45 @@ class LeaveService extends BaseService
 
         if (isset($filters['employee_id'])) {
             $query->where('employee_id', $filters['employee_id']);
+        }
+
+        /*
+         * The population the viewer is entitled to, decided by LeaveVisibility
+         * rather than here. An empty list means nobody and is honoured as
+         * such; absent means no restriction.
+         */
+        if (array_key_exists('employee_ids', $filters) && $filters['employee_ids'] !== null) {
+            $query->whereIn('employee_id', $filters['employee_ids']);
+        }
+
+        if (! empty($filters['leave_type_id'])) {
+            $query->where('leave_type_id', $filters['leave_type_id']);
+        }
+
+        /*
+         * The month stepper. Any request overlapping the month, not only those
+         * starting in it — leave running from the 28th to the 3rd belongs to
+         * both months, and showing it in neither is how a fortnight goes
+         * missing from a rota.
+         */
+        if (! empty($filters['month'])) {
+            $start = \Illuminate\Support\Carbon::parse($filters['month'] . '-01')->startOfMonth();
+            $end   = $start->copy()->endOfMonth();
+
+            $query->whereDate('from_date', '<=', $end->toDateString())
+                  ->whereDate('to_date', '>=', $start->toDateString());
+        }
+
+        // Name, employee number or work email — what the design's box offers.
+        if (! empty($filters['search'])) {
+            $term = trim($filters['search']);
+
+            $query->whereHas('employee', fn ($q) => $q
+                ->where(fn ($w) => $w
+                    ->where('first_name', 'ilike', "%{$term}%")
+                    ->orWhere('last_name', 'ilike', "%{$term}%")
+                    ->orWhere('employee_number', 'ilike', "%{$term}%")
+                    ->orWhere('work_email', 'ilike', "%{$term}%")));
         }
 
         return $query->paginate($perPage);

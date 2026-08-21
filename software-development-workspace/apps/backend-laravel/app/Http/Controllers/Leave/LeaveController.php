@@ -9,6 +9,8 @@ use App\Http\Resources\LeaveRequestResource;
 use App\Models\LeaveType;
 use App\Services\Leave\LeaveCalculatorService;
 use App\Services\Leave\LeaveService;
+use App\Services\Leave\LeaveSummary;
+use App\Services\Leave\LeaveVisibility;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -23,7 +25,15 @@ class LeaveController extends Controller
 
     /**
      * GET /api/v1/leave
-     * List leave requests for the current organisation (managers/HR see all; employees see own).
+     *
+     * One listing, three widths. An HR officer sees the organisation, a team
+     * leader sees their reports, and everybody else sees themselves —
+     * decided by LeaveVisibility so the rows, the counts and the per-request
+     * checks cannot disagree about who the viewer is.
+     *
+     * A caller may ask for a narrower scope than they hold (`?scope=own`, for
+     * the My Leaves tab) but never a wider one: the request is a preference,
+     * the permission is the ceiling.
      */
     public function index(Request $request): AnonymousResourceCollection
     {
@@ -31,16 +41,61 @@ class LeaveController extends Controller
 
         $this->authorize('viewAny', \App\Models\LeaveRequest::class);
 
-        $filters = $request->only(['status', 'employee_id']);
+        $filters = $request->only(['status', 'employee_id', 'search', 'month', 'leave_type_id']);
 
-        // Employees only ever see their own requests.
-        if (! $request->user()->isOrgHR($orgId) && ! $request->user()->isGroupAdmin()) {
-            $filters['employee_id'] = $request->user()->employee?->id;
-        }
+        $scope = $this->scopeFor($request, $orgId);
+
+        $filters['employee_ids'] = LeaveVisibility::employeeIds($scope, $request->user(), $orgId);
 
         $items = $this->service->list($orgId, $filters, $request->integer('per_page', 20));
 
-        return LeaveRequestResource::collection($items);
+        return LeaveRequestResource::collection($items)
+            ->additional(['meta' => ['scope' => $scope]]);
+    }
+
+    /**
+     * GET /api/v1/leave/summary
+     *
+     * The figures along the top of the screen, counted over the same
+     * population the listing returns.
+     */
+    public function summary(Request $request, LeaveSummary $summary): JsonResponse
+    {
+        $orgId = app('current.organization_id');
+
+        $this->authorize('viewAny', \App\Models\LeaveRequest::class);
+
+        $scope = $this->scopeFor($request, $orgId);
+
+        return response()->json([
+            'data' => $summary->for(
+                $orgId,
+                LeaveVisibility::employeeIds($scope, $request->user(), $orgId),
+            ) + ['scope' => $scope],
+        ]);
+    }
+
+    /**
+     * The scope actually applied: what was asked for, capped by what is held.
+     *
+     * Ranked so a narrower request is honoured and a wider one is quietly
+     * brought back down rather than refused — asking for more than you have
+     * is what a shared front-end does when it does not yet know who you are,
+     * not an attack worth a 403.
+     */
+    private function scopeFor(Request $request, ?int $orgId): string
+    {
+        $held = LeaveVisibility::scopeFor($request->user(), $orgId);
+
+        $asked = $request->string('scope')->toString();
+
+        $rank = [LeaveVisibility::OWN => 0, LeaveVisibility::TEAM => 1, LeaveVisibility::ALL => 2];
+
+        if (! isset($rank[$asked])) {
+            return $held;
+        }
+
+        return $rank[$asked] <= $rank[$held] ? $asked : $held;
     }
 
     /**
