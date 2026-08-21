@@ -8,6 +8,7 @@ import { excerpt, hasText, safeHtml } from "./richText";
  */
 import worstFixture from "./__fixtures__/worst-description.html?raw";
 import wordPasteFixture from "./__fixtures__/word-paste.html?raw";
+import outlookFixture from "./__fixtures__/outlook-email.html?raw";
 
 /**
  * The sanitiser between imported content and the page.
@@ -204,8 +205,58 @@ describe("against the real imported content", () => {
     expect(out.length).toBeLessThan(wordPaste.length / 2);
   });
 
+  /**
+   * A real 56KB email off the service desk.
+   *
+   * Two thousand six hundred and nineteen of the desk's messages are HTML and
+   * thirteen hundred carry a whole Outlook stylesheet. Escaped, that put
+   * `@font-face {font-family:Calibri}` on screen where the customer's sentence
+   * should have been.
+   */
+  it("reduces an Outlook email to what somebody wrote", () => {
+    const out = safeHtml(outlookFixture);
+
+    expect(outlookFixture).toContain("@font-face");
+    expect(outlookFixture).toContain("MsoNormal");
+
+    // The stylesheet has to go, and its *contents* with it — a removed tag
+    // whose text survives just moves the CSS from markup into prose.
+    expect(out).not.toContain("@font-face");
+    expect(out).not.toContain("font-family:Calibri");
+    expect(out).not.toContain("MsoNormal");
+    expect(out).not.toMatch(/<style/i);
+
+    // And what somebody actually wrote survives, structure included.
+    expect(out).toContain("Hello Scovia");
+    expect(out).toMatch(/<li>/);
+  });
+
+  /**
+   * What is left is the conversation, not the styling.
+   *
+   * Worth stating, because the saving is smaller than it looks: a 56KB email
+   * loses its stylesheet and is still 33KB, and nearly all of that is the
+   * quoted history of everyone who has replied. The markup was the unreadable
+   * part; the length is a separate problem.
+   */
+  it("throws the styling away and keeps the conversation", () => {
+    const out = safeHtml(outlookFixture);
+
+    expect(out.length).toBeLessThan(outlookFixture.length);
+    expect(out).not.toMatch(/\{[^}]*font-family/);
+    expect(out).not.toContain("mso-");
+  });
+
+  it("gives the desk a readable one-line preview of an email", () => {
+    const line = excerpt(outlookFixture, 60);
+
+    expect(line.length).toBeLessThanOrEqual(61);
+    expect(line).not.toContain("@font-face");
+    expect(line).not.toContain("{");
+  });
+
   it("finds no script, style or event handler left in either", () => {
-    for (const source of [worst, wordPaste]) {
+    for (const source of [worst, wordPaste, outlookFixture]) {
       const out = safeHtml(source);
 
       expect(out).not.toMatch(/<script/i);

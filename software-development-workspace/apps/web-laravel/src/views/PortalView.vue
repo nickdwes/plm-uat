@@ -12,6 +12,7 @@
  */
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
+import { safeHtml } from "../lib/richText";
 
 const route = useRoute();
 const token = computed(() => String(route.query.token ?? ""));
@@ -202,7 +203,13 @@ onMounted(load);
               <strong>{{ m.from }}</strong>
               <span>{{ when(m.created_at) }}</span>
             </div>
-            <div class="pt-msg-body">{{ m.body }}</div>
+            <!--
+              The customer reading their own correspondence back. Sanitised
+              with more care than anywhere else in the application: this is
+              content that arrived by email, rendered on a page reachable
+              without signing in.
+            -->
+            <div class="pt-msg-body rich" v-html="safeHtml(m.body)"></div>
           </div>
         </div>
 
@@ -233,7 +240,7 @@ onMounted(load);
           <button class="pt-back" @click="reading = null">← Back</button>
           <h2 class="pt-subject">{{ reading.title }}</h2>
           <p v-if="reading.summary" class="pt-meta">{{ reading.summary }}</p>
-          <div class="pt-article">{{ reading.body }}</div>
+          <div class="pt-article rich" v-html="safeHtml(reading.body)"></div>
           <div v-if="!rated" class="pt-rate">
             <span>Did this help?</span>
             <button class="pt-btn-ghost" @click="rateArticle(true)">Yes</button>
@@ -378,7 +385,7 @@ onMounted(load);
 .pt-msg.us { background: var(--color-brand-subtle); }
 .pt-msg-head { display: flex; justify-content: space-between; gap: 10px;
   font-size: .76rem; color: var(--color-text-light); margin-bottom: 4px; }
-.pt-msg-body { font-size: .9rem; white-space: pre-wrap; color: var(--color-text); }
+.pt-msg-body { font-size: .9rem; color: var(--color-text); }
 
 .pt-compose { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .pt-compose textarea, .pt-field input, .pt-field textarea, .pt-field select {
@@ -426,7 +433,7 @@ onMounted(load);
 .pt-foot { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--color-border);
   font-size: .78rem; color: var(--color-text-muted); }
 
-.pt-article { white-space: pre-wrap; font-size: .92rem; line-height: 1.6; color: var(--color-text);
+.pt-article { font-size: .92rem; line-height: 1.6; color: var(--color-text);
   padding: 14px; border-radius: 10px; background: var(--color-surface-sunken); margin-top: 6px; }
 .pt-rate { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: .86rem; }
 .pt-btn-ghost { padding: 5px 14px; border-radius: 8px; cursor: pointer;

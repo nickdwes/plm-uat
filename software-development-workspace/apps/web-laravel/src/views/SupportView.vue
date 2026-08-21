@@ -15,6 +15,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, getToken } from "../stores/auth";
+import { safeHtml, excerpt } from "../lib/richText";
 
 const org = () => currentOrgSlug.value;
 
@@ -4000,7 +4001,19 @@ watch(tab, (t) => {
                 <span v-else class="sd-tag">From customer</span>
                 <span class="sd-when">{{ when(m.created_at) }}</span>
               </div>
-              <div class="sd-msg-body">{{ m.body }}</div>
+              <!--
+                Rendered, not escaped. These are emails: 2,619 of the 2,633
+                messages on the desk are HTML and 1,299 carry a whole Outlook
+                stylesheet, so escaping them put `@font-face {font-family:
+                Calibri}` on screen where the customer's sentence should be.
+
+                Sanitised rather than trusted — this arrives from outside the
+                company, through a mailbox, and is read by every agent. The
+                structure survives and every style, script and handler does not,
+                so a pasted signature renders in our own typography instead of
+                dragging fifteen-year-old Word CSS into the page.
+              -->
+              <div class="sd-msg-body rich" v-html="safeHtml(m.body)"></div>
             </div>
             <p v-if="!open.messages.length" class="sd-meta">Nothing on this ticket yet.</p>
           </div>
@@ -4293,7 +4306,9 @@ watch(tab, (t) => {
                   <label class="sd-check">
                     <input type="checkbox" :checked="splitDraft.message_ids.includes(m.id)"
                            @change="toggleSplitMessage(m.id)" />
-                    <span>{{ m.body.slice(0, 60) }}{{ m.body.length > 60 ? "…" : "" }}</span>
+                    <!-- Sixty characters of an email is sixty characters of
+                         stylesheet unless the markup goes first. -->
+                    <span>{{ excerpt(m.body, 60) }}</span>
                   </label>
                 </li>
               </ul>
@@ -4538,7 +4553,9 @@ watch(tab, (t) => {
     transparent 10px, transparent 20px);
   border-color: var(--color-warning); }
 .sd-msg-head { @apply flex flex-wrap items-center gap-2; font-size: .78rem; margin-bottom: 5px; }
-.sd-msg-body { font-size: .88rem; white-space: pre-wrap; color: var(--color-text); }
+/* No pre-wrap now the body is rendered: the markup carries its own line
+   breaks, and honouring the source's newlines too doubles every one. */
+.sd-msg-body { font-size: .88rem; color: var(--color-text); }
 .sd-tag { font-size: .68rem; padding: 1px 6px; border-radius: 999px;
   background: var(--color-surface); color: var(--color-text-light); }
 .sd-tag.internal { background: var(--color-warning); color: #fff; }
