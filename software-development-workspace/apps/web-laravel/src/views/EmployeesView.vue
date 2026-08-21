@@ -99,9 +99,23 @@ watch(currentOrgSlug, () => load(1));
             @click="router.push({ name: 'employee-detail', params: { id: emp.id } })"
           >
             <td style="font-weight:600;font-size:12px;color:var(--text-muted)">{{ emp.employee_number }}</td>
-            <td style="font-weight:600">{{ emp.full_name }}</td>
-            <td>{{ emp.department?.name ?? "—" }}</td>
-            <td>{{ emp.designation?.name ?? "—" }}</td>
+            <td style="font-weight:600">
+              {{ emp.full_name }}
+              <!--
+                The directory now lists people placed here from another company
+                in the group. Without saying so, the only clue that somebody is
+                on a different payroll is a department name that looks
+                unfamiliar.
+              -->
+              <span v-if="emp.is_visiting" class="visiting" :title="`Employed by ${emp.home_organization}`">
+                {{ emp.home_organization }}
+              </span>
+            </td>
+            <!-- A visitor's department and title are the ones their placement
+                 gives them here; their own belong to a tenant this organisation
+                 cannot see. -->
+            <td>{{ emp.host_department ?? emp.department?.name ?? "—" }}</td>
+            <td>{{ emp.host_title ?? emp.designation?.name ?? "—" }}</td>
             <td>{{ emp.date_of_joining ?? "—" }}</td>
             <td><span :class="['badge', statusBadge(emp.status)]">{{ emp.status }}</span></td>
           </tr>
@@ -120,3 +134,25 @@ watch(currentOrgSlug, () => load(1));
     </div>
   </div>
 </template>
+
+<style scoped>
+/*
+ * A visiting colleague's employer, beside their name.
+ *
+ * Deliberately quiet — it is a fact about somebody's contract, not a warning,
+ * and on a directory where several people are seconded a loud badge on each
+ * would be the first thing the eye lands on instead of the names.
+ */
+.visiting {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--color-text-light);
+  background: var(--color-surface-sunken);
+  border: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+</style>

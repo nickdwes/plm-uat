@@ -121,6 +121,14 @@ export interface Employee {
   date_of_joining: string | null;
   status: string;
   is_shared: boolean;
+  /** Placed in the organisation asking, rather than employed by it. */
+  is_visiting?: boolean;
+  /** The organisation that employs them — sent only when it is not this one. */
+  home_organization?: string | null;
+  /** The department, title and share of the week their placement gives them here. */
+  host_department?: string | null;
+  host_title?: string | null;
+  host_allocation_pct?: number;
   email: string | null;
   work_email?: string | null;
   personal_email?: string | null;

@@ -71,12 +71,41 @@ class EmployeeResource extends JsonResource
             'exit_reason'             => $this->exit_reason,
             'is_shared'               => $this->is_shared,
 
+            /*
+             * Placed here rather than employed here.
+             *
+             * The directory now lists people seconded in, and nothing on screen
+             * would otherwise say whose payroll somebody is on. Different from
+             * `is_shared`, which says a person works across organisations
+             * without saying which one this is.
+             */
+            'is_visiting'             => $this->isVisiting($orgId),
+
             // Org placement
             'primary_organization'    => $this->whenLoaded('primaryOrganization', fn () => [
                 'id'   => $this->primaryOrganization->id,
                 'name' => $this->primaryOrganization->name,
                 'slug' => $this->primaryOrganization->slug,
             ]),
+            /*
+             * Their employer's name, for the directory column. Only sent when
+             * it differs from the organisation asking — on your own directory
+             * it would be the same word on every row.
+             */
+            'home_organization'       => $this->when(
+                $this->isVisiting($orgId) && $this->relationLoaded('primaryOrganization'),
+                fn () => $this->primaryOrganization?->name,
+            ),
+            /*
+             * What they do here. For somebody employed by this organisation
+             * that is their own record; for a visitor it is their placement,
+             * because their own department belongs to a tenant this one cannot
+             * see.
+             */
+            'host_department'         => $this->when(isset($this->host_department), fn () => $this->host_department),
+            'host_title'              => $this->when(isset($this->host_title), fn () => $this->host_title),
+            'host_allocation_pct'     => $this->when(isset($this->host_allocation_pct), fn () => (int) $this->host_allocation_pct),
+
             'department'              => $this->whenLoaded('department', fn () => [
                 'id'   => $this->department->id,
                 'name' => $this->department->name,

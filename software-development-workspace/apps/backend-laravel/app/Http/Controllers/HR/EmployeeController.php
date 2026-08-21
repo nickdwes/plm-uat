@@ -60,7 +60,21 @@ class EmployeeController extends Controller
 
         $term = trim((string) $request->query('q', ''));
 
+        /*
+         * Scoped to the organisation in context.
+         *
+         * This had no organisation predicate at all, so a typeahead meant for
+         * picking a colleague returned every name, work address and employee
+         * number in the group — Konvergenz, Tiberbu, Visibility and Teedu
+         * alike — to anybody who could reach the route. Tenancy is the boundary
+         * the whole application is built on, and this walked straight through
+         * it. A null organisation is a group-scope user, who is entitled to
+         * everybody.
+         */
+        $orgId = app()->bound('current.organization_id') ? app('current.organization_id') : null;
+
         $employees = Employee::query()
+            ->when($orgId, fn ($q) => $q->forOrganization($orgId))
             ->where('status', 'active')
             ->when($term !== '', function ($q) use ($term) {
                 $like = '%' . $term . '%';

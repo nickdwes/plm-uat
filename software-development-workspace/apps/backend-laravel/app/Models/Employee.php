@@ -269,18 +269,102 @@ class Employee extends Model
     // ── Scopes ────────────────────────────────────────────────────────────────
 
     /**
-     * Employees belonging to a specific organization (primary or shared).
-     * Used by group-level queries that bypass the global scope.
+     * Everybody who works for an organisation — employed by it, or placed in it.
+     *
+     * The two are different facts and both are membership. Somebody seconded
+     * into an organisation at eighty per cent of their week works there in
+     * every sense the people around them care about; that they are on another
+     * company's payroll is a fact about their contract, not about whether they
+     * belong on the directory.
+     *
+     * The date window matters as much as the flag. A placement that ended in
+     * March is not membership in June, and checking `is_active` alone leaves a
+     * lapsed secondee in the directory until somebody remembers the row.
      */
     public function scopeForOrganization($query, int $organizationId)
     {
         return $query->where(function ($q) use ($organizationId) {
             $q->where('primary_organization_id', $organizationId)
-              ->orWhereHas('organizations', fn ($r) =>
-                  $r->where('organization_id', $organizationId)
-                    ->where('employee_organization_map.is_active', true)
-              );
+              ->orWhereHas('organizations', fn ($r) => $r
+                  ->where('organization_id', $organizationId)
+                  ->where('employee_organization_map.is_active', true)
+                  ->where(fn ($w) => $w
+                      ->whereNull('employee_organization_map.effective_to')
+                      ->orWhereDate('employee_organization_map.effective_to', '>=', now()->toDateString()))
+                  ->whereDate('employee_organization_map.effective_from', '<=', now()->toDateString()));
         });
+    }
+
+    /**
+     * Overlay the job each visitor does *here*.
+     *
+     * A person's department, title and manager are all per-organisation, and
+     * their own record holds their home organisation's. Read here they are
+     * worse than wrong: `Department` and `Designation` are tenant-scoped, so a
+     * host organisation loading a visitor's relations gets nulls, and the
+     * directory shows a blank where the job should be.
+     *
+     * One query and an overlay rather than asking each person for their
+     * context, which is a query apiece — a listing that costs a round trip per
+     * head is a listing that times out on the organisation big enough to need
+     * one.
+     *
+     * @param  \Illuminate\Support\Collection<int, self>  $people
+     */
+    public static function attachPlacements($people, ?int $organizationId): void
+    {
+        if ($organizationId === null) {
+            return;
+        }
+
+        $visiting = $people->filter(fn (self $e) => $e->primary_organization_id !== $organizationId);
+
+        if ($visiting->isEmpty()) {
+            return;
+        }
+
+        $placements = \Illuminate\Support\Facades\DB::table('employee_organization_map as m')
+            ->leftJoin('designations as d', 'd.id', '=', 'm.designation_id')
+            ->leftJoin('departments as p', 'p.id', '=', 'm.department_id')
+            ->where('m.organization_id', $organizationId)
+            ->where('m.is_active', true)
+            ->whereIn('m.employee_id', $visiting->pluck('id'))
+            ->get(['m.employee_id', 'm.reports_to', 'm.role', 'm.allocation_pct',
+                   'd.title as designation', 'p.name as department'])
+            ->keyBy('employee_id');
+
+        foreach ($visiting as $employee) {
+            $placement = $placements[$employee->id] ?? null;
+
+            if (! $placement) {
+                continue;
+            }
+
+            /*
+             * Their manager here, which may be nobody — a secondee often
+             * answers to their home manager on paper. Anyone whose manager is
+             * not on this chart is promoted to a root, so an unattached
+             * placement lands sensibly rather than disappearing.
+             */
+            $employee->reports_to = $placement->reports_to;
+
+            $employee->setAttribute('host_title', $placement->designation ?: $placement->role);
+            $employee->setAttribute('host_department', $placement->department);
+            $employee->setAttribute('host_allocation_pct', $placement->allocation_pct);
+        }
+    }
+
+    /**
+     * Placed here rather than employed here.
+     *
+     * Read by the directory so a visiting colleague can be labelled as one.
+     * Nobody should have to work out whose payroll somebody is on by noticing
+     * that their department looks unfamiliar.
+     */
+    public function isVisiting(?int $organizationId): bool
+    {
+        return $organizationId !== null
+            && $this->primary_organization_id !== $organizationId;
     }
 
     public function scopeActive($query)

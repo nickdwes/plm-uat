@@ -418,7 +418,12 @@ class OrgManagementController extends Controller
 
         $orgId = app('current.organization_id');
 
-        $people = \App\Models\Employee::where('primary_organization_id', $orgId)
+        /*
+         * Everybody who works here, employed or placed. Somebody seconded in
+         * used to be missing from the chart entirely while their placement sat
+         * in the database carrying a department and a manager.
+         */
+        $people = \App\Models\Employee::forOrganization($orgId)
             ->where('status', 'active')
             ->whereNull('date_exited')
             ->with(['designation:id,title', 'department:id,name'])
@@ -426,10 +431,13 @@ class OrgManagementController extends Controller
             ->get([
                 'id', 'employee_number', 'first_name', 'last_name', 'reports_to',
                 'designation_id', 'department_id', 'work_email', 'photo_url', 'is_shared',
+                'primary_organization_id',
             ]);
 
+        \App\Models\Employee::attachPlacements($people, $orgId);
+
         return response()->json([
-            'reporting'   => $this->reportingTree($people),
+            'reporting'   => $this->reportingTree($people, $orgId),
             'unassigned'  => $this->peopleWithoutAPlace($people),
             'headcount'   => $people->count(),
             'organization' => \App\Models\Organization::find($orgId)?->only(['id', 'name']),
@@ -443,7 +451,7 @@ class OrgManagementController extends Controller
      * a chart that costs a query per person is a chart that times out on the
      * organisation big enough to need one.
      */
-    private function reportingTree($people): array
+    private function reportingTree($people, ?int $orgId = null): array
     {
         $byManager = $people->groupBy('reports_to');
         $ids       = $people->pluck('id')->flip();
@@ -460,7 +468,7 @@ class OrgManagementController extends Controller
 
         $seen = [];
 
-        $build = function ($employee, int $depth) use (&$build, $byManager, &$seen) {
+        $build = function ($employee, int $depth) use (&$build, $byManager, &$seen, $orgId) {
             /*
              * A reports_to cycle is rare and fatal: two people managing each
              * other would recurse until the request dies. Guarded rather than
@@ -481,11 +489,16 @@ class OrgManagementController extends Controller
                 'id'          => $employee->id,
                 'name'        => trim($employee->first_name . ' ' . $employee->last_name),
                 'number'      => $employee->employee_number,
-                'title'       => $employee->designation?->title,
-                'department'  => $employee->department?->name,
+                // What they do here, falling back to their own record.
+                'title'       => $employee->host_title ?? $employee->designation?->title,
+                'department'  => $employee->host_department ?? $employee->department?->name,
                 'email'       => $employee->work_email,
                 'photo'       => $employee->photo_url,
                 'is_shared'   => (bool) $employee->is_shared,
+                // Placed here rather than employed here. Different from
+                // is_shared, which says somebody works across organisations
+                // without saying whose payroll they are on.
+                'is_visiting' => $employee->isVisiting($orgId),
                 // The whole subtree, so a collapsed node can say what it hides.
                 'reports'     => $this->countDescendants($children),
                 'children'    => $children,
@@ -500,15 +513,24 @@ class OrgManagementController extends Controller
         return collect($children)->sum(fn ($c) => 1 + $c['reports']);
     }
 
-    /** Active people with no department, which a chart should surface not hide. */
+    /**
+     * Active people with no department, which a chart should surface not hide.
+     *
+     * A visiting colleague's department is the one their placement gives them
+     * here, not the one on their own record — so somebody seconded into a real
+     * department is placed, even though their `department_id` points at their
+     * home organisation's.
+     */
     private function peopleWithoutAPlace($people): array
     {
-        return $people->whereNull('department_id')->map(fn ($e) => [
-            'id'     => $e->id,
-            'name'   => trim($e->first_name . ' ' . $e->last_name),
-            'number' => $e->employee_number,
-            'title'  => $e->designation?->title,
-        ])->values()->all();
+        return $people
+            ->filter(fn ($e) => ($e->host_department ?? $e->department?->name) === null)
+            ->map(fn ($e) => [
+                'id'     => $e->id,
+                'name'   => trim($e->first_name . ' ' . $e->last_name),
+                'number' => $e->employee_number,
+                'title'  => $e->host_title ?? $e->designation?->title,
+            ])->values()->all();
     }
 
     public function orgStructure(): JsonResponse

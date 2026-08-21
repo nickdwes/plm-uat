@@ -19,13 +19,22 @@ class EmployeeService extends BaseService
 
     public function list(?int $organizationId, array $filters = [], int $perPage = 15): LengthAwarePaginator
     {
-        $query = Employee::withoutGlobalScope('organization');
+        $query = Employee::query();
 
+        /*
+         * Employed here or placed here.
+         *
+         * This used to be `primary_organization_id` alone, which meant somebody
+         * seconded into an organisation — at any allocation, up to their whole
+         * week — did not appear in that organisation's directory at all. The
+         * placement was recorded, carried a department and a manager, and was
+         * invisible to everybody except the person who typed it in.
+         */
         if ($organizationId !== null) {
-            $query->where('primary_organization_id', $organizationId);
+            $query->forOrganization($organizationId);
         }
 
-        return $query
+        $page = $query
             ->when($filters['search'] ?? null, fn ($q, $s) =>
                 $q->where(fn ($q) =>
                     $q->where('first_name', 'like', "%{$s}%")
@@ -45,9 +54,21 @@ class EmployeeService extends BaseService
              */
             ->unless($filters['status'] ?? null, fn ($q) => $q->where('status', '!=', 'draft'))
             ->when($filters['employment_type'] ?? null, fn ($q, $t) => $q->where('employment_type', $t))
-            ->with(['department', 'designation', 'jobGrade', 'manager'])
+            // primaryOrganization so the listing can name a visitor's employer
+            // without a query per row.
+            ->with(['department', 'designation', 'jobGrade', 'manager', 'primaryOrganization'])
             ->orderBy('last_name')
             ->paginate($perPage);
+
+        /*
+         * Show each visitor the job they do here. Their own department and
+         * title belong to their home organisation and are invisible in this
+         * one — both tables are tenant-scoped — so without this the directory
+         * shows a blank where the job should be.
+         */
+        Employee::attachPlacements($page->getCollection(), $organizationId);
+
+        return $page;
     }
 
     public function create(int $organizationId, array $data): Employee
@@ -119,8 +140,9 @@ class EmployeeService extends BaseService
             'primaryOrganization', 'department', 'designation', 'jobGrade', 'manager',
             'secondments',
         ])
-            ->withoutGlobalScope('organization')
-            ->when($orgId, fn($q) => $q->where('primary_organization_id', $orgId))
+            // Same rule as the listing: an organisation that can see somebody
+            // in its directory has to be able to open them.
+            ->when($orgId, fn ($q) => $q->forOrganization($orgId))
             ->findOrFail($id);
     }
 
