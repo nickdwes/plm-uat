@@ -33,12 +33,14 @@ class Vacancy extends Model
         'open_positions',
         'status',
         'application_form_schema',
+        'required_skills',
         'description',
         'closing_date',
     ];
 
     protected $casts = [
         'application_form_schema' => 'array',
+        'required_skills' => 'array',
         'open_positions'          => 'integer',
         'closing_date'            => 'date',
     ];

@@ -47,6 +47,18 @@ class Application extends Model
         return $this->belongsTo(WorkflowStage::class, 'current_stage_id');
     }
 
+    /**
+     * The interviews arranged for this application.
+     *
+     * Interviews already carry `application_id`; there was simply no way to
+     * ask an application for them, so anything wanting a candidate's interviews
+     * had to start from the other end.
+     */
+    public function interviews(): HasMany
+    {
+        return $this->hasMany(\App\Models\Recruitment\Interview::class, 'application_id');
+    }
+
     public function stageHistory(): HasMany
     {
         return $this->hasMany(ApplicationStageHistory::class, 'application_id')->orderBy('moved_at');

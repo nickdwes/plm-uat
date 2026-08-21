@@ -26,8 +26,18 @@
              stored or read. Fixed rather than random so a failure is
              reproducible. -->
         <env name="DOCUMENT_ENCRYPTION_KEY" value="base64:dGVzdGluZy10ZXN0aW5nLXRlc3RpbmctdGVzdGtleSE="/>
-        <env name="DB_CONNECTION" value="pgsql"/>
-        <env name="DB_DATABASE" value="hrms_test"/>
+        <!--
+            force="true" because these are the difference between a test run
+            and a wiped database.
+
+            Without it, PHPUnit leaves an environment variable alone if the
+            shell already set one — so a DB_DATABASE exported to run a
+            migration stays set, the suite connects to it, and RefreshDatabase
+            drops every table in production. That is not a hypothetical: it
+            happened here, and the whole dataset had to be re-imported.
+        -->
+        <env name="DB_CONNECTION" value="pgsql" force="true"/>
+        <env name="DB_DATABASE" value="hrms_test" force="true"/>
         <env name="DB_HOST" value="db"/>
         <env name="DB_PORT" value="5432"/>
         <env name="DB_USERNAME" value="hrms_user"/>

@@ -35,6 +35,10 @@ class CreateVacancyRequest extends FormRequest
             'description'             => 'nullable|string',
             'closing_date'            => 'nullable|date',
             'application_form_schema' => 'nullable|array',
+            // What the role needs, so the form can ask for it and the
+            // shortlist can be measured against it.
+            'required_skills'   => 'nullable|array|max:40',
+            'required_skills.*' => 'string|max:64',
         ];
     }
 }

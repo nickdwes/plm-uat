@@ -55,6 +55,20 @@ class VacancyService extends BaseService
             }
         }
 
+        /*
+         * A vacancy raised from a requisition inherits the skills it asked for.
+         *
+         * Copied at this moment rather than read through on demand: the
+         * requisition can be edited or withdrawn afterwards, and a vacancy
+         * whose requirements shifted under applicants who had already answered
+         * would be judging them against a bar they never saw.
+         */
+        if (! empty($data['talent_requisition_id']) && empty($data['required_skills'])) {
+            $data['required_skills'] = \App\Models\Recruitment\TalentRequisition::whereKey(
+                $data['talent_requisition_id'],
+            )->value('skills');
+        }
+
         $vacancy = Vacancy::create($data);
         return $vacancy->load(['department', 'designation', 'hiringManager', 'workflow.stages']);
     }

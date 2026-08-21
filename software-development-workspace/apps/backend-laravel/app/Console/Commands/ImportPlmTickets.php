@@ -354,8 +354,20 @@ class ImportPlmTickets extends Command
 
     private function importMessages(): array
     {
+        /*
+         * Counts the mail, not every message.
+         *
+         * This guard exists so a second run does not append the whole
+         * conversation again — messages have no stable identity to match on.
+         * But it used to count *any* message on an imported ticket, and the
+         * resolution notes written earlier in this same pass are messages. So
+         * on a re-import it saw 224 internal notes, concluded the mail was
+         * already in, and skipped 2,409 emails without a word.
+         */
         $existing = TicketMessage::whereIn('support_ticket_id',
-            PlmImportMap::where('source_table', 'mdl_tickets')->pluck('target_id'))->count();
+            PlmImportMap::where('source_table', 'mdl_tickets')->pluck('target_id'))
+            ->where('source', 'email')
+            ->count();
 
         if ($existing > 0) {
             /*

@@ -19,7 +19,28 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class ApplicationController extends Controller
 {
-    public function __construct(private readonly ApplicationService $service) {}
+    public function __construct(
+        private readonly ApplicationService $service,
+        private readonly \App\Services\Recruitment\CandidateSuitability $suitability,
+    ) {}
+
+    /**
+     * How well this applicant fits the role, and what that is based on.
+     *
+     * Its own endpoint rather than a field on the application, because it is
+     * computed from three tables and nobody listing forty applicants wants it
+     * worked out forty times to render a table that does not show it.
+     */
+    public function suitability(\App\Models\Recruitment\Application $application): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('view', $application->vacancy);
+
+        return response()->json([
+            'data' => $this->suitability->for(
+                $application->load(['vacancy:id,application_form_schema,required_skills']),
+            ),
+        ]);
+    }
 
     public function index(Request $request, Vacancy $vacancy): AnonymousResourceCollection
     {

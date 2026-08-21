@@ -1292,6 +1292,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // Applications (standalone)
         Route::get('/applications/{application}',             [ApplicationController::class, 'show']);
+        // The skills they claimed against what the role asked for, and what
+        // the panel made of them.
+        Route::get('/applications/{application}/suitability',  [ApplicationController::class, 'suitability']);
         /*
          * The supporting document an applicant attached alongside their CV.
          *
