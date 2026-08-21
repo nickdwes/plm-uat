@@ -85,7 +85,12 @@ class ImportPlmStaff extends Command
      * because both "PMO" and "Projects Management office" exist on our side,
      * and picking one silently splits a team in half.
      */
-    private const DEPARTMENT_ALIASES = [
+    /**
+     * Public so the department recovery reads the same map rather than its own
+     * copy. Two copies of a name mapping drift, and the drift shows up as
+     * people quietly attached to a department nobody else can see.
+     */
+    public const DEPARTMENT_ALIASES = [
         'cloud platforms solutions & iam'          => 'Cloud Platforms',
         'data centre & power'                      => 'Data Centre',
         'enterprise compute & business resilliency' => 'Ent. Compute',
