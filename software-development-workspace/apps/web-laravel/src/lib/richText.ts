@@ -113,6 +113,68 @@ export function excerpt(value: string | null | undefined, limit = 220): string {
   return text.length > limit ? `${text.slice(0, limit).trimEnd()}…` : text;
 }
 
+/**
+ * The reply, and the conversation it quotes.
+ *
+ * An email carries every message before it. A ticket with nine replies shows
+ * the first one nine times, and the newest sentence — the only part anybody
+ * opened the ticket to read — sits at the top of a page of history that gets
+ * longer with every exchange. The desk's longest message is 60KB and almost
+ * none of it is new.
+ *
+ * Split on the markers mail clients leave when they quote, in the order a
+ * client is likely to have used one. Nothing is thrown away: the history is
+ * folded, not removed, because "what did we tell them in March" is a question
+ * the thread is kept to answer.
+ *
+ * Deliberately conservative. Where no marker is found the whole message is
+ * treated as new, because showing a little too much is a nuisance and hiding
+ * something somebody wrote is a fault.
+ */
+const QUOTE_MARKERS: RegExp[] = [
+  // Outlook inserts these around the quoted block, in this order of certainty.
+  /<div\b[^>]*id=["']?divRplyFwdMsg/i,
+  /<div\b[^>]*id=["']?appendonsend/i,
+  /-{2,}\s*Original Message\s*-{2,}/i,
+  /<blockquote/i,
+  // A reply header: From, then Sent or Date, within a few hundred characters.
+  /<hr[^>]*>\s*(?=(?:<[^>]+>\s*)*<b>\s*From:)/i,
+  /(?=<b>\s*From:\s*<\/b>[\s\S]{0,400}?<b>\s*(?:Sent|Date):)/i,
+];
+
+export interface SplitMessage {
+  /** What this person wrote. */
+  latest: string;
+  /** Everything they quoted, or empty when they quoted nothing. */
+  quoted: string;
+}
+
+export function splitQuoted(value: string | null | undefined): SplitMessage {
+  const html = safeHtml(value);
+
+  if (!html) return { latest: "", quoted: "" };
+
+  for (const marker of QUOTE_MARKERS) {
+    const found = html.search(marker);
+
+    /*
+     * A marker at the very start means the whole message is quoted — a bare
+     * forward with no covering note. Folding all of it would leave an empty
+     * message, so it is left alone.
+     */
+    if (found > 0) {
+      const latest = html.slice(0, found);
+
+      // Nothing but tags before the marker is not a reply, it is a wrapper.
+      if (hasText(latest)) {
+        return { latest, quoted: html.slice(found) };
+      }
+    }
+  }
+
+  return { latest: html, quoted: "" };
+}
+
 /** True when there is something to show once the markup is gone. */
 export function hasText(value: string | null | undefined): boolean {
   return excerpt(value, 1).length > 0;

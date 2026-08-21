@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { excerpt, hasText, safeHtml } from "./richText";
+import { excerpt, hasText, safeHtml, splitQuoted } from "./richText";
 
 /*
  * Loaded through Vite rather than the filesystem, so the same import works in
@@ -264,5 +264,93 @@ describe("against the real imported content", () => {
       expect(out).not.toMatch(/\son\w+=/i);
       expect(out).not.toMatch(/javascript:/i);
     }
+  });
+});
+
+/**
+ * Separating what somebody wrote from what they quoted.
+ *
+ * An email carries every message before it, so a ticket with nine replies
+ * shows the first one nine times. The newest sentence — the only part anybody
+ * opened the ticket to read — ends up at the top of a page of history.
+ */
+describe("splitQuoted", () => {
+  it("keeps the reply and folds what it quotes", () => {
+    const { latest, quoted } = splitQuoted(
+      "<p>Kindly confirm the subnets.</p>"
+      + '<div id="divRplyFwdMsg"><b>From:</b> Gabriel<br><b>Sent:</b> Wednesday</div>'
+      + "<p>The original question.</p>",
+    );
+
+    expect(latest).toContain("Kindly confirm the subnets.");
+    expect(latest).not.toContain("The original question.");
+    expect(quoted).toContain("The original question.");
+  });
+
+  it("splits on a reply header with no wrapper around it", () => {
+    const { latest, quoted } = splitQuoted(
+      "<p>Please see below.</p><b>From:</b> Ann<br><b>Sent:</b> Monday<br><p>Earlier.</p>",
+    );
+
+    expect(latest).toContain("Please see below.");
+    expect(quoted).toContain("Earlier.");
+  });
+
+  it("splits on the old-style original message rule", () => {
+    const { latest, quoted } = splitQuoted(
+      "<p>Agreed.</p>-----Original Message-----<p>The first note.</p>",
+    );
+
+    expect(latest).toContain("Agreed.");
+    expect(quoted).toContain("The first note.");
+  });
+
+  /** A first message quotes nothing, and must not be cut anywhere. */
+  it("leaves a message that quotes nothing whole", () => {
+    const { latest, quoted } = splitQuoted("<p>We have a fault on the link.</p>");
+
+    expect(latest).toContain("We have a fault on the link.");
+    expect(quoted).toBe("");
+  });
+
+  /**
+   * A bare forward is all history and no note.
+   *
+   * Folding every word of it would leave a message showing nothing at all,
+   * which reads as a bug rather than as a fold.
+   */
+  it("does not fold away a message that is entirely quoted", () => {
+    const { latest, quoted } = splitQuoted(
+      '<div id="divRplyFwdMsg"><b>From:</b> Ann</div><p>Forwarded content.</p>',
+    );
+
+    expect(latest).toContain("Forwarded content.");
+    expect(quoted).toBe("");
+  });
+
+  /** And it sanitises on the way, so neither half can carry a script. */
+  it("sanitises both halves", () => {
+    const { latest, quoted } = splitQuoted(
+      "<p onclick=\"x()\">Hello</p><blockquote><script>alert(1)</script>Old</blockquote>",
+    );
+
+    expect(latest).not.toContain("onclick");
+    expect(quoted).not.toContain("script");
+  });
+
+  /**
+   * The real email off the desk turns out to be all history.
+   *
+   * It opens with a couple of empty divs, a rule, and "From: … Sent: …" —
+   * somebody forwarded a conversation without writing a word above it. The
+   * marker is there, at the very start, and folding on it would leave a
+   * message showing nothing. So it is kept whole, and the length is left to
+   * the screen to deal with.
+   */
+  it("keeps a forwarded chain whole rather than folding it to nothing", () => {
+    const { latest, quoted } = splitQuoted(outlookFixture);
+
+    expect(quoted).toBe("");
+    expect(latest).toContain("Hello Scovia");
   });
 });

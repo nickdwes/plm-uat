@@ -15,7 +15,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, getToken } from "../stores/auth";
-import { safeHtml, excerpt } from "../lib/richText";
+import { excerpt, splitQuoted } from "../lib/richText";
 
 const org = () => currentOrgSlug.value;
 
@@ -1517,6 +1517,38 @@ async function removeHoliday(id: number): Promise<void> {
 const currentSla = computed(() => slaData.value.slas.find((s) => s.id === openSla.value) ?? null);
 const currentCal = computed(() => slaData.value.calendars.find((c) => c.id === openCal.value) ?? null);
 
+/*
+ * Which messages have their history open, and which are shown in full.
+ *
+ * Split once per body and remembered: the template asks for both halves three
+ * times while rendering one message, and sanitising a 60KB email three times
+ * per keystroke elsewhere on the page is work nobody sees and everybody waits
+ * for.
+ */
+const quoted   = ref<Set<number>>(new Set());
+const expanded = ref<Set<number>>(new Set());
+const splitCache = new Map<string, { latest: string; quoted: string }>();
+
+function split(body: string | null | undefined): { latest: string; quoted: string } {
+  const key = body ?? "";
+
+  if (!splitCache.has(key)) splitCache.set(key, splitQuoted(key));
+
+  return splitCache.get(key)!;
+}
+
+function toggleQuoted(id: number): void {
+  const next = new Set(quoted.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  quoted.value = next;
+}
+
+function toggleExpanded(id: number): void {
+  const next = new Set(expanded.value);
+  next.has(id) ? next.delete(id) : next.add(id);
+  expanded.value = next;
+}
+
 // ── Held mail ──────────────────────────────────────────────────────────────────
 /*
  * Mail from senders nobody recognises. Held rather than discarded or bounced:
@@ -2456,7 +2488,7 @@ watch(tab, (t) => {
             <tr v-for="t in teams" :key="t.id" class="sd-row" @click="openTeam = t.id">
               <td>
                 <span class="sd-subject">{{ t.name }}</span>
-                <span v-if="t.description" class="sd-meta">{{ t.description }}</span>
+                <span v-if="t.description" class="sd-meta">{{ excerpt(t.description, 120) }}</span>
                 <span v-if="t.is_service_desk" class="sd-pill sd-ok-pill">Service desk</span>
                 <span v-else-if="t.is_vendor_queue" class="sd-pill sd-warn-pill">Vendor</span>
               </td>
@@ -3466,7 +3498,7 @@ watch(tab, (t) => {
               <tr v-for="r in automations" :key="r.id">
                 <td>
                   <span class="sd-subject">{{ r.name }}</span>
-                  <span v-if="r.description" class="sd-meta">{{ r.description }}</span>
+                  <span v-if="r.description" class="sd-meta">{{ excerpt(r.description, 120) }}</span>
                 </td>
                 <td class="sd-meta">
                   {{ r.trigger === "created" ? "A ticket arrives"
@@ -3921,7 +3953,9 @@ watch(tab, (t) => {
                     <span v-if="c.rating" class="sd-pill sd-off-pill">{{ c.rating }}/5</span>
                     <span class="sd-when">{{ c.on }}</span>
                   </span>
-                  <span class="sd-comment-body">{{ c.comment }}</span>
+                  <!-- A survey comment is typed by a customer, so it goes through the same
+                       treatment as anything else that arrives from outside. -->
+                  <span class="sd-comment-body">{{ excerpt(c.comment, 400) }}</span>
                 </li>
               </ul>
             </template>
@@ -4013,7 +4047,31 @@ watch(tab, (t) => {
                 so a pasted signature renders in our own typography instead of
                 dragging fifteen-year-old Word CSS into the page.
               -->
-              <div class="sd-msg-body rich" v-html="safeHtml(m.body)"></div>
+              <div :class="['sd-msg-body', 'rich', { clamped: !expanded.has(m.id) }]"
+                   v-html="split(m.body).latest"></div>
+
+              <!--
+                Every email carries the whole conversation before it, so a
+                ticket with nine replies shows the first one nine times. Folded,
+                not dropped — "what did we tell them in March" is why the thread
+                is kept.
+              -->
+              <button v-if="split(m.body).quoted" class="sd-quote-toggle"
+                      @click="toggleQuoted(m.id)">
+                {{ quoted.has(m.id) ? "Hide the earlier conversation" : "Show the earlier conversation" }}
+              </button>
+              <div v-if="quoted.has(m.id)" class="sd-msg-quoted rich"
+                   v-html="split(m.body).quoted"></div>
+
+              <!--
+                And some have no covering note at all — somebody forwarded a
+                chain without writing above it, so there is nothing to fold and
+                the whole message is history. Those get a height instead.
+              -->
+              <button v-if="!split(m.body).quoted && (m.body?.length ?? 0) > 2000"
+                      class="sd-quote-toggle" @click="toggleExpanded(m.id)">
+                {{ expanded.has(m.id) ? "Show less" : "Show the whole message" }}
+              </button>
             </div>
             <p v-if="!open.messages.length" class="sd-meta">Nothing on this ticket yet.</p>
           </div>
@@ -4092,6 +4150,7 @@ watch(tab, (t) => {
             with someone else.
           </p>
 
+          <p class="sd-side-h">How it is classified</p>
           <label class="sd-field"><span>Type</span>
             <select :value="open.type?.id ?? ''" class="control"
                     @change="classify('ticket_type_id', ($event.target as HTMLSelectElement).value)">
@@ -4135,6 +4194,7 @@ watch(tab, (t) => {
             most-disputed number in any service review, so it is shown rather
             than left to be worked out.
           -->
+          <p class="sd-side-h">Service level</p>
           <div v-if="open.sla" class="sd-field">
             <span>Service level</span>
             <div class="sd-sla">
@@ -4162,6 +4222,7 @@ watch(tab, (t) => {
             and each child keeps its own clock — merging is a statement about
             cause, not a way to make thirty-nine breaches disappear.
           -->
+          <p class="sd-side-h">Related tickets</p>
           <div class="sd-field">
             <span>Major incident</span>
             <div v-if="open.parent" class="sd-derived">
@@ -4185,6 +4246,7 @@ watch(tab, (t) => {
             thing it is. Setting this is what lets routing find the right
             engineer on the contract rather than the only one.
           -->
+          <p class="sd-side-h">Routing</p>
           <div class="sd-field">
             <span>Service category</span>
             <select :value="open.service_category?.id ?? ''" class="control"
@@ -4201,6 +4263,7 @@ watch(tab, (t) => {
             Suggestions, ranked. Contract knowledge outranks being idle, and the
             workload figures are there to inform the choice rather than make it.
           -->
+          <p class="sd-side-h">Who is on it</p>
           <div class="sd-field">
             <span>Who should take this</span>
             <ul v-if="suggestions.length" class="sd-suggest">
@@ -4278,6 +4341,7 @@ watch(tab, (t) => {
             fault; splitting says one report was two requests. Kept apart on the
             panel for the same reason they are kept apart in the data.
           -->
+          <p class="sd-side-h">Splitting this ticket</p>
           <div class="sd-field">
             <span>Split</span>
             <div v-if="open.split_from" class="sd-derived">
@@ -4375,6 +4439,7 @@ watch(tab, (t) => {
             </ul>
           </div>
 
+          <p class="sd-side-h">Afterwards</p>
           <div class="sd-field">
             <span>Knowledge</span>
             <!--
@@ -4400,6 +4465,7 @@ watch(tab, (t) => {
             <button v-else class="link" @click="issueSurveyLink">Ask how it went</button>
           </div>
 
+          <p class="sd-side-h">Effort</p>
           <div class="sd-field">
             <span>Time logged</span>
             <div class="sd-derived">
@@ -4530,9 +4596,17 @@ watch(tab, (t) => {
 
 .sd-overlay { @apply fixed inset-0 z-50 flex items-center justify-center; background: rgb(0 0 0 / 45%); padding: 20px; }
 
+/*
+ * Wider than it was, because everything else is.
+ *
+ * 64rem was reasonable when every screen in the application stopped at 1140px.
+ * Now they do not, and a ticket is the densest thing here — an email thread on
+ * the left and sixteen controls on the right, both of which were sharing 750
+ * pixels on a monitor with three times that.
+ */
 .sd-panel { background: var(--color-surface); border-radius: var(--radius-xl);
-  width: min(64rem, 100%); max-height: 90vh; overflow-y: auto;
-  display: grid; grid-template-columns: minmax(0, 1fr) 17rem; grid-template-areas: "head head" "body side"; }
+  width: min(88rem, 100%); max-height: 92vh; overflow-y: auto;
+  display: grid; grid-template-columns: minmax(0, 1fr) 20rem; grid-template-areas: "head head" "body side"; }
 @media (max-width: 900px) { .sd-panel { grid-template-columns: 1fr; grid-template-areas: "head" "side" "body"; } }
 
 .sd-panel-head { grid-area: head; @apply flex items-start justify-between gap-3;
@@ -4556,6 +4630,24 @@ watch(tab, (t) => {
 /* No pre-wrap now the body is rendered: the markup carries its own line
    breaks, and honouring the source's newlines too doubles every one. */
 .sd-msg-body { font-size: .88rem; color: var(--color-text); }
+
+/*
+ * A ceiling on a message with no covering note.
+ *
+ * Faded rather than cut flat, so it reads as "there is more" instead of as a
+ * message that ends mid-sentence.
+ */
+.sd-msg-body.clamped { max-height: 22rem; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 78%, transparent);
+  mask-image: linear-gradient(to bottom, #000 78%, transparent); }
+
+.sd-quote-toggle { margin-top: 8px; padding: 0; background: none; border: none;
+  cursor: pointer; font-size: .76rem; color: var(--color-brand-base); }
+.sd-quote-toggle:hover { text-decoration: underline; }
+
+/* The history, set back so the eye can tell it from the reply above it. */
+.sd-msg-quoted { margin-top: 10px; padding-left: 12px; font-size: .82rem;
+  color: var(--color-text-light); border-left: 2px solid var(--color-border); }
 .sd-tag { font-size: .68rem; padding: 1px 6px; border-radius: 999px;
   background: var(--color-surface); color: var(--color-text-light); }
 .sd-tag.internal { background: var(--color-warning); color: #fff; }
@@ -4574,6 +4666,19 @@ watch(tab, (t) => {
 .sd-side { grid-area: side; border-left: 1px solid var(--color-border);
   padding: 16px 18px 20px; display: flex; flex-direction: column; gap: 12px; }
 @media (max-width: 900px) { .sd-side { border-left: none; border-bottom: 1px solid var(--color-border); } }
+
+/*
+ * Headings down the side panel.
+ *
+ * Sixteen controls in one column with no grouping — status, type, impact,
+ * urgency, priority, service level, major incident, category, assignment,
+ * escalation, split, assets, knowledge, portal, survey, time — all weighted
+ * the same, so finding one meant reading all of them. The controls were fine;
+ * the absence of any shape was not.
+ */
+.sd-side-h { margin: 14px 0 2px; font-size: .68rem; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--color-text-muted); }
+.sd-side-h:first-child { margin-top: 0; }
 
 .sd-field { @apply flex flex-col; gap: 5px; }
 .sd-field > span { @apply font-semibold; font-size: .74rem; color: var(--color-text); }
