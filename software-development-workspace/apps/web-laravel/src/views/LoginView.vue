@@ -17,7 +17,28 @@ const loading      = ref(false);
 const ssoLoading   = ref(false);
 const error        = ref((route.query.sso_error as string) ?? "");
 
+const capsLock = ref(false);
+
 const year = new Date().getFullYear();
+
+/*
+ * Caps Lock is the commonest reason a correct password is rejected, and the
+ * field shows the same row of dots either way. Read off the event rather than
+ * tracked as state: it is only ever true while the field has focus, and a tab
+ * away leaves nothing stale behind.
+ */
+function trackCapsLock(event: KeyboardEvent): void {
+  capsLock.value = event.getModifierState?.("CapsLock") ?? false;
+}
+
+/*
+ * The previous attempt's failure stops being the truth the moment they start
+ * correcting it. Leaving it up means the error the user is reading no longer
+ * describes what is in the box.
+ */
+function clearError(): void {
+  if (error.value) error.value = "";
+}
 
 async function login(): Promise<void> {
   if (!email.value.trim() || !password.value) {
@@ -75,8 +96,30 @@ async function signInWithMicrosoft(): Promise<void> {
       <img :src="logoUrl" alt="Konvergenz" class="login-logo" />
 
       <div class="login-body">
+        <!--
+          Below 1024px the brand panel is hidden, and without this the page
+          collapsed to a bare form on a flat surface with the logo adrift in
+          the corner. The band carries the identity across that breakpoint.
+        -->
+        <p class="brand-band" aria-hidden="true">
+          Effortlessly manage your people and operations
+        </p>
+
+        <div class="login-card">
         <h1>Welcome Back</h1>
         <p class="lead">Enter your credentials to proceed to the system</p>
+
+        <!--
+          Above the fields, not below the submit button. A sign-in failure is
+          the reason the page is still on screen; it is read first, and it is
+          the same region whether the attempt was SSO or a password.
+        -->
+        <p v-if="error" class="error" role="alert" aria-live="assertive">
+          <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fill-rule="evenodd" d="M18 10A8 8 0 112 10a8 8 0 0116 0zm-8-4a1 1 0 011 1v3a1 1 0 11-2 0V7a1 1 0 011-1zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+          </svg>
+          <span>{{ error }}</span>
+        </p>
 
         <button
           class="btn-microsoft"
@@ -105,7 +148,10 @@ async function signInWithMicrosoft(): Promise<void> {
               class="control"
               placeholder="Email Address"
               autocomplete="email"
+              autofocus
+              :aria-invalid="error ? 'true' : undefined"
               required
+              @input="clearError"
             />
           </div>
 
@@ -119,7 +165,12 @@ async function signInWithMicrosoft(): Promise<void> {
                 class="control has-affix"
                 placeholder="Password"
                 autocomplete="current-password"
+                :aria-invalid="error ? 'true' : undefined"
                 required
+                @input="clearError"
+                @keyup="trackCapsLock"
+                @keydown="trackCapsLock"
+                @blur="capsLock = false"
               />
               <button
                 type="button"
@@ -138,6 +189,7 @@ async function signInWithMicrosoft(): Promise<void> {
                 </svg>
               </button>
             </div>
+            <p v-if="capsLock" class="caps" role="status">Caps Lock is on.</p>
           </div>
 
           <div class="row-between">
@@ -150,12 +202,11 @@ async function signInWithMicrosoft(): Promise<void> {
             </router-link>
           </div>
 
-          <p v-if="error" class="error" role="alert">{{ error }}</p>
-
           <button type="submit" class="btn-submit" :disabled="loading || ssoLoading">
             {{ loading ? "Signing in…" : "Log In" }}
           </button>
         </form>
+        </div>
       </div>
 
       <footer class="login-foot">
@@ -229,7 +280,7 @@ async function signInWithMicrosoft(): Promise<void> {
   min-height: 100vh;
   min-height: 100dvh;
   grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-  background: var(--color-surface);
+  background: var(--color-surface-sunken);
 }
 
 /* ── Left pane ─────────────────────────────────────────────────────────── */
@@ -250,6 +301,34 @@ async function signInWithMicrosoft(): Promise<void> {
   @apply mx-auto flex w-full flex-col justify-center;
   max-width: 27rem;
   flex: 1;
+}
+
+/*
+ * The form used to sit directly on the page background — same colour, no
+ * edge — so at any width where the brand panel was absent it read as an
+ * unstyled document rather than a sign-in. The card gives it an edge to be
+ * inside of.
+ */
+.login-card {
+  @apply w-full;
+  padding: clamp(1.5rem, 3.5vh, 2.25rem) clamp(1.25rem, 2.5vw, 2rem);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-md);
+}
+
+/* Hidden wherever the brand panel itself is visible — see the 1024px rule. */
+.brand-band {
+  @apply hidden font-semibold;
+  font-size: var(--text-sm-size);
+  line-height: 1.4;
+  text-wrap: balance;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-2xl);
+  background: linear-gradient(150deg, var(--color-brand-hover), var(--color-brand-base) 70%);
+  color: var(--color-on-brand);
 }
 
 .login-body h1 {
@@ -385,12 +464,32 @@ async function signInWithMicrosoft(): Promise<void> {
 }
 
 .error {
+  @apply flex items-start gap-2;
   font-size: var(--text-xs-size);
   color: var(--color-error);
   background: var(--color-error-light);
-  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-error);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   padding: var(--space-3);
-  margin: 0;
+  margin: 0 0 var(--space-4);
+}
+
+.error svg { @apply size-4 shrink-0; margin-top: 1px; }
+
+/* A warning about the keyboard, not about what was typed — so it is muted
+   rather than red, and it is a status: it appears without an attempt. */
+.caps {
+  @apply flex items-center gap-1.5;
+  font-size: var(--text-xs-size);
+  color: var(--color-warning);
+  margin: var(--space-1) 0 0;
+}
+
+.control[aria-invalid='true'] { border-color: var(--color-error); }
+
+.control[aria-invalid='true']:focus {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 3px var(--color-error-light);
 }
 
 .btn-submit {
@@ -609,11 +708,13 @@ async function signInWithMicrosoft(): Promise<void> {
 @media (max-width: 1024px) {
   .login-shell { grid-template-columns: 1fr; }
   .login-brand { @apply hidden; }
+  .brand-band { @apply block; }
 }
 
 @media (max-width: 640px) {
-  .login-pane { padding: 1.25rem; gap: 1.5rem; }
+  .login-pane { padding: 1rem; gap: 1.25rem; }
   .login-body { max-width: none; }
+  .login-card { padding: 1.25rem 1rem; }
   .login-foot { @apply flex-col items-start; gap: 0.25rem; }
 }
 
@@ -632,6 +733,7 @@ async function signInWithMicrosoft(): Promise<void> {
 @media (max-height: 620px) {
   .login-pane { padding-block: 1rem; gap: 1rem; }
   .preview { @apply hidden; }
+  .brand-band { @apply hidden; }
 }
 
 /* Coarse pointers need a larger hit area than a mouse. */
