@@ -25,6 +25,16 @@ use Symfony\Component\HttpFoundation\Response;
  */
 class ResolveOrganizationContext
 {
+    /**
+     * The container key is `current.organization_id`.
+     *
+     * Written down because thirteen call sites across notifications and
+     * training reached for `app('organizationId')` — a name nothing has ever
+     * bound. Every one of them threw a BindingResolutionException, so the
+     * notifications bell and every training assignment endpoint returned a 500
+     * for their entire existence, and the failure looked like a server problem
+     * rather than a typo.
+     */
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();

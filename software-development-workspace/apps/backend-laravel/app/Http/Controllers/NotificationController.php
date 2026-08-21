@@ -14,7 +14,7 @@ class NotificationController extends Controller
     public function unread(Request $request): JsonResponse
     {
         $notifications = Notification::where('user_id', auth()->id())
-            ->byOrganization(app('organizationId'))
+            ->byOrganization(app('current.organization_id'))
             ->unread()
             ->orderByDesc('created_at')
             ->paginate(20);
@@ -28,7 +28,7 @@ class NotificationController extends Controller
     public function all(Request $request): JsonResponse
     {
         $notifications = Notification::where('user_id', auth()->id())
-            ->byOrganization(app('organizationId'))
+            ->byOrganization(app('current.organization_id'))
             ->orderByDesc('created_at')
             ->paginate(20);
 
@@ -41,7 +41,7 @@ class NotificationController extends Controller
     public function unreadCount(): JsonResponse
     {
         $count = Notification::where('user_id', auth()->id())
-            ->byOrganization(app('organizationId'))
+            ->byOrganization(app('current.organization_id'))
             ->unread()
             ->count();
 
@@ -55,7 +55,7 @@ class NotificationController extends Controller
     {
         $notification = Notification::where('id', $id)
             ->where('user_id', auth()->id())
-            ->byOrganization(app('organizationId'))
+            ->byOrganization(app('current.organization_id'))
             ->firstOrFail();
 
         $notification->markAsRead();
@@ -69,7 +69,7 @@ class NotificationController extends Controller
     public function markAllAsRead(): JsonResponse
     {
         Notification::where('user_id', auth()->id())
-            ->byOrganization(app('organizationId'))
+            ->byOrganization(app('current.organization_id'))
             ->whereNull('read_at')
             ->update(['read_at' => now()]);
 
@@ -83,7 +83,7 @@ class NotificationController extends Controller
     {
         $notification = Notification::where('id', $id)
             ->where('user_id', auth()->id())
-            ->byOrganization(app('organizationId'))
+            ->byOrganization(app('current.organization_id'))
             ->firstOrFail();
 
         $notification->delete();

@@ -25,7 +25,7 @@ class TrainingAssignmentController
      */
     public function bulkCreate(BulkAssignTrainingRequest $request): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
         $validated = $request->validated();
 
         $result = $this->service->bulkCreateForApproval(
@@ -49,7 +49,7 @@ class TrainingAssignmentController
      */
     public function myPending(Request $request): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
         $user = auth()->user();
         $managerId = $user->id;
 
@@ -71,7 +71,7 @@ class TrainingAssignmentController
      */
     public function index(Request $request): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
         $perPage = $request->query('per_page', 20);
 
         $query = TrainingAssignment::byOrganization($organizationId)
@@ -105,7 +105,7 @@ class TrainingAssignmentController
      */
     public function show(string $id): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
 
         $assignment = TrainingAssignment::byOrganization($organizationId)
             ->with(['trainingItem', 'employee', 'assignedByUser', 'manager'])
@@ -121,7 +121,7 @@ class TrainingAssignmentController
      */
     public function approve(ApproveAssignmentRequest $request, string $id): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
 
         $result = $this->service->approve($id, $organizationId, $request->validated('notes'));
 
@@ -133,7 +133,7 @@ class TrainingAssignmentController
      */
     public function reject(RejectAssignmentRequest $request, string $id): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
 
         $result = $this->service->reject($id, $organizationId, $request->validated('reason'));
 
@@ -145,7 +145,7 @@ class TrainingAssignmentController
      */
     public function stats(Request $request): JsonResponse
     {
-        $organizationId = app('organizationId');
+        $organizationId = app('current.organization_id');
         $managerId = $request->query('manager_id');
 
         $stats = $this->service->getStats($organizationId, $managerId);
