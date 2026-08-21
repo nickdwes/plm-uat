@@ -48,6 +48,7 @@ class PlmLeadImportTest extends TestCase
             $t->integer('opportunity')->nullable();
             $t->integer('project')->nullable();
             $t->integer('owner')->nullable();
+            $t->integer('author')->nullable();
             $t->string('status')->nullable();
             $t->integer('active')->nullable();
             $t->string('created_at')->nullable();
@@ -90,7 +91,7 @@ class PlmLeadImportTest extends TestCase
         DB::connection('plm')->table('mdl_projects_leads')->insert(array_merge([
             'id' => $id, 'name' => "Lead {$id}", 'account' => 9, 'status' => 'New',
             'description' => '<p>They want SDWAN across the branches.</p>',
-            'active' => 1, 'created_at' => '2024-02-01 09:00:00',
+            'active' => 1, 'created_at' => '2024-02-01 09:00:00', 'author' => null,
         ], $attributes));
     }
 
@@ -310,6 +311,40 @@ class PlmLeadImportTest extends TestCase
         $this->runImport(['--apply' => true]);
 
         $this->assertSame(['medium', 'medium'], Lead::orderBy('name')->pluck('priority')->all());
+    }
+
+    /**
+     * `created_by` wants a user and the old system only ever named employees.
+     *
+     * Joined through the employee's own login rather than by hoping the two id
+     * spaces line up — they do not, and a wrong one here credits the record to
+     * a different person entirely.
+     */
+    public function test_the_creator_is_resolved_through_the_employees_login(): void
+    {
+        $employee = $this->owner(42);
+        $user = \App\Models\User::create([
+            'name' => 'Ann', 'email' => 'ann42@kns.co.ke', 'password' => bcrypt('x'),
+        ]);
+        $employee->forceFill(['user_id' => $user->id])->save();
+
+        $this->lead(1, ['author' => 42]);
+
+        $this->runImport(['--apply' => true]);
+
+        $this->assertSame($user->id, Lead::first()->created_by);
+    }
+
+    /** Failing an owner, whoever raised it — an owned lead can be asked about. */
+    public function test_the_author_owns_a_lead_that_names_no_owner(): void
+    {
+        $raiser = $this->owner(42);
+
+        $this->lead(1, ['owner' => null, 'author' => 42]);
+
+        $this->runImport(['--apply' => true]);
+
+        $this->assertSame($raiser->id, Lead::first()->owner_id);
     }
 
     // ── The usual promises ────────────────────────────────────────────────────

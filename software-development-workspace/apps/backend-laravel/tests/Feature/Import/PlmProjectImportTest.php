@@ -63,6 +63,7 @@ class PlmProjectImportTest extends TestCase
             $t->integer('practice')->nullable();
             $t->integer('opportunity_type')->nullable();
             $t->integer('presale_lead')->nullable();
+            $t->integer('author')->nullable();
             $t->string('estimated_close_date')->nullable();
             $t->string('account_weight')->nullable();
             $t->string('know_procurement')->nullable();
@@ -74,6 +75,13 @@ class PlmProjectImportTest extends TestCase
             $t->string('year_commited')->nullable();
             $t->string('commited_quater')->nullable();
             $t->string('discuss_in_weekly_meetings')->nullable();
+            $t->string('created_at')->nullable();
+        });
+
+        $schema->create('mdl_projects_history', function ($t) {
+            $t->integer('id')->primary();
+            $t->string('description')->nullable();
+            $t->integer('opportunity')->nullable();
             $t->string('created_at')->nullable();
         });
 
@@ -167,7 +175,7 @@ class PlmProjectImportTest extends TestCase
         DB::connection('plm')->table('mdl_projects_opportunities')->insert(array_merge([
             'id' => $id, 'name' => "Opportunity {$id}", 'account' => 9, 'phase' => 11,
             'budget' => '2500000', 'estimated_close_date' => '2025-06-30',
-            'deal_registered' => 'yes', 'oem_pressure' => '0',
+            'deal_registered' => 'yes', 'oem_pressure' => '0', 'author' => null,
             'created_at' => '2024-01-10 09:00:00',
         ], $attributes));
     }
@@ -383,6 +391,97 @@ class PlmProjectImportTest extends TestCase
 
         $this->assertNull(Opportunity::first()->opportunity_phase_id);
         $this->assertStringContainsString('A Phase We Never Had', $output);
+    }
+
+    // ── Who owns it, and when things happened ─────────────────────────────────
+
+    /**
+     * Whoever raised it owns it.
+     *
+     * The old system had no owner field. `author` is an employee id — across
+     * the leads it matches the owner's employee id 149 times against 3 for
+     * their user id — and it agrees with the originating lead's owner in 113
+     * of 129 cases. Without this every opportunity arrives ownerless.
+     */
+    public function test_an_opportunity_is_owned_by_whoever_raised_it(): void
+    {
+        $raiser = $this->ours(42);
+
+        $this->opportunity(1, ['author' => 42]);
+
+        $this->runImport(['--apply' => true]);
+
+        $this->assertSame($raiser->id, Opportunity::first()->owner_id);
+    }
+
+    /** `created_by` wants a user, and the old system only named employees. */
+    public function test_the_creator_is_resolved_through_the_employees_login(): void
+    {
+        $employee = $this->ours(42);
+        $user = \App\Models\User::create([
+            'name' => 'Ann', 'email' => 'ann42@kns.co.ke', 'password' => bcrypt('x'),
+        ]);
+        $employee->forceFill(['user_id' => $user->id])->save();
+
+        $this->opportunity(1, ['author' => 42]);
+
+        $this->runImport(['--apply' => true]);
+
+        $this->assertSame($user->id, Opportunity::first()->created_by);
+    }
+
+    /**
+     * Qualification has a date only in the activity trail.
+     *
+     * The opportunity's own row records that it was qualified, never when —
+     * and "when" is the half that says how long qualifying takes.
+     */
+    public function test_qualification_and_budget_dates_come_from_the_trail(): void
+    {
+        $this->opportunity(1);
+
+        DB::connection('plm')->table('mdl_projects_history')->insert([
+            ['id' => 1, 'opportunity' => 1, 'description' => 'Opportunity marked as qualified.',
+             'created_at' => '2024-03-08 11:00:00'],
+            ['id' => 2, 'opportunity' => 1, 'description' => 'Budget confirmed by customer.',
+             'created_at' => '2024-04-02 15:30:00'],
+        ]);
+
+        $this->runImport(['--apply' => true]);
+
+        $deal = Opportunity::firstOrFail();
+
+        $this->assertSame('2024-03-08', $deal->qualified_at->toDateString());
+        $this->assertSame('2024-04-02', $deal->budget_confirmed_at->toDateString());
+    }
+
+    /** Qualifying happens once; a later identical row is somebody re-saving. */
+    public function test_the_earliest_of_a_repeated_event_is_the_one_kept(): void
+    {
+        $this->opportunity(1);
+
+        DB::connection('plm')->table('mdl_projects_history')->insert([
+            ['id' => 1, 'opportunity' => 1, 'description' => 'Opportunity marked as qualified.',
+             'created_at' => '2024-06-01 09:00:00'],
+            ['id' => 2, 'opportunity' => 1, 'description' => 'Opportunity marked as qualified.',
+             'created_at' => '2024-03-08 11:00:00'],
+        ]);
+
+        $this->runImport(['--apply' => true]);
+
+        $this->assertSame('2024-03-08', Opportunity::first()->qualified_at->toDateString());
+    }
+
+    public function test_an_opportunity_with_no_trail_has_no_invented_dates(): void
+    {
+        $this->opportunity(1);
+
+        $this->runImport(['--apply' => true]);
+
+        $deal = Opportunity::firstOrFail();
+
+        $this->assertNull($deal->qualified_at);
+        $this->assertNull($deal->budget_confirmed_at);
     }
 
     // ── Comments ──────────────────────────────────────────────────────────────

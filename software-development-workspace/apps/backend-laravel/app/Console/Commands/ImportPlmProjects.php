@@ -160,6 +160,18 @@ class ImportPlmProjects extends Command
                 'amount'               => is_numeric($row->budget) ? $row->budget : null,
                 'expected_close_date'  => $this->date($row->estimated_close_date),
                 'opportunity_phase_id' => $this->phase($row->phase),
+                /*
+                 * Whoever raised it owns it. The old system had no owner
+                 * field, but `author` is an employee id — proved rather than
+                 * assumed: across the leads it matches the owner's employee id
+                 * 149 times against 3 for their user id — and on the
+                 * opportunities it agrees with the originating lead's owner in
+                 * 113 of 129 cases. The sixteen where it differs are somebody
+                 * else having picked the deal up, which is the more specific
+                 * fact of the two.
+                 */
+                'owner_id'             => $this->employee($row->author),
+                'created_by'           => $this->userBehind($row->author),
                 'presale_lead_id'      => $this->employee($row->presale_lead),
                 'account_weight'       => $this->flag($row->account_weight),
                 'knows_procurement'    => $this->flag($row->know_procurement),
@@ -172,6 +184,14 @@ class ImportPlmProjects extends Command
                 'committed_quarter'    => $this->text($row->commited_quater),
                 'discuss_weekly'       => $this->flag($row->discuss_in_weekly_meetings),
                 'gap_analysis'         => $this->text($row->gap_analysis_comment),
+                /*
+                 * Dated from the activity trail, which is the only place these
+                 * moments were ever written down. The opportunity's own row
+                 * records that it was qualified, never when — and "when" is
+                 * the half that tells you how long qualification takes.
+                 */
+                'qualified_at'         => $this->happened($row->id, 'Opportunity marked as qualified'),
+                'budget_confirmed_at'  => $this->happened($row->id, 'Budget confirmed by customer'),
                 'created_at'           => $this->date($row->created_at) ?? now(),
             ], ['name' => $row->name, 'account' => $row->account, 'phase' => $row->phase]);
 
@@ -417,6 +437,47 @@ class ImportPlmProjects extends Command
         }
 
         return $this->cache[$key];
+    }
+
+    /**
+     * When something first happened to an opportunity, from the trail.
+     *
+     * The earliest match, because these are one-way events: an opportunity is
+     * qualified once, and a later row saying the same thing is somebody
+     * re-saving the form.
+     */
+    private function happened(int $opportunityId, string $event): ?string
+    {
+        $key = "hist|{$opportunityId}|{$event}";
+
+        if (! array_key_exists($key, $this->cache)) {
+            $this->cache[$key] = $this->legacy()->table('mdl_projects_history')
+                ->where('opportunity', $opportunityId)
+                ->where('description', 'like', $event . '%')
+                ->min('created_at') ?: null;
+        }
+
+        return $this->date($this->cache[$key]);
+    }
+
+    /**
+     * The login belonging to an employee, for the columns that want a user.
+     *
+     * `created_by` points at users and everything the old system recorded
+     * points at employees, so the two are joined through the employee's own
+     * account rather than by hoping the ids line up — they do not.
+     */
+    private function userBehind(mixed $legacyEmployeeId): ?int
+    {
+        $employee = $this->employee($legacyEmployeeId);
+
+        if (! $employee) {
+            return null;
+        }
+
+        $key = "user-of|{$employee}";
+
+        return $this->cache[$key] ??= Employee::whereKey($employee)->value('user_id');
     }
 
     private function ticketFor(mixed $legacyId): ?int

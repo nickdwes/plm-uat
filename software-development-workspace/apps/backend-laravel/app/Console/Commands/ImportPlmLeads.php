@@ -127,7 +127,12 @@ class ImportPlmLeads extends Command
                 continue;
             }
 
-            $owner = $this->employee($row->owner);
+            /*
+             * Failing an owner, whoever raised it. One lead has no owner and
+             * does have an author, and an owned lead is one somebody can be
+             * asked about.
+             */
+            $owner = $this->employee($row->owner) ?? $this->employee($row->author);
 
             if (! $owner) {
                 $noOwner++;
@@ -160,6 +165,7 @@ class ImportPlmLeads extends Command
                  */
                 'priority'        => 'medium',
                 'owner_id'        => $owner,
+                'created_by'      => $this->userBehind($row->author),
                 'created_at'      => $this->date($row->created_at) ?? now(),
             ], fn ($v) => $v !== null));
 
@@ -326,6 +332,26 @@ class ImportPlmLeads extends Command
         $space = mb_strrpos($head, ' ');
 
         return rtrim($space ? mb_substr($head, 0, $space) : $head) . '…';
+    }
+
+    /**
+     * The login behind an employee, for the columns that want a user.
+     *
+     * `created_by` points at users while everything the old system recorded
+     * points at employees, so the two are joined through the employee's own
+     * account rather than by hoping the ids line up — they do not.
+     */
+    private function userBehind(mixed $legacyEmployeeId): ?int
+    {
+        $employee = $this->employee($legacyEmployeeId);
+
+        if (! $employee) {
+            return null;
+        }
+
+        $key = "user-of|{$employee}";
+
+        return $this->cache[$key] ??= Employee::whereKey($employee)->value('user_id');
     }
 
     /** A description as a sentence: the old editor wrote HTML into this too. */
