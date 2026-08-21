@@ -62,3 +62,22 @@ Schedule::command('support:escalate')->everyFifteenMinutes()->withoutOverlapping
  * often than the cooldowns allow anyway.
  */
 Schedule::command('support:automations')->hourly()->withoutOverlapping();
+
+/*
+ * A verified copy of the database, nightly.
+ *
+ * There was none at all until the day a stray environment variable pointed the
+ * test suite at production and it dropped every table. What saved it was luck
+ * dressed as design — the importers happened to be re-runnable and the legacy
+ * dump happened to still be on disk — and neither would have brought back a
+ * record somebody typed in by hand.
+ *
+ * Half past two because it is after the day's work and before anybody starts,
+ * and the dump takes seconds at this size. Fourteen kept: long enough that a
+ * problem noticed a week late still has a copy from before it, short enough
+ * that nobody has to think about disk.
+ */
+Schedule::command('db:back-up --keep=14')
+    ->dailyAt('02:30')
+    ->withoutOverlapping()
+    ->onFailure(fn () => logger()->error('The nightly database backup failed.'));

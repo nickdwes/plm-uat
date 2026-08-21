@@ -47,3 +47,7 @@ build/
 # Temporary files
 *.tmp
 *.swp
+
+# Database dumps. Kept on the host, never in the repository — they hold
+# employee records, customer correspondence and payroll figures.
+backups/*.dump
