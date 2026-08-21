@@ -13,7 +13,6 @@ import EmployeeVehiclesView   from "../views/EmployeeVehiclesView.vue";
 import MyInfoView          from "../views/MyInfoView.vue";
 import OnboardingView      from "../views/OnboardingView.vue";
 import LeaveView           from "../views/LeaveView.vue";
-import LeaveApprovalsView  from "../views/LeaveApprovalsView.vue";
 import LeaveAdminView      from "../views/LeaveAdminView.vue";
 import PayrollView         from "../views/PayrollView.vue";
 import PayrollConfigView   from "../views/PayrollConfigView.vue";
@@ -147,7 +146,13 @@ const routes: RouteRecordRaw[] = [
   { path: "/employees/:id",   name: "employee-detail",  component: EmployeeDetailView, props: true },
   { path: "/my-info",         name: "my-info",          component: MyInfoView },
   { path: "/leave",           name: "leave",            component: LeaveView },
-  { path: "/leave/approvals", name: "leave-approvals",  component: LeaveApprovalsView },
+  /*
+   * Approvals folded into the leave page's second tab. Kept as a redirect
+   * rather than removed: the path is in people's bookmarks and in older
+   * notification emails, and a dead link there reads as the feature being
+   * gone rather than moved.
+   */
+  { path: "/leave/approvals", name: "leave-approvals", redirect: { name: "leave" } },
   { path: "/leave/admin",     name: "leave-admin",      component: LeaveAdminView },
   { path: "/payroll",         name: "payroll",          component: PayrollView },
   { path: "/payroll/:id/send", name: "payroll-send",    component: SendPayslipsView, props: true },

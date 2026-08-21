@@ -235,6 +235,8 @@ export type LeaveStatus = "pending" | "approved" | "rejected" | "cancelled";
 
 export interface LeaveRequest {
   id: number;
+  /** Quotable reference, derived from the id server-side. */
+  reference: string;
   employee_id: number;
   organization_id: number;
   employee: { id: number; first_name: string; last_name: string; employee_number: string } | null;
@@ -250,6 +252,39 @@ export interface LeaveRequest {
   rejection_reason: string | null;
   approved_by: { id: number; full_name: string } | null;
   actioned_at: string | null;
+  created_at: string;
+  /** Present only when the listing eager-counted them. */
+  attachments_count?: number;
+  messages_count?: number;
+}
+
+/** How wide a leave listing is — decided server-side, echoed in meta.scope. */
+export type LeaveScope = "own" | "team" | "all";
+
+export interface LeaveSummary {
+  pending_requests: number;
+  on_leave_today: number;
+  upcoming_this_week: number;
+  rejected_this_month: number;
+  availability: { available: number; headcount: number; percentage: number | null };
+  scope: LeaveScope;
+}
+
+export interface LeaveAttachment {
+  id: number;
+  original_name: string;
+  mime_type: string | null;
+  size_bytes: number;
+  uploaded_by: string | null;
+  created_at: string;
+}
+
+export interface LeaveMessage {
+  id: number;
+  body: string;
+  author: string | null;
+  author_id: number;
+  visible_to_employee: boolean;
   created_at: string;
 }
 
