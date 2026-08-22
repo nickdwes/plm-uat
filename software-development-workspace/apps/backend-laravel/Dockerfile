@@ -21,6 +21,11 @@ RUN apk add --no-cache \
     && docker-php-ext-install \
         pdo_pgsql \
         pgsql \
+        # The legacy PLM is MySQL. The import commands live in this repo and
+        # could not run in this image without it — they were working only
+        # because the driver had been added to a running container by hand,
+        # which the next rebuild threw away.
+        pdo_mysql \
         mbstring \
         exif \
         pcntl \
