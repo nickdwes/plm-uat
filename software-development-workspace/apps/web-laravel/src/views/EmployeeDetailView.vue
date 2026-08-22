@@ -12,8 +12,34 @@ const employee = ref<Employee | null>(null);
 const loading  = ref(false);
 const error    = ref("");
 
-type Tab = "overview" | "career" | "profiles" | "benefits" | "documents";
-const tab = ref<Tab>("overview");
+/*
+ * The nine tabs the HR portal designs specify, in their order.
+ *
+ * The five that existed were a different carve-up of roughly the same
+ * material, not a subset: Career and Benefits have no counterpart in the
+ * design, and Job Details, Emergency Contacts, Dependents, Attendance,
+ * Leave, Payroll and Performance had none here. Rather than run fourteen
+ * tabs, the old contents move into their nearest new home — career history
+ * into Job Details, benefits into Payroll, the personal detail into Profile
+ * Overview. Nothing is deleted; it is relocated.
+ */
+type Tab =
+  | "profile-overview" | "job-details" | "emergency-contacts" | "dependents"
+  | "attendance" | "leave" | "payroll" | "performance" | "documents";
+
+const tab = ref<Tab>("profile-overview");
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: "profile-overview",   label: "Profile Overview" },
+  { key: "job-details",        label: "Job Details" },
+  { key: "emergency-contacts", label: "Emergency Contacts" },
+  { key: "dependents",         label: "Dependents" },
+  { key: "attendance",         label: "Attendance Management" },
+  { key: "leave",              label: "Leave Management" },
+  { key: "payroll",            label: "Payroll" },
+  { key: "performance",        label: "Performance" },
+  { key: "documents",          label: "Documents" },
+];
 
 // ── Documents ──────────────────────────────────────────────────────────────
 /*
@@ -73,10 +99,76 @@ async function loadDocs(): Promise<void> {
   } finally { docsLoading.value = false; }
 }
 
-/** Loaded when the tab is first opened, not on every page view. */
-function openDocs(): void {
-  tab.value = "documents";
-  if (!docsLoaded.value) void loadDocs();
+// ── The tabs added in the design adoption ────────────────────────────────
+interface Dependent {
+  id: number; name: string; relationship: string | null;
+  date_of_birth: string | null; gender?: string | null;
+}
+interface Balance {
+  leave_type: string; entitled_days: number; used_days: number;
+  pending_days: number; available_days: number;
+}
+
+const contacts   = ref<EmergencyContact[]>([]);
+const dependents = ref<Dependent[]>([]);
+const balances   = ref<Balance[]>([]);
+const sideError  = ref("");
+
+/**
+ * Loaded when a tab is first opened, not on every page view.
+ *
+ * Nine tabs fetched eagerly would be nine requests for a page where most
+ * visitors read the first one and leave.
+ */
+const loaded = ref<Partial<Record<Tab, boolean>>>({});
+
+async function openTab(next: Tab): Promise<void> {
+  tab.value = next;
+
+  if (next === "documents") { if (!docsLoaded.value) void loadDocs(); return; }
+  if (loaded.value[next]) return;
+
+  loaded.value[next] = true;
+  sideError.value = "";
+
+  try {
+    if (next === "emergency-contacts") {
+      const res = await api<{ data: EmergencyContact[] }>(
+        "GET", `/api/v1/employees/${props.id}/emergency-contacts`, { org: org() });
+      contacts.value = res.data ?? [];
+    } else if (next === "dependents") {
+      const res = await api<{ data: Dependent[] }>(
+        "GET", `/api/v1/employees/${props.id}/dependents`, { org: org() });
+      dependents.value = res.data ?? [];
+    }
+  } catch (e) {
+    // The tab still renders; it says it could not read rather than showing an
+    // empty list, which would read as "none recorded".
+    loaded.value[next] = false;
+    sideError.value = e instanceof Error ? e.message : "Could not load that.";
+  }
+}
+
+/**
+ * The viewer's own balance, for the Current Leave Balance card.
+ *
+ * The endpoint answers for whoever is signed in, so it is only shown on your
+ * own record — printing somebody else's card headed with their name while it
+ * holds your figures would be worse than not showing it.
+ */
+const isSelf = ref(false);
+
+async function loadBalances(): Promise<void> {
+  try {
+    const me = await api<{ data: { id: number } }>("GET", "/api/v1/employees/me", { org: org() });
+    isSelf.value = String(me.data?.id) === String(props.id);
+    if (!isSelf.value) return;
+
+    const res = await api<{ data: Balance[] }>("GET", "/api/v1/leave/balance", { org: org() });
+    balances.value = res.data ?? [];
+  } catch {
+    isSelf.value = false;
+  }
 }
 
 async function uploadDoc(e: Event): Promise<void> {
@@ -576,6 +668,7 @@ function qualTypeBadgeColor(type: string): string {
 
 onMounted(() => {
   void load();
+  void loadBalances();
   // History only, and quietly — it is the one thing on this screen that is
   // usually empty, and a failure to fetch it should not block the record.
   void loadMovements();
@@ -589,7 +682,9 @@ onMounted(() => {
     <nav class="ed-breadcrumb">
       <span class="ed-bc-link" @click="router.push({ name: 'employees' })">Employees</span>
       <span class="ed-bc-sep">/</span>
-      <span class="ed-bc-current">{{ employee ? (employee as any).full_name : "…" }}</span>
+      <!-- The reference, as the design has it. The name is directly below in
+           the header, so repeating it here says nothing new. -->
+      <span class="ed-bc-current">{{ employee ? `#${(employee as any).employee_number ?? (employee as any).id}` : "…" }}</span>
     </nav>
 
     <p v-if="loading" class="status">Loading…</p>
@@ -619,9 +714,15 @@ onMounted(() => {
             <div>
               <h2 class="ed-name">{{ (employee as any).full_name }}</h2>
               <p class="ed-sub">
-                {{ (employee as any).designation?.title ?? (employee as any).designation?.name ?? "No designation" }}
-                &nbsp;·&nbsp;
-                {{ (employee as any).department?.name ?? "No department" }}
+                <!-- Designations are empty until the PLM import runs, so this
+                     says so rather than printing a dash that reads as a field
+                     nobody filled. -->
+                <span v-if="(employee as any).designation?.title || (employee as any).designation?.name">
+                  {{ (employee as any).designation?.title ?? (employee as any).designation?.name }}
+                </span>
+                <span v-else class="ed-unset">Role not set</span>
+                &nbsp;•&nbsp;
+                <span class="ed-sub-type">{{ (employee as any).employment_type?.replace(/_/g, " ") ?? "—" }}</span>
               </p>
               <span class="ed-emp-id-badge">{{ (employee as any).employee_number }}</span>
               <span v-if="(employee as any).manager?.full_name" class="ed-manager-chip">
@@ -649,18 +750,111 @@ onMounted(() => {
       </div>
 
       <!-- ── TAB NAV ───────────────────────────────────────────────────────── -->
-      <div class="ed-tabs">
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'overview'  }]" @click="tab = 'overview'">Overview</button>
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'career'    }]" @click="tab = 'career'">Career</button>
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'profiles'  }]" @click="tab = 'profiles'">Profile</button>
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'benefits'  }]" @click="tab = 'benefits'">Benefits</button>
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'documents' }]" @click="openDocs">Documents</button>
-        <router-link :to="{ name: 'employee-dependents', params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Dependents</router-link>
-        <router-link :to="{ name: 'employee-vehicles',   params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Vehicles</router-link>
+      <!-- Nine tabs do not fit 1440px — the design's own frame is clipped at
+           "Performa…" — so the bar scrolls rather than wrapping into two rows
+           that push the content down. -->
+      <div class="ed-tabs" role="tablist">
+        <button
+          v-for="t in TABS" :key="t.key"
+          role="tab" :aria-selected="tab === t.key"
+          :class="['ed-tab', { 'ed-tab-active': tab === t.key }]"
+          @click="openTab(t.key)"
+        >{{ t.label }}</button>
+        <!-- Not in the design, but a real screen that would otherwise become
+             unreachable from here. -->
+        <router-link :to="{ name: 'employee-vehicles', params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Vehicles</router-link>
       </div>
 
       <!-- ── OVERVIEW ──────────────────────────────────────────────────────── -->
-      <div v-if="tab === 'overview'" class="ed-tab-body">
+      <div v-if="tab === 'profile-overview'" class="ed-tab-body">
+
+        <!--
+          The four cards the design specifies. Every field here already existed
+          on `employees`; this tab is presentation, not schema.
+        -->
+        <div class="ed-two-col">
+          <div class="ed-section-card">
+            <h3 class="ed-section-title ed-card-h">
+              <span class="ed-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <circle cx="10" cy="7" r="3.2" /><path d="M4 16.5c0-3 2.7-5 6-5s6 2 6 5" />
+                </svg>
+              </span>
+              <span>Personal Information<em>Basic personal and contact details.</em></span>
+            </h3>
+            <div class="ed-kv-list">
+              <div class="ed-kv-row"><span class="ed-kv-label">Work Email</span>
+                <span class="ed-kv-val">{{ (employee as any).work_email ?? (employee as any).email ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Personal Email</span>
+                <span class="ed-kv-val">{{ (employee as any).personal_email ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Date of Birth</span>
+                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_birth) }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Phone</span>
+                <span class="ed-kv-val">{{ (employee as any).phone ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Enrolled on</span>
+                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span></div>
+            </div>
+          </div>
+
+          <div class="ed-section-card">
+            <h3 class="ed-section-title ed-card-h">
+              <span class="ed-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="3" y="4.5" width="14" height="11" rx="2" /><path d="M7 9h.01M10.5 9H14M10.5 12H14M6 12.5h2" />
+                </svg>
+              </span>
+              <span>Statutory IDs<em>ID, NSSF, SHA, KRA PIN.</em></span>
+            </h3>
+            <div class="ed-kv-list">
+              <div class="ed-kv-row"><span class="ed-kv-label">National ID</span>
+                <span class="ed-kv-val">{{ (employee as any).national_id ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Passport No</span>
+                <span class="ed-kv-val">{{ (employee as any).passport_number ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">KRA PIN</span>
+                <span class="ed-kv-val">{{ (employee as any).tax_id ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">NSSF Number</span>
+                <span class="ed-kv-val">{{ (employee as any).nssf_number ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">SHA / NHIF No</span>
+                <span class="ed-kv-val">{{ (employee as any).nhif_number ?? "—" }}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ed-section-card">
+          <h3 class="ed-section-title">Health Information</h3>
+          <div class="ed-two-col ed-two-col-flat">
+            <div class="ed-kv-list">
+              <div class="ed-kv-row"><span class="ed-kv-label">Blood Group</span>
+                <span class="ed-kv-val">{{ (employee as any).blood_group ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Allergies</span>
+                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).allergies ?? "—" }}</span></div>
+            </div>
+            <div class="ed-kv-list">
+              <div class="ed-kv-row"><span class="ed-kv-label">Known Conditions</span>
+                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).known_conditions ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Disability</span>
+                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).disabilities ?? "—" }}</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!--
+          Only on your own record. The balance endpoint answers for whoever is
+          signed in, so printing this card under somebody else's name would put
+          your figures under their heading.
+        -->
+        <div v-if="isSelf" class="ed-section-card">
+          <h3 class="ed-section-title">Current Leave Balance</h3>
+          <div v-if="balances.length" class="ed-bal-grid">
+            <div v-for="b in balances" :key="b.leave_type" class="ed-bal">
+              <span class="ed-bal-type">{{ b.leave_type }}</span>
+              <strong>{{ b.available_days }}</strong>
+              <em>of {{ b.entitled_days }} · {{ b.pending_days }} pending</em>
+            </div>
+          </div>
+          <p v-else class="ed-muted">No leave types are set up for this organisation yet.</p>
+        </div>
+
         <div class="ed-two-col">
 
           <!-- CONTACT -->
@@ -864,7 +1058,7 @@ onMounted(() => {
       </div><!-- /overview -->
 
       <!-- ── CAREER ────────────────────────────────────────────────────────── -->
-      <div v-if="tab === 'career'" class="ed-tab-body">
+      <div v-if="tab === 'job-details'" class="ed-tab-body">
 
         <!-- Career Details -->
         <div class="ed-section-card">
@@ -1271,7 +1465,7 @@ onMounted(() => {
       </div>
 
       <!-- ── PROFILES ──────────────────────────────────────────────────────── -->
-      <div v-if="tab === 'profiles'" class="ed-tab-body">
+      <div v-if="tab === 'profile-overview'" class="ed-tab-body ed-tab-body-tight">
 
         <!-- Professional Summary (full-width, always visible) -->
         <div class="ed-section-card">
@@ -1373,7 +1567,7 @@ onMounted(() => {
       </div>
 
       <!-- ── BENEFITS ──────────────────────────────────────────────────────── -->
-      <div v-if="tab === 'benefits'" class="ed-tab-body">
+      <div v-if="tab === 'payroll'" class="ed-tab-body">
 
         <div class="ed-section-card">
           <div class="ed-section-hdr" style="margin-bottom:16px">
@@ -1478,6 +1672,105 @@ onMounted(() => {
       </div>
 
       <!-- ═══════════════  DOCUMENTS  ═══════════════ -->
+      <!-- ── EMERGENCY CONTACTS ────────────────────────────────────────── -->
+      <div v-if="tab === 'emergency-contacts'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <h3 class="ed-section-title">Emergency Contacts</h3>
+          <p v-if="sideError" class="error">{{ sideError }}</p>
+          <table v-else-if="contacts.length" class="ed-mini-table">
+            <thead><tr><th>Name</th><th>Relationship</th><th>Phone</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="c in contacts" :key="c.id">
+                <td>{{ c.name }}</td>
+                <td>{{ c.relationship ?? "—" }}</td>
+                <td>{{ c.phone ?? "—" }}</td>
+                <td class="ed-right"><span v-if="c.is_primary" class="badge badge-green">Primary</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <!-- Says what is missing and how to fix it. A blank panel reads as a
+               fault; this reads as a job. -->
+          <p v-else class="ed-muted">
+            No emergency contact is recorded for this person. Add one from
+            <router-link class="ed-link" :to="{ name: 'employee-edit', params: { id: (employee as any).id } }">Edit</router-link>.
+          </p>
+        </div>
+      </div>
+
+      <!-- ── DEPENDENTS ────────────────────────────────────────────────── -->
+      <div v-if="tab === 'dependents'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Dependents</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'employee-dependents', params: { id: (employee as any).id } }">
+              Manage
+            </router-link>
+          </div>
+          <p v-if="sideError" class="error">{{ sideError }}</p>
+          <table v-else-if="dependents.length" class="ed-mini-table">
+            <thead><tr><th>Name</th><th>Relationship</th><th>Date of Birth</th></tr></thead>
+            <tbody>
+              <tr v-for="d in dependents" :key="d.id">
+                <td>{{ d.name }}</td>
+                <td>{{ d.relationship ?? "—" }}</td>
+                <td>{{ fmtDate(d.date_of_birth) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">No dependents are recorded for this person.</p>
+        </div>
+      </div>
+
+      <!-- ── ATTENDANCE ────────────────────────────────────────────────── -->
+      <div v-if="tab === 'attendance'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <h3 class="ed-section-title">Attendance Management</h3>
+          <!--
+            A window onto the attendance module, not a second implementation of
+            it. Nothing has been recorded yet, so it points at its owner rather
+            than drawing an empty chart.
+          -->
+          <p class="ed-muted">
+            Attendance is recorded by the Attendance Tracker. Nothing has been logged for anybody
+            in this organisation yet, so there is nothing to show here.
+          </p>
+          <router-link class="btn btn-outline btn-sm" :to="{ name: 'attendance' }">Open Attendance Tracker</router-link>
+        </div>
+      </div>
+
+      <!-- ── LEAVE ─────────────────────────────────────────────────────── -->
+      <div v-if="tab === 'leave'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Leave Management</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'leave' }">Open Leave</router-link>
+          </div>
+          <div v-if="isSelf && balances.length" class="ed-bal-grid">
+            <div v-for="b in balances" :key="b.leave_type" class="ed-bal">
+              <span class="ed-bal-type">{{ b.leave_type }}</span>
+              <strong>{{ b.available_days }}</strong>
+              <em>of {{ b.entitled_days }} · {{ b.used_days }} taken</em>
+            </div>
+          </div>
+          <p v-else class="ed-muted">
+            Balances and history for this person are on the Leave screen, where the request and
+            approval trail lives.
+          </p>
+        </div>
+      </div>
+
+      <!-- ── PERFORMANCE ───────────────────────────────────────────────── -->
+      <div v-if="tab === 'performance'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <h3 class="ed-section-title">Performance</h3>
+          <p class="ed-muted">
+            Reviews, goals and appraisals belong to the Performance module. No review has been
+            recorded for anybody in this organisation yet.
+          </p>
+          <router-link class="btn btn-outline btn-sm" :to="{ name: 'performance' }">Open Performance</router-link>
+        </div>
+      </div>
+
       <div v-if="tab === 'documents'" class="ed-tab-body">
         <div class="ed-section-card">
           <div class="ed-section-hdr" style="margin-bottom:12px">
@@ -1732,4 +2025,58 @@ onMounted(() => {
   font-size: 12.5px; color: var(--color-text-muted); }
 .ed-force input { margin-top: 2px; }
 .ed-muted { color: var(--color-text-muted); font-size: 13px; }
+
+/* ── Adopted from the HR portal designs ────────────────────────────────── */
+
+/* Nine tabs do not fit 1440px. Scrolling keeps them on one line instead of
+   wrapping into a second row that shoves the content down the page. */
+.ed-tabs { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: thin; }
+.ed-tab  { white-space: nowrap; }
+
+.ed-unset { color: var(--color-text-light); }
+.ed-sub-type { text-transform: capitalize; }
+
+/* Card headings carrying an icon and a subtitle, as the design draws them. */
+.ed-card-h { display: flex; align-items: flex-start; gap: 12px; }
+.ed-card-h em {
+  display: block; font-style: normal; font-weight: 400;
+  font-size: 12px; color: var(--color-text-muted); margin-top: 2px;
+}
+.ed-card-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--color-brand-light); color: var(--color-brand-base);
+}
+.ed-card-icon svg { width: 18px; height: 18px; }
+
+/* A plain two-column split with no card of its own, for use inside one. */
+.ed-two-col-flat { gap: 24px; }
+
+.ed-bal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 12px; }
+.ed-bal {
+  display: flex; flex-direction: column;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+}
+.ed-bal-type { font-size: 12px; color: var(--color-text-muted); }
+.ed-bal strong { font-size: 24px; font-weight: 600; color: var(--color-text); }
+.ed-bal em { font-style: normal; font-size: 11px; color: var(--color-text-light); }
+
+.ed-mini-table { width: 100%; border-collapse: collapse; }
+.ed-mini-table th {
+  text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--color-text-muted);
+  padding: 8px 0; border-bottom: 1px solid var(--color-border);
+}
+.ed-mini-table td { font-size: 13px; padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+.ed-mini-table tbody tr:last-child td { border-bottom: none; }
+.ed-right { text-align: right; }
+
+/* Says what is missing rather than showing nothing. */
+.ed-muted { font-size: 13px; color: var(--color-text-muted); margin: 0 0 12px; }
+
+.ed-tab-body-tight { margin-top: 0; }
 </style>
