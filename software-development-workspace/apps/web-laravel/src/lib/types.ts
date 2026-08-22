@@ -135,6 +135,9 @@ export interface Employee {
   host_allocation_pct?: number;
   email: string | null;
   work_email?: string | null;
+  /** Both sent by EmployeeResource. Nothing populates photo_url yet. */
+  photo_url?: string | null;
+  employment_type?: string | null;
   personal_email?: string | null;
   phone: string | null;
   linkedin_profile?: string | null;
@@ -268,6 +271,15 @@ export interface LeaveSummary {
   rejected_this_month: number;
   availability: { available: number; headcount: number; percentage: number | null };
   scope: LeaveScope;
+}
+
+/** The figures along the top of the employee directory. */
+export interface DirectoryFigures {
+  total: number;
+  active: number;
+  on_leave: number;
+  new_this_month: number;
+  as_at: string;
 }
 
 export interface LeaveAvailabilityPerson {

@@ -54,6 +54,16 @@ class EmployeeService extends BaseService
              */
             ->unless($filters['status'] ?? null, fn ($q) => $q->where('status', '!=', 'draft'))
             ->when($filters['employment_type'] ?? null, fn ($q, $t) => $q->where('employment_type', $t))
+            /*
+             * "On leave" is not a status — it is a fact about today, derived
+             * from approved leave. Filtering the same listing rather than
+             * serving a different one keeps the tab a strict subset of the
+             * rows without it.
+             */
+            ->when(
+                ($filters['on_leave'] ?? null),
+                fn ($q) => $q->whereIn('id', \App\Services\HR\DirectoryFigures::onLeaveToday($organizationId)),
+            )
             // primaryOrganization so the listing can name a visitor's employer
             // without a query per row.
             ->with(['department', 'designation', 'jobGrade', 'manager', 'primaryOrganization'])

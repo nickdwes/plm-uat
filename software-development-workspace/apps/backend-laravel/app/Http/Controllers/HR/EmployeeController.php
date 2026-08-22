@@ -26,11 +26,26 @@ class EmployeeController extends Controller
 
         $employees = $this->service->list(
             organizationId: app('current.organization_id'),
-            filters: $request->only(['search', 'department_id', 'status', 'employment_type']),
+            filters: $request->only(['search', 'department_id', 'status', 'employment_type', 'on_leave']),
             perPage: (int) $request->input('per_page', 15),
         );
 
         return EmployeeResource::collection($employees);
+    }
+
+    /**
+     * GET /api/v1/employees/summary
+     *
+     * The figures along the top of the directory, counted over the same
+     * population the listing returns.
+     */
+    public function summary(\App\Services\HR\DirectoryFigures $figures): \Illuminate\Http\JsonResponse
+    {
+        $this->authorize('viewAny', Employee::class);
+
+        return response()->json([
+            'data' => $figures->for(app('current.organization_id')),
+        ]);
     }
 
     public function store(CreateEmployeeRequest $request): EmployeeResource

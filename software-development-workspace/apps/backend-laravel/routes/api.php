@@ -206,6 +206,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/',                  [EmployeeController::class, 'index']);
         Route::post('/',                 [EmployeeController::class, 'store']);
 
+        // Before /{employee}, like the rest — a literal segment declared after
+        // a route parameter is never reached.
+        Route::get('/summary',           [EmployeeController::class, 'summary']);
+
         // Self-service "My Info" (must be registered before /{employee} to avoid shadowing)
         Route::get('/me',                [EmployeeController::class, 'me']);
         Route::put('/me/contact',        [EmployeeController::class, 'updateOwnContact']);
