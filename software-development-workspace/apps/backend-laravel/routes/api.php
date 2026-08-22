@@ -202,6 +202,20 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     Route::get('/dashboard', [DashboardController::class, 'summary']);
 
     // ── Employees ─────────────────────────────────────────────────────────────
+    /*
+     * Reports read the same population the screens do. Kept apart from
+     * /employees because a report is a different thing from a record — it has
+     * its own permission surface and its own shape.
+     */
+    Route::prefix('reports/people')->group(function () {
+        Route::get('/columns', [\App\Http\Controllers\HR\PeopleReportController::class, 'columns']);
+        Route::get('/preview', [\App\Http\Controllers\HR\PeopleReportController::class, 'preview']);
+        Route::get('/requirement', [\App\Http\Controllers\HR\PeopleReportController::class, 'requirement']);
+        // POST, not GET: the password must not land in the access log, the
+        // browser history, or any proxy between here and the browser.
+        Route::post('/export', [\App\Http\Controllers\HR\PeopleReportController::class, 'export']);
+    });
+
     Route::prefix('employees')->group(function () {
         Route::get('/',                  [EmployeeController::class, 'index']);
         Route::post('/',                 [EmployeeController::class, 'store']);
