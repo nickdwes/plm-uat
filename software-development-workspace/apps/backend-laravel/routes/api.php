@@ -894,6 +894,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     Route::prefix('leave')->group(function () {
         Route::get('/balance',             [LeaveController::class, 'balance']);   // before /{id} to prevent shadowing
         Route::get('/summary',             [LeaveController::class, 'summary']);   // likewise — /{id} would swallow it
+        Route::get('/availability',        [LeaveController::class, 'availability']);
         Route::post('/calculate',          [LeaveController::class, 'calculate']); // preview day count
         Route::get('/',                    [LeaveController::class, 'index']);
         Route::post('/',                   [LeaveController::class, 'store']);

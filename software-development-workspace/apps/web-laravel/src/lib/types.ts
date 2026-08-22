@@ -270,6 +270,24 @@ export interface LeaveSummary {
   scope: LeaveScope;
 }
 
+export interface LeaveAvailabilityPerson {
+  employee_id: number;
+  employee_number: string | null;
+  name: string;
+  role: string | null;
+  status: "on_leave" | "pending" | "available";
+  leave_type: string | null;
+  /** Short weekday names, in week order, for the days actually covered. */
+  days: string[];
+}
+
+export interface LeaveAvailability {
+  week_start: string;
+  week_end: string;
+  people: LeaveAvailabilityPerson[];
+  scope: LeaveScope;
+}
+
 export interface LeaveAttachment {
   id: number;
   original_name: string;

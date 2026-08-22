@@ -18,6 +18,7 @@ import { currentOrgSlug, getToken } from "../stores/auth";
 import type {
   Paginator, LeaveRequest, LeaveBalance, LeaveBalanceResponse,
   LeaveScope, LeaveSummary, LeaveAttachment, LeaveMessage,
+  LeaveAvailability, LeaveAvailabilityPerson,
 } from "../lib/types";
 import LeaveHandoverPanel from "../components/LeaveHandoverPanel.vue";
 
@@ -62,6 +63,12 @@ const myPage    = ref(1);
 const myLoading = ref(false);
 const myError   = ref("");
 
+/** My Leaves: the design offers a calendar beside the list. */
+const mineView = ref<"calendar" | "list">("list");
+
+/** The other side: requests, or the same people read as a rota. */
+const othersView = ref<"requests" | "availability">("requests");
+
 // ── The other side ────────────────────────────────────────────────────────
 const others        = ref<LeaveRequest[]>([]);
 const othersTotal   = ref(0);
@@ -70,6 +77,12 @@ const othersPages   = ref(1);
 const othersLoading = ref(false);
 const othersError   = ref("");
 const summary       = ref<LeaveSummary | null>(null);
+
+// ── Availability ──────────────────────────────────────────────────────────
+const availability     = ref<LeaveAvailability | null>(null);
+const availLoading     = ref(false);
+const availError       = ref("");
+const availWeek        = ref("");
 
 // ── Filters. Shared shape, one set per tab so they do not bleed. ──────────
 function thisMonth(): string {
@@ -81,6 +94,15 @@ const mineFilters   = ref({ search: "", month: "", status: "" });
 const othersFilters = ref({ search: "", month: thisMonth(), status: "" });
 
 const filtersOpen = ref(false);
+
+/**
+ * The month behind the calendar.
+ *
+ * Loaded apart from the list because the list is paginated ten at a time and a
+ * calendar showing the first ten days' worth of a month is worse than no
+ * calendar — the gaps look like days off.
+ */
+const monthLeaves = ref<LeaveRequest[]>([]);
 
 // ── Leave balances, which double as the cards along the top ──────────────
 const balances    = ref<LeaveBalance[]>([]);
@@ -187,6 +209,40 @@ async function loadOthers(page = 1): Promise<void> {
     else { othersError.value = e instanceof Error ? e.message : "Failed."; }
   }
   finally { othersLoading.value = false; }
+}
+
+async function loadMonthLeaves(): Promise<void> {
+  if (!org()) return;
+  const month = mineFilters.value.month || thisMonth();
+  try {
+    const res = await api<Paginator<LeaveRequest>>("GET", "/api/v1/leave",
+      { org: org(), params: { scope: "own", month, per_page: 100 } });
+    monthLeaves.value = res.data;
+  } catch { monthLeaves.value = []; }
+}
+
+async function loadAvailability(): Promise<void> {
+  if (!org()) return;
+  availLoading.value = true; availError.value = "";
+  try {
+    const params: Record<string, string> = {};
+    if (availWeek.value) params.week = availWeek.value;
+    if (othersFilters.value.search) params.search = othersFilters.value.search;
+    const res = await api<{ data: LeaveAvailability }>("GET", "/api/v1/leave/availability", { org: org(), params });
+    availability.value = res.data;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 403) { availability.value = null; }
+    else { availError.value = e instanceof Error ? e.message : "Failed."; }
+  }
+  finally { availLoading.value = false; }
+}
+
+function stepWeek(by: number): void {
+  const base = availability.value?.week_start ?? new Date().toISOString().slice(0, 10);
+  const d = new Date(base);
+  d.setDate(d.getDate() + by * 7);
+  availWeek.value = d.toISOString().slice(0, 10);
+  void loadAvailability();
 }
 
 async function loadSummary(): Promise<void> {
@@ -519,6 +575,67 @@ function monthLabel(month: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString("en-KE", { month: "short", year: "numeric" });
 }
 
+// ── The month grid ────────────────────────────────────────────────────────
+
+/**
+ * Every day a request actually covers, keyed by date.
+ *
+ * Expanded from the request rather than drawn as a bar across it, because the
+ * three shapes leave comes in do not all describe a span: a scattered request
+ * covers its listed days and nothing between them, and a half day is one date.
+ */
+const daysOff = computed(() => {
+  const map = new Map<string, { request: LeaveRequest; half: boolean }>();
+
+  for (const r of monthLeaves.value) {
+    if (r.status === "cancelled" || r.status === "rejected") continue;
+
+    if (r.scattered_dates?.length) {
+      for (const d of r.scattered_dates) map.set(d, { request: r, half: false });
+      continue;
+    }
+    if (r.is_half_day) {
+      map.set(r.from_date, { request: r, half: true });
+      continue;
+    }
+    for (const d = new Date(r.from_date); d <= new Date(r.to_date); d.setDate(d.getDate() + 1)) {
+      map.set(d.toISOString().slice(0, 10), { request: r, half: false });
+    }
+  }
+
+  return map;
+});
+
+/**
+ * Six weeks of cells, Monday first, with the neighbouring months' days shown
+ * greyed rather than left blank — an empty corner reads as an error, and a
+ * month starting on a Sunday otherwise loses a whole row.
+ */
+const monthCells = computed(() => {
+  const [y, m] = (mineFilters.value.month || thisMonth()).split("-").map(Number);
+  const first  = new Date(y, m - 1, 1);
+
+  // getDay() is Sunday-based; shift so Monday is column one.
+  const lead = (first.getDay() + 6) % 7;
+  const start = new Date(y, m - 1, 1 - lead);
+
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const hit = daysOff.value.get(iso);
+    return {
+      iso,
+      day: d.getDate(),
+      outside: d.getMonth() !== m - 1,
+      today: iso === new Date().toISOString().slice(0, 10),
+      request: hit?.request ?? null,
+      half: hit?.half ?? false,
+    };
+  });
+});
+
+const weekdayNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
 // ── Formatting ────────────────────────────────────────────────────────────
 
 function statusBadge(status: string): string {
@@ -565,6 +682,45 @@ function fullName(r: LeaveRequest): string {
   return e ? `${e.first_name} ${e.last_name}`.trim() : "—";
 }
 
+/**
+ * What the week looks like for one person, in words.
+ *
+ * The design writes "On Leave Wed–Fri" for a span and names single days. It
+ * also shows "Active" and "Available" as if they were different, and "Pending
+ * Review", which is not a leave state at all — so the vocabulary here is the
+ * three states that exist rather than the five the mock happens to print.
+ */
+function availabilityLabel(p: LeaveAvailabilityPerson): string {
+  if (p.status === "available" || !p.days.length) return "Available";
+
+  const verb = p.status === "pending" ? "Pending leave" : "On leave";
+
+  // A run of consecutive days reads better hyphenated; scattered days do not,
+  // and joining them with a dash would claim the days between.
+  const span = p.days.length > 2 && isRun(p.days)
+    ? `${p.days[0]}–${p.days[p.days.length - 1]}`
+    : p.days.join(", ");
+
+  return `${verb} ${span}`;
+}
+
+function isRun(days: string[]): boolean {
+  const order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const idx = days.map(d => order.indexOf(d));
+  return idx.every((n, i) => i === 0 || n === idx[i - 1] + 1);
+}
+
+function availabilityTone(status: string): string {
+  return { on_leave: "lv-pill-amber", pending: "lv-pill-grey", available: "lv-pill-green" }[status] ?? "lv-pill-grey";
+}
+
+function weekLabel(a: LeaveAvailability | null): string {
+  if (!a) return "This week";
+  const from = new Date(a.week_start).toLocaleDateString("en-KE", { day: "numeric", month: "short" });
+  const to   = new Date(a.week_end).toLocaleDateString("en-KE", { day: "numeric", month: "short" });
+  return `${from} – ${to}`;
+}
+
 function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -594,6 +750,14 @@ function onKey(e: KeyboardEvent): void {
   if (openLeave.value) { closeDetail(); return; }
   if (requestOpen.value) { requestOpen.value = false; }
 }
+
+watch([mineView, () => mineFilters.value.month], () => {
+  if (mineView.value === "calendar") void loadMonthLeaves();
+});
+
+watch(othersView, () => {
+  if (othersView.value === "availability" && !availability.value) void loadAvailability();
+});
 
 function init(): void {
   void loadMyLeaves(1);
@@ -725,10 +889,66 @@ watch(currentOrgSlug, init);
           <button class="lv-btn-ghost" @click="mineFilters.month = ''; loadMyLeaves(1)">Clear month</button>
         </div>
 
+        <nav class="lv-subtabs lv-subtabs-inset" role="tablist">
+          <button role="tab" :aria-selected="mineView === 'calendar'"
+                  :class="['lv-subtab', { 'is-on': mineView === 'calendar' }]"
+                  @click="mineView = 'calendar'">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <rect x="3" y="4" width="14" height="13" rx="2" /><path d="M3 8h14M7 2v4M13 2v4" />
+            </svg>
+            Calendar view
+          </button>
+          <button role="tab" :aria-selected="mineView === 'list'"
+                  :class="['lv-subtab', { 'is-on': mineView === 'list' }]"
+                  @click="mineView = 'list'">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <path d="M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01" />
+            </svg>
+            List view
+          </button>
+        </nav>
+
         <p v-if="myLoading" class="lv-note">Loading…</p>
         <p v-if="myError" class="lv-error">{{ myError }}</p>
 
-        <div class="lv-table-wrap">
+        <!-- ── Calendar ── -->
+        <div v-if="mineView === 'calendar'" class="lv-cal">
+          <div class="lv-cal-head">
+            <span v-for="w in weekdayNames" :key="w">{{ w }}</span>
+          </div>
+          <div class="lv-cal-grid">
+            <button
+              v-for="c in monthCells" :key="c.iso"
+              type="button"
+              :class="['lv-cell', {
+                'is-outside': c.outside,
+                'is-today': c.today,
+                'is-off': !!c.request,
+                'is-half': c.half,
+                [statusBadge(c.request?.status ?? '')]: !!c.request,
+              }]"
+              :disabled="!c.request"
+              :aria-label="c.request
+                ? `${c.day} — ${c.request.leave_type?.name ?? 'Leave'}, ${c.request.status}`
+                : String(c.day)"
+              @click="c.request && openDetail(c.request)"
+            >
+              <span class="lv-cell-day">{{ c.day }}</span>
+              <span v-if="c.request" class="lv-cell-tag">
+                {{ c.request.leave_type?.name ?? "Leave" }}<template v-if="c.half"> ½</template>
+              </span>
+            </button>
+          </div>
+          <p v-if="!daysOff.size" class="lv-note">
+            No leave booked in {{ monthLabel(mineFilters.month || "") }}.
+          </p>
+          <ul class="lv-legend">
+            <li><span class="lv-dot lv-pill-green"></span>Approved</li>
+            <li><span class="lv-dot lv-pill-amber"></span>Pending</li>
+          </ul>
+        </div>
+
+        <div v-else class="lv-table-wrap">
           <table class="lv-table">
             <thead>
               <tr>
@@ -760,7 +980,7 @@ watch(currentOrgSlug, init);
           </table>
         </div>
 
-        <div v-if="myTotal > 10" class="lv-pager">
+        <div v-if="mineView === 'list' && myTotal > 10" class="lv-pager">
           <span>{{ myLeaves.length }} of {{ myTotal }}</span>
           <div>
             <button class="lv-btn-ghost" :disabled="myPage <= 1" @click="loadMyLeaves(myPage - 1)">Previous</button>
@@ -796,7 +1016,90 @@ watch(currentOrgSlug, init);
         </div>
       </div>
 
-      <div class="lv-panel">
+      <nav class="lv-subtabs" role="tablist">
+        <button role="tab" :aria-selected="othersView === 'requests'"
+                :class="['lv-subtab', { 'is-on': othersView === 'requests' }]"
+                @click="othersView = 'requests'">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <rect x="4" y="3" width="12" height="15" rx="2" /><path d="M7.5 8h5M7.5 12h5" />
+          </svg>
+          Requests
+        </button>
+        <button role="tab" :aria-selected="othersView === 'availability'"
+                :class="['lv-subtab', { 'is-on': othersView === 'availability' }]"
+                @click="othersView = 'availability'">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+            <circle cx="7.5" cy="7" r="3" /><path d="M2 17c0-3 2.5-5 5.5-5s5.5 2 5.5 5M14 8.5a2.5 2.5 0 100-5" />
+          </svg>
+          {{ scope === "all" ? "Employee Availability" : "Team Availability" }}
+        </button>
+      </nav>
+
+      <!-- ══ Availability — the same people, read as a rota ══ -->
+      <div v-if="othersView === 'availability'" class="lv-panel">
+        <div class="lv-toolbar">
+          <label class="lv-search">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <circle cx="9" cy="9" r="5.5" /><path d="M13 13l4 4" />
+            </svg>
+            <input
+              v-model="othersFilters.search" type="search" placeholder="Search"
+              aria-label="Search people"
+              @keyup.enter="loadAvailability"
+            />
+          </label>
+          <div class="lv-tool-right">
+            <div class="lv-month">
+              <button aria-label="Previous week" @click="stepWeek(-1)">‹</button>
+              <span>{{ weekLabel(availability) }}</span>
+              <button aria-label="Next week" @click="stepWeek(1)">›</button>
+            </div>
+            <button class="lv-btn-ghost" @click="availWeek = ''; loadAvailability()">This week</button>
+          </div>
+        </div>
+
+        <p v-if="availLoading" class="lv-note">Loading…</p>
+        <p v-if="availError" class="lv-error">{{ availError }}</p>
+
+        <div class="lv-table-wrap">
+          <table class="lv-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Employee Name</th><th>Role</th>
+                <th>This Week</th><th class="lv-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="p in availability?.people ?? []" :key="p.employee_id">
+                <td class="lv-ref">{{ p.employee_number ?? "—" }}</td>
+                <td>
+                  <span class="lv-who">
+                    <span class="lv-avatar">{{ (p.name.split(" ").map(n => n[0]).join("").slice(0, 2)).toUpperCase() }}</span>
+                    {{ p.name }}
+                  </span>
+                </td>
+                <!-- The design heads this column "Days" and fills it with job
+                     titles. Named for what it holds. -->
+                <td>{{ p.role ?? "—" }}</td>
+                <td>
+                  <span :class="['lv-pill', availabilityTone(p.status)]">{{ availabilityLabel(p) }}</span>
+                  <em v-if="p.leave_type && p.status !== 'available'" class="lv-sub">{{ p.leave_type }}</em>
+                </td>
+                <td class="lv-right">
+                  <router-link class="lv-link" :to="{ name: 'employee-detail', params: { id: p.employee_id } }">
+                    View Employee
+                  </router-link>
+                </td>
+              </tr>
+              <tr v-if="!availLoading && !(availability?.people ?? []).length">
+                <td colspan="5" class="lv-empty">Nobody to show for this week.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div v-else class="lv-panel">
         <div class="lv-toolbar">
           <label class="lv-search">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
@@ -1574,6 +1877,69 @@ watch(currentOrgSlug, init);
   padding: var(--space-3);
 }
 
+/* ── Month calendar ────────────────────────────────────────────────────── */
+.lv-subtabs-inset { padding: 0 var(--space-4); }
+
+.lv-cal { padding: var(--space-4); }
+
+.lv-cal-head, .lv-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.lv-cal-head span {
+  @apply text-center font-semibold uppercase;
+  font-size: var(--text-xs-size);
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  padding-bottom: var(--space-2);
+}
+
+.lv-cell {
+  @apply flex cursor-default flex-col items-start gap-1 text-left;
+  min-height: 4.5rem;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-family: inherit;
+}
+
+/* Neighbouring months are shown rather than left blank — an empty corner
+   reads as a rendering fault, and a month starting on a Sunday would
+   otherwise lose a whole row. */
+.lv-cell.is-outside { opacity: 0.45; }
+
+.lv-cell.is-today { border-color: var(--color-brand-base); box-shadow: inset 0 0 0 1px var(--color-brand-base); }
+
+.lv-cell-day { font-size: var(--text-xs-size); font-weight: 600; color: var(--color-text); }
+
+.lv-cell-tag {
+  @apply w-full truncate rounded font-medium;
+  font-size: 0.625rem;
+  padding: 1px var(--space-2);
+}
+
+/* A booked day is clickable; an empty one is not, and must not pretend. */
+.lv-cell.is-off { @apply cursor-pointer; }
+.lv-cell.is-off:hover { border-color: var(--color-brand-base); }
+
+.lv-cell.is-off.lv-pill-green { background: var(--color-success-light); border-color: var(--color-success); }
+.lv-cell.is-off.lv-pill-green .lv-cell-tag { background: var(--color-success); color: var(--color-on-brand); }
+.lv-cell.is-off.lv-pill-amber { background: var(--color-warning-light); border-color: var(--color-warning); }
+.lv-cell.is-off.lv-pill-amber .lv-cell-tag { background: var(--color-warning); color: var(--color-on-brand); }
+
+/* A half day is visibly half — a diagonal, so it cannot be mistaken for a
+   whole day at a glance. */
+.lv-cell.is-half { background-image: linear-gradient(135deg, transparent 50%, var(--color-surface) 50%); }
+
+.lv-legend { @apply flex list-none flex-wrap items-center gap-4; margin: var(--space-4) 0 0; padding: 0; font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.lv-legend li { @apply flex items-center gap-2; }
+.lv-dot { @apply inline-block size-3 rounded-full; }
+
+.lv-sub { @apply block not-italic; font-size: var(--text-xs-size); color: var(--color-text-muted); margin-top: 2px; }
+
 /* ── Decline modal ─────────────────────────────────────────────────────── */
 .lv-modal {
   @apply flex flex-col;
@@ -1593,6 +1959,10 @@ watch(currentOrgSlug, init);
   .lv-toptab { font-size: var(--text-xs-size); }
   .lv-kpi + .lv-kpi { border-left: none; border-top: 1px solid var(--color-border); padding-top: var(--space-3); margin-top: var(--space-3); }
   .lv-drawer, .lv-drawer-wide { width: 100%; padding: var(--space-4); }
+  /* Seven columns of a month grid on a phone gives cells too small to read;
+     the day number survives, the type label does not. */
+  .lv-cell { min-height: 3rem; padding: var(--space-1); }
+  .lv-cell-tag { @apply hidden; }
   .lv-facts { grid-template-columns: 1fr; gap: var(--space-1); }
   .lv-facts > div { @apply block; margin-bottom: var(--space-2); }
 }

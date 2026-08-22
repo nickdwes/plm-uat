@@ -11,6 +11,7 @@ use App\Services\Leave\LeaveCalculatorService;
 use App\Services\Leave\LeaveService;
 use App\Services\Leave\LeaveSummary;
 use App\Services\Leave\LeaveVisibility;
+use App\Services\Leave\WeekAvailability;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -71,6 +72,41 @@ class LeaveController extends Controller
             'data' => $summary->for(
                 $orgId,
                 LeaveVisibility::employeeIds($scope, $request->user(), $orgId),
+            ) + ['scope' => $scope],
+        ]);
+    }
+
+    /**
+     * GET /api/v1/leave/availability
+     *
+     * The same population read by person rather than by request — of the
+     * people I am responsible for, who is here this week.
+     */
+    public function availability(Request $request, WeekAvailability $availability): JsonResponse
+    {
+        $orgId = app('current.organization_id');
+
+        $this->authorize('viewAny', \App\Models\LeaveRequest::class);
+
+        $scope = $this->scopeFor($request, $orgId);
+
+        /*
+         * Only somebody entitled to see past themselves. A one-row
+         * availability table telling you that you are available is not a
+         * screen worth serving.
+         */
+        abort_if($scope === LeaveVisibility::OWN, 403, 'This view is for managers and HR.');
+
+        $week = $request->filled('week')
+            ? \Illuminate\Support\Carbon::parse($request->string('week')->toString())
+            : null;
+
+        return response()->json([
+            'data' => $availability->for(
+                $orgId,
+                LeaveVisibility::employeeIds($scope, $request->user(), $orgId),
+                $week,
+                ['search' => $request->string('search')->toString() ?: null],
             ) + ['scope' => $scope],
         ]);
     }
