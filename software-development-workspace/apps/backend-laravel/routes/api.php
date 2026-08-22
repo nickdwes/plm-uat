@@ -224,6 +224,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // a route parameter is never reached.
         Route::get('/summary',           [EmployeeController::class, 'summary']);
 
+        // Before /{employee}, like the rest.
+        Route::post('/import/inspect', [\App\Http\Controllers\HR\EmployeeImportController::class, 'inspect']);
+        Route::post('/import/run',     [\App\Http\Controllers\HR\EmployeeImportController::class, 'run']);
+
         // Self-service "My Info" (must be registered before /{employee} to avoid shadowing)
         Route::get('/me',                [EmployeeController::class, 'me']);
         Route::put('/me/contact',        [EmployeeController::class, 'updateOwnContact']);

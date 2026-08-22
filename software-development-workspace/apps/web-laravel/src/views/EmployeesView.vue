@@ -141,6 +141,10 @@ watch(currentOrgSlug, refresh);
         <p class="ev-lead">View and manage employee information across the organisation</p>
       </div>
       <div class="ev-head-actions">
+        <!-- Export is the People Report, which does more than a button here
+             could: chosen columns, ordering and a protected file. -->
+        <router-link :to="{ name: 'employee-import' }" class="btn btn-secondary btn-sm">Import</router-link>
+        <router-link :to="{ name: 'people-report' }" class="btn btn-secondary btn-sm">Export</router-link>
         <router-link :to="{ name: 'onboard' }" class="btn btn-primary btn-sm">+ Add Employee</router-link>
       </div>
     </header>
