@@ -7,7 +7,7 @@ Design source: `PLM Redesign`, page **HR portal**. Directory `3277:138791`;
 profile tab bar `3633:57699`; profile states `3320:52643` and the fifteen
 frames beside it at `y=6489`.
 
-Last reviewed: 2026-08-22.
+Last reviewed: 2026-08-22. Phases 1–3 shipped; phase 4 is what remains.
 
 ---
 
@@ -86,7 +86,7 @@ new backend work, not wiring.
 
 ---
 
-## Phase 1 — The directory
+## Phase 1 — The directory — **done**
 
 Self-contained, no schema change, and the screen most people open first.
 
@@ -107,7 +107,7 @@ Backend: one `GET /api/v1/employees/summary` returning the four counts, scoped
 the way `EmployeeService::list` already scopes — employed here **or placed
 here**, so a secondee counts once in the organisation that hosts them.
 
-## Phase 2 — The profile shell and Profile Overview
+## Phase 2 — The profile shell and Profile Overview — **done**
 
 - Breadcrumb, header with photo, status pill, `Role • Employment type`.
 - Nine-tab bar, horizontally scrollable — nine tabs do not fit 1440px in the
@@ -124,7 +124,7 @@ reporting line into `Job Details`, the personal detail into `Profile
 Overview`, benefits into `Payroll`. Nothing is deleted before its new home
 exists.
 
-## Phase 3 — The tabs with data behind them
+## Phase 3 — The tabs with data behind them — **done**
 
 In this order, because it is the order in which they stop being empty:
 
@@ -138,19 +138,58 @@ In this order, because it is the order in which they stop being empty:
 4. **Emergency Contacts** and **Dependents** — tables and API exist, both
    empty. Cheap to build, and they are how they get populated.
 
-## Phase 4 — The tabs that need a module behind them
+## Phase 4 — What remains
 
-**Attendance Management**, **Payroll** and **Performance** are windows onto
-three other modules. Each should show that employee's slice of the module that
-owns it, not a second implementation of it. Build after phase 3 and only where
-the owning module is live; a tab that reimplements payroll is a second payroll.
+### 4a. Attendance, Payroll and Performance — **blocked, not deferred**
 
-**Import / Export.** Export is the smaller half and worth doing first: a CSV of
-the directory as filtered, built from the same query so the file and the screen
-agree. Import is a bigger piece — it needs a column mapping, a rehearsal pass
-and an idempotency key, and it should follow the habits the PLM importers
-already have (`--apply` gating, `plm_import_map`-style resolution, nothing
-guessed).
+Windows onto three other modules; each should show that employee's slice of
+the module that owns it, never a second implementation of it. Every table
+behind them is still empty:
+
+| Table | Rows |
+|---|---|
+| `attendance_days` | 0 |
+| `payroll_runs` / `payroll_run_items` | 0 / 0 |
+| `performance_reviews` | 0 |
+| `goals` | 0 |
+
+There is nothing to draw. The tabs currently name the module that owns the
+data and link to it, which is the honest state until a payroll is run or a day
+is clocked. **This unblocks itself** — once those modules carry records the
+tabs become a filtered read of an endpoint that already exists, not new work.
+
+Payroll is the partial exception: the tab already holds Monthly Compensation
+and the estimated statutory contributions, which are properties of the
+employee rather than of a payroll run. What is missing is run history, and
+that needs a run.
+
+### 4b. Import — **buildable now**
+
+The only piece of this plan that is neither done nor blocked.
+
+Export was delivered instead as a full report page (`/reports/people`) with a
+column catalogue, ordering, filters, a preview and an AES-256 protected
+spreadsheet — wider than the CSV this plan called for, and it supersedes it.
+
+Import still needs: a column mapping from an uploaded sheet, a rehearsal pass
+reporting what it would do, an idempotency key so a re-run updates rather than
+duplicates, and the habits the PLM importers already keep — `--apply` gating,
+nothing guessed, unmatched values left unset and named. It must refuse to
+invent a department or designation that does not exist rather than creating
+one silently, which is the failure that makes a bulk import worse than typing.
+
+### Also outstanding, from elsewhere
+
+- **Designations cover 23 of 123 people.** The legacy system recorded a job
+  title for only 41 of its 217 staff. The rest have no title in any source and
+  need entering by hand; `Role` reads "not set" for them across the directory,
+  the profile header, the hierarchy and the availability rota.
+- **Job descriptions, desired skills and certifications** are new fields with
+  no legacy column behind them, empty on all 18 designations.
+- **`photo_url` is populated for nobody** and there is no upload path, so every
+  avatar is initials.
+- **On Probation** is still absent from the directory figures: employee status
+  holds only `active` and `exited`, and `probation_end_date` is set for nobody.
 
 ---
 
