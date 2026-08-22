@@ -4,7 +4,16 @@ import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, authStore, updateOrgBranding, getToken } from "../stores/auth";
 import type { ComplianceDocumentRecord, ComplianceDocumentListData, ComplianceSummary, OrgStructureData, OrgFunctionalUnit, OrgDepartment, OrgBusinessUnit, OrgPractice } from "../lib/types";
 
-interface Designation   { id: number; title: string; description: string | null }
+interface Designation {
+  id: number;
+  title: string;
+  /** The one-line summary the listings print. */
+  description: string | null;
+  /** The long form. Pages, not a line. */
+  job_description: string | null;
+  desired_skills: string[] | null;
+  certifications: string[] | null;
+}
 interface JobGrade      { id: number; name: string; level: number; min_salary: number | null; max_salary: number | null }
 interface JobCategory   { id: number; name: string; description: string | null }
 interface OrgProfile    { id: number; name: string; slug: string; legal_name: string | null; industry: string | null; country: string; currency: string; primary_email: string | null; primary_phone: string | null; address: string | null; is_active: boolean; logo_url?: string | null; primary_color?: string | null }
@@ -296,7 +305,31 @@ const editCatId      = ref<number | null>(null);
 const editCat        = ref({ name: "", description: "" });
 const selectedCatIds = ref<Set<number>>(new Set());
 const editDesigId    = ref<number | null>(null);
-const editDesig      = ref({ title: "", description: "" });
+const editDesig = ref({
+  title: "", description: "", job_description: "",
+  desired_skills: [] as string[], certifications: [] as string[],
+});
+
+/** Draft text for the two tag inputs, kept out of the payload. */
+const newSkill = ref("");
+const newCert  = ref("");
+
+function addTag(list: "desired_skills" | "certifications"): void {
+  const draft = list === "desired_skills" ? newSkill : newCert;
+  const value = draft.value.trim();
+  if (!value) return;
+
+  // Case-insensitively already there. The server collapses these too, but
+  // silently dropping it here would look like the button did nothing.
+  const has = editDesig.value[list].some(x => x.toLowerCase() === value.toLowerCase());
+  if (!has) editDesig.value[list].push(value);
+
+  draft.value = "";
+}
+
+function removeTag(list: "desired_skills" | "certifications", i: number): void {
+  editDesig.value[list].splice(i, 1);
+}
 const editGradeId    = ref<number | null>(null);
 const editGrade      = ref({ name: "", level: 1, min_salary: "" as string | number, max_salary: "" as string | number });
 
@@ -569,13 +602,36 @@ async function deleteDesig(id: number): Promise<void> {
 
 function startEditDesig(d: Designation): void {
   editDesigId.value = d.id;
-  editDesig.value = { title: d.title, description: d.description ?? "" };
+  newSkill.value = ""; newCert.value = "";
+  editDesig.value = {
+    title:           d.title,
+    description:     d.description ?? "",
+    job_description: d.job_description ?? "",
+    // Copied, not referenced — editing must not mutate the loaded row before
+    // anything is saved.
+    desired_skills:  [...(d.desired_skills ?? [])],
+    certifications:  [...(d.certifications ?? [])],
+  };
 }
 
 async function saveEditDesig(): Promise<void> {
   saving.value = true; saveError.value = "";
   try {
-    await api("PUT", `/api/v1/org/designations/${editDesigId.value}`, { org: org(), body: editDesig.value });
+    /*
+     * Empty text goes as null rather than "". The column is nullable and the
+     * screens test for absence; an empty string is a value that prints as a
+     * blank line where "not recorded" was meant.
+     */
+    await api("PUT", `/api/v1/org/designations/${editDesigId.value}`, {
+      org: org(),
+      body: {
+        title:           editDesig.value.title,
+        description:     editDesig.value.description || null,
+        job_description: editDesig.value.job_description || null,
+        desired_skills:  editDesig.value.desired_skills,
+        certifications:  editDesig.value.certifications,
+      },
+    });
     editDesigId.value = null;
     await load();
   } catch (e) { saveError.value = e instanceof Error ? e.message : "Failed."; }
@@ -1487,29 +1543,122 @@ async function saveReminder(): Promise<void> {
       </div>
       <div class="card">
         <table>
-          <thead><tr><th>Title</th><th>Description</th><th></th></tr></thead>
+          <thead>
+            <tr><th>Title</th><th>Summary</th><th>Skills</th><th>Certifications</th><th></th></tr>
+          </thead>
           <tbody>
-            <template v-for="d in designations" :key="d.id">
-              <tr v-if="editDesigId !== d.id">
-                <td>{{ d.title }}</td>
-                <td>{{ d.description ?? "—" }}</td>
-                <td style="text-align:right">
-                  <button class="btn btn-ghost btn-sm" style="margin-right:4px" @click="startEditDesig(d)">Edit</button>
-                  <button class="btn btn-sm" style="color:var(--red)" @click="deleteDesig(d.id)">Remove</button>
-                </td>
-              </tr>
-              <tr v-else>
-                <td><input v-model="editDesig.title" type="text" class="input" placeholder="Title" /></td>
-                <td><input v-model="editDesig.description" type="text" class="input" placeholder="Description" /></td>
-                <td style="text-align:right">
-                  <button class="btn btn-primary btn-sm" style="margin-right:4px" :disabled="saving" @click="saveEditDesig">Save</button>
-                  <button class="btn btn-ghost btn-sm" @click="editDesigId=null">Cancel</button>
-                </td>
-              </tr>
-            </template>
-            <tr v-if="!designations.length"><td colspan="3" class="status">No designations yet.</td></tr>
+            <tr v-for="d in designations" :key="d.id">
+              <td>{{ d.title }}</td>
+              <td>{{ d.description ?? "—" }}</td>
+              <!--
+                Counted, not listed. A role with a dozen skills would push
+                every other column off the screen, and the numbers are what
+                tells you which roles still need filling in.
+              -->
+              <td>
+                <span v-if="d.desired_skills?.length" class="ov-tagcount">{{ d.desired_skills.length }}</span>
+                <span v-else class="ov-none">none yet</span>
+              </td>
+              <td>
+                <span v-if="d.certifications?.length" class="ov-tagcount">{{ d.certifications.length }}</span>
+                <span v-else class="ov-none">none yet</span>
+              </td>
+              <td style="text-align:right">
+                <button class="btn btn-ghost btn-sm" style="margin-right:4px" @click="startEditDesig(d)">Edit</button>
+                <button class="btn btn-sm" style="color:var(--red)" @click="deleteDesig(d.id)">Remove</button>
+              </td>
+            </tr>
+            <tr v-if="!designations.length"><td colspan="5" class="status">No designations yet.</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <!--
+        Editing in a panel rather than in the row. A job description is pages
+        and two tag lists do not fit in a table cell.
+      -->
+      <div v-if="editDesigId !== null" class="ov-modal-overlay" @click.self="editDesigId = null">
+        <div class="ov-modal ov-modal-wide" role="dialog" aria-modal="true" aria-label="Edit designation">
+          <div class="ov-modal-header">
+            <div>
+              <h3 class="card-title" style="margin-bottom:2px">Edit role</h3>
+              <p class="ov-modal-sub">What the job is, what it needs, and what it requires somebody to hold.</p>
+            </div>
+            <button class="ov-modal-close" type="button" @click="editDesigId = null">✕</button>
+          </div>
+
+          <p v-if="saveError" class="status" style="color:var(--red)">{{ saveError }}</p>
+
+          <div class="ov-desig-form">
+            <label class="ov-df">
+              <span>Job title</span>
+              <input v-model="editDesig.title" type="text" class="input" placeholder="Network Engineer" />
+            </label>
+
+            <label class="ov-df">
+              <span>Summary</span>
+              <input v-model="editDesig.description" type="text" class="input" maxlength="500"
+                     placeholder="One line — this is what the org screens print" />
+            </label>
+
+            <label class="ov-df">
+              <span>Job description</span>
+              <textarea v-model="editDesig.job_description" class="input" rows="8"
+                        placeholder="What the role owns, who it answers to, what a good year looks like."></textarea>
+            </label>
+
+            <div class="ov-df">
+              <span>Desired skills</span>
+              <div class="ov-tag-input">
+                <input
+                  v-model="newSkill" type="text" class="input"
+                  placeholder="Add a skill and press Enter"
+                  @keydown.enter.prevent="addTag('desired_skills')"
+                />
+                <button class="btn btn-ghost btn-sm" type="button" @click="addTag('desired_skills')">Add</button>
+              </div>
+              <ul v-if="editDesig.desired_skills.length" class="ov-tags">
+                <li v-for="(s, i) in editDesig.desired_skills" :key="s">
+                  {{ s }}
+                  <button type="button" aria-label="Remove" @click="removeTag('desired_skills', i)">×</button>
+                </li>
+              </ul>
+              <p class="ov-hint">
+                A vacancy raised for this role can inherit these, and candidate suitability scores against them.
+              </p>
+            </div>
+
+            <div class="ov-df">
+              <span>Certifications required</span>
+              <div class="ov-tag-input">
+                <input
+                  v-model="newCert" type="text" class="input"
+                  placeholder="Add a certification and press Enter"
+                  @keydown.enter.prevent="addTag('certifications')"
+                />
+                <button class="btn btn-ghost btn-sm" type="button" @click="addTag('certifications')">Add</button>
+              </div>
+              <ul v-if="editDesig.certifications.length" class="ov-tags">
+                <li v-for="(c, i) in editDesig.certifications" :key="c">
+                  {{ c }}
+                  <button type="button" aria-label="Remove" @click="removeTag('certifications', i)">×</button>
+                </li>
+              </ul>
+              <!-- Kept apart from skills on purpose. -->
+              <p class="ov-hint">
+                A certification is a document that either exists or does not — unlike a skill, it is not a
+                matter of degree and is not scored like one.
+              </p>
+            </div>
+          </div>
+
+          <div class="ov-modal-actions">
+            <button class="btn btn-ghost btn-sm" @click="editDesigId = null">Cancel</button>
+            <button class="btn btn-primary btn-sm" :disabled="saving || !editDesig.title.trim()" @click="saveEditDesig">
+              {{ saving ? "Saving…" : "Save" }}
+            </button>
+          </div>
+        </div>
       </div>
     </template>
 
@@ -2019,4 +2168,35 @@ async function saveReminder(): Promise<void> {
 .ov-key { font-family: ui-monospace, monospace; font-size: .7rem; color: var(--color-text-light);
           background: var(--color-surface-sunken); padding: 1px 6px; border-radius: 4px; margin-left: 6px; }
 
+
+/* ── Designations: the role, not just the label ─────────────────────────── */
+.ov-modal-wide { max-width: 46rem; }
+
+.ov-desig-form { display: flex; flex-direction: column; gap: 18px; }
+.ov-df { display: flex; flex-direction: column; gap: 6px; }
+.ov-df > span { font-size: 12px; font-weight: 600; color: var(--color-text); }
+.ov-df textarea { font-family: inherit; resize: vertical; line-height: 1.5; }
+
+.ov-tag-input { display: flex; gap: 8px; align-items: center; }
+.ov-tag-input .input { flex: 1; }
+
+.ov-tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 6px 0 0; padding: 0; }
+.ov-tags li {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  background: var(--color-brand-light); color: var(--color-brand-base);
+}
+.ov-tags button { border: none; background: none; cursor: pointer; color: inherit; padding: 0; font-size: 14px; line-height: 1; }
+
+.ov-hint { font-size: 11px; color: var(--color-text-muted); margin: 4px 0 0; }
+
+.ov-tagcount {
+  display: inline-block; min-width: 22px; text-align: center;
+  font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+  background: var(--color-brand-light); color: var(--color-brand-base);
+}
+/* Distinct from a zero: nothing has been recorded, which is a job still to do. */
+.ov-none { font-size: 12px; color: var(--color-text-light); }
+
+.ov-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 </style>

@@ -41,6 +41,25 @@ class OrgManagementController extends Controller
         $data = $request->validate([
             'title'       => 'required|string|max:120',
             'description' => 'nullable|string|max:500',
+            // The long form. No max: a job description is pages, and a limit
+            // here is a limit somebody discovers by losing what they typed.
+            'job_description' => 'nullable|string',
+            /*
+             * Plain strings, the same shape vacancies.required_skills already
+             * uses, so a vacancy raised against this role can inherit them
+             * rather than restate them. The model collapses blanks and
+             * case-insensitive duplicates on the way in.
+             */
+            'desired_skills'   => 'nullable|array|max:60',
+            /*
+             * nullable on the items, because a blank row in the form arrives
+             * here as null — ConvertEmptyStringsToNull runs first. Rejecting
+             * it would make an empty last row a validation error instead of
+             * the nothing it plainly is; the model drops blanks on the way in.
+             */
+            'desired_skills.*' => 'nullable|string|max:120',
+            'certifications'   => 'nullable|array|max:40',
+            'certifications.*' => 'nullable|string|max:160',
         ]);
         $desig = Designation::create(array_merge($data, [
             'organization_id' => app('current.organization_id'),
@@ -55,6 +74,25 @@ class OrgManagementController extends Controller
         $data = $request->validate([
             'title'       => 'sometimes|string|max:120',
             'description' => 'nullable|string|max:500',
+            // The long form. No max: a job description is pages, and a limit
+            // here is a limit somebody discovers by losing what they typed.
+            'job_description' => 'nullable|string',
+            /*
+             * Plain strings, the same shape vacancies.required_skills already
+             * uses, so a vacancy raised against this role can inherit them
+             * rather than restate them. The model collapses blanks and
+             * case-insensitive duplicates on the way in.
+             */
+            'desired_skills'   => 'nullable|array|max:60',
+            /*
+             * nullable on the items, because a blank row in the form arrives
+             * here as null — ConvertEmptyStringsToNull runs first. Rejecting
+             * it would make an empty last row a validation error instead of
+             * the nothing it plainly is; the model drops blanks on the way in.
+             */
+            'desired_skills.*' => 'nullable|string|max:120',
+            'certifications'   => 'nullable|array|max:40',
+            'certifications.*' => 'nullable|string|max:160',
         ]);
         $designation->update($data);
         return response()->json($designation);
