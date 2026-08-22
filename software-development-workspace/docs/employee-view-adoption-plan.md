@@ -140,7 +140,7 @@ In this order, because it is the order in which they stop being empty:
 
 ## Phase 4 — What remains
 
-### 4a. Attendance, Payroll and Performance — **blocked, not deferred**
+### 4a. Attendance, Payroll and Performance
 
 Windows onto three other modules; each should show that employee's slice of
 the module that owns it, never a second implementation of it. Every table
@@ -153,15 +153,49 @@ behind them is still empty:
 | `performance_reviews` | 0 |
 | `goals` | 0 |
 
-There is nothing to draw. The tabs currently name the module that owns the
-data and link to it, which is the honest state until a payroll is run or a day
-is clocked. **This unblocks itself** — once those modules carry records the
-tabs become a filtered read of an endpoint that already exists, not new work.
+**These three are not one blocked group.** Corrected 2026-08-22: payroll is
+not pegged to attendance, and attendance is an input to performance. So the
+dependencies run:
 
-Payroll is the partial exception: the tab already holds Monthly Compensation
-and the estimated statutory contributions, which are properties of the
-employee rather than of a payroll run. What is missing is run history, and
-that needs a run.
+```
+attendance ──► performance
+payroll     (independent)
+```
+
+- **Payroll — waiting on a run, nothing else.** Confirmed in the code: nothing
+  under `app/Services/Payroll` or its controllers reads attendance. Payroll
+  does not need a single day clocked. The tab already holds Monthly
+  Compensation and the estimated statutory contributions, which are properties
+  of the employee rather than of a run; what is missing is run history, and
+  that arrives the first time payroll is run.
+- **Attendance — waiting on days being clocked.** Nothing to design; the tab
+  becomes a filtered read once the tracker is in use.
+- **Performance — needs attendance, and needs a decision first.** This one does
+  *not* unblock itself. `performance_reviews` holds `rating`, `goals`,
+  `comments` and `outcomes` and has no attendance link of any kind — no
+  column, no service, nothing. Attendance featuring in a review is new work,
+  not a wiring exercise.
+
+#### What "attendance features in performance" needs settled
+
+None of this can be inferred from the schema:
+
+1. **Which measure.** Presence rate over the cycle, days absent, late arrivals,
+   or a combination. Each rewards something different, and a rate needs its
+   denominator — working days in the cycle, less approved leave, or the days
+   the person was actually expected.
+2. **Approved leave must not read as absence.** Somebody on signed-off annual
+   leave is not absent in any sense a review should punish. The leave data to
+   subtract already exists.
+3. **Advisory or scored.** Shown beside the rating for a reviewer to weigh, or
+   folded into it with a weight. The second is a much larger change and makes
+   the rating a computed figure rather than a judgement.
+4. **The window.** A review cycle is a string (`review_cycle`) with no dates
+   attached, so there is currently nothing that says which days a review
+   covers. Any attendance figure needs that window to exist.
+
+Until those are answered the Performance tab stays as it is — naming the
+module that owns the data rather than drawing an empty chart.
 
 ### 4b. Import — **buildable now**
 
