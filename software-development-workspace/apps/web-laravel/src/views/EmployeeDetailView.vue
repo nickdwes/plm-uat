@@ -109,6 +109,15 @@ interface Balance {
   pending_days: number; available_days: number;
 }
 
+interface LeaveRow {
+  id: number; reference: string;
+  leave_type: { name: string } | null;
+  from_date: string; to_date: string; days_requested: number;
+  is_half_day: boolean; scattered_dates: string[] | null; status: string;
+}
+
+const leaveRows = ref<LeaveRow[]>([]);
+
 const contacts   = ref<EmergencyContact[]>([]);
 const dependents = ref<Dependent[]>([]);
 const balances   = ref<Balance[]>([]);
@@ -140,6 +149,16 @@ async function openTab(next: Tab): Promise<void> {
       const res = await api<{ data: Dependent[] }>(
         "GET", `/api/v1/employees/${props.id}/dependents`, { org: org() });
       dependents.value = res.data ?? [];
+    } else if (next === "leave") {
+      /*
+       * This person's requests, not the viewer's. The listing is scoped
+       * server-side, so somebody without the reach to see them gets an empty
+       * list rather than a leak — and the tab says so.
+       */
+      const res = await api<{ data: LeaveRow[] }>(
+        "GET", "/api/v1/leave",
+        { org: org(), params: { employee_id: props.id, per_page: 50, scope: "all" } });
+      leaveRows.value = res.data ?? [];
     }
   } catch (e) {
     // The tab still renders; it says it could not read rather than showing an
@@ -386,6 +405,86 @@ const hasSensitive = computed(() => {
   if (!e) return false;
   return e.tax_id !== undefined || e.blood_group !== undefined || Array.isArray(e.emergency_contacts);
 });
+
+// ── Adding a contact or a dependent without leaving the tab ──────────────
+const newContact   = reactive({ name: "", relationship: "", phone: "", email: "" });
+const newDependent = reactive({ name: "", relationship: "", date_of_birth: "" });
+const addingSide   = ref(false);
+
+async function addContact(): Promise<void> {
+  if (!newContact.name.trim() || !newContact.phone.trim()) return;
+  addingSide.value = true; sideError.value = "";
+  try {
+    await api("POST", `/api/v1/employees/${props.id}/emergency-contacts`, {
+      org: org(),
+      body: {
+        name: newContact.name.trim(),
+        relationship: newContact.relationship.trim() || null,
+        phone: newContact.phone.trim(),
+        email: newContact.email.trim() || null,
+      },
+    });
+    Object.assign(newContact, { name: "", relationship: "", phone: "", email: "" });
+    loaded.value["emergency-contacts"] = false;
+    await openTab("emergency-contacts");
+  } catch (e) {
+    sideError.value = e instanceof Error ? e.message : "Could not add that contact.";
+  } finally { addingSide.value = false; }
+}
+
+async function removeContact(id: number): Promise<void> {
+  if (!confirm("Remove this emergency contact?")) return;
+  try {
+    await api("DELETE", `/api/v1/employees/${props.id}/emergency-contacts/${id}`, { org: org() });
+    contacts.value = contacts.value.filter(c => c.id !== id);
+  } catch (e) { sideError.value = e instanceof Error ? e.message : "Could not remove that."; }
+}
+
+async function addDependent(): Promise<void> {
+  if (!newDependent.name.trim()) return;
+  addingSide.value = true; sideError.value = "";
+  try {
+    await api("POST", `/api/v1/employees/${props.id}/dependents`, {
+      org: org(),
+      body: {
+        name: newDependent.name.trim(),
+        relationship: newDependent.relationship.trim() || null,
+        date_of_birth: newDependent.date_of_birth || null,
+      },
+    });
+    Object.assign(newDependent, { name: "", relationship: "", date_of_birth: "" });
+    loaded.value.dependents = false;
+    await openTab("dependents");
+  } catch (e) {
+    sideError.value = e instanceof Error ? e.message : "Could not add that dependent.";
+  } finally { addingSide.value = false; }
+}
+
+async function removeDependent(id: number): Promise<void> {
+  if (!confirm("Remove this dependent?")) return;
+  try {
+    await api("DELETE", `/api/v1/employees/${props.id}/dependents/${id}`, { org: org() });
+    dependents.value = dependents.value.filter(d => d.id !== id);
+  } catch (e) { sideError.value = e instanceof Error ? e.message : "Could not remove that."; }
+}
+
+/**
+ * The dates, however the leave was asked for.
+ *
+ * A scattered request is not a range; rendering it as one turns eight separate
+ * days into a five-week absence. Same rule as the leave screens.
+ */
+function leaveSpan(r: LeaveRow): string {
+  if (r.scattered_dates?.length) {
+    return `${r.scattered_dates.length} separate day${r.scattered_dates.length === 1 ? "" : "s"}`;
+  }
+  if (r.is_half_day) return `${fmtDate(r.from_date)} (half day)`;
+  return `${fmtDate(r.from_date)} – ${fmtDate(r.to_date)}`;
+}
+
+function leaveBadge(status: string): string {
+  return { pending: "badge-yellow", approved: "badge-green", rejected: "badge-red" }[status] ?? "badge-gray";
+}
 
 function fmt(n: number | string | null | undefined): string {
   return new Intl.NumberFormat("en-KE", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(n ?? 0));
@@ -1060,6 +1159,79 @@ onMounted(() => {
       <!-- ── CAREER ────────────────────────────────────────────────────────── -->
       <div v-if="tab === 'job-details'" class="ed-tab-body">
 
+        <!--
+          The two cards the design puts at the top of this tab. Every field
+          already existed; the compensation figures are read-only here and
+          edited on Payroll, where the statutory contributions they drive
+          already live. One number, one place to change it.
+        -->
+        <div class="ed-two-col">
+          <div class="ed-section-card">
+            <h3 class="ed-section-title ed-card-h">
+              <span class="ed-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="3" y="6" width="9" height="11" rx="1.5" /><path d="M12 9h5v8h-5M5.5 9h4M5.5 12h4M5.5 15h4" />
+                </svg>
+              </span>
+              <span>Job Details<em>Role, team, and reporting structure.</em></span>
+            </h3>
+            <div class="ed-kv-list">
+              <div class="ed-kv-row"><span class="ed-kv-label">Employee No.</span>
+                <span class="ed-kv-val ed-kv-accent">{{ (employee as any).employee_number ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Employment Type</span>
+                <span class="ed-kv-val" style="text-transform:capitalize">{{ (employee as any).employment_type?.replace(/_/g, " ") ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Department</span>
+                <span class="ed-kv-val">{{ (employee as any).host_department ?? (employee as any).department?.name ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Designation</span>
+                <span class="ed-kv-val">
+                  <template v-if="(employee as any).host_title || (employee as any).designation?.title || (employee as any).designation?.name">
+                    {{ (employee as any).host_title ?? (employee as any).designation?.title ?? (employee as any).designation?.name }}
+                  </template>
+                  <span v-else class="ed-unset">not set</span>
+                </span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Job Grade</span>
+                <span class="ed-kv-val">{{ (employee as any).job_grade?.name ?? "—" }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Date of Joining</span>
+                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Probation / Review Date</span>
+                <span class="ed-kv-val">{{ fmtDate((employee as any).probation_end_date) }}</span></div>
+            </div>
+          </div>
+
+          <!-- Pay is gated the same way the rest of the sensitive material is. -->
+          <div v-if="hasSensitive" class="ed-section-card">
+            <h3 class="ed-section-title ed-card-h">
+              <span class="ed-card-icon" aria-hidden="true">
+                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <ellipse cx="10" cy="5.5" rx="6" ry="2.5" /><path d="M4 5.5v9c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-9M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" />
+                </svg>
+              </span>
+              <span>Monthly Compensation<em>Basic pay and allowances.</em></span>
+            </h3>
+            <div class="ed-kv-list">
+              <div class="ed-kv-row"><span class="ed-kv-label">Basic Salary</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).basic_salary) }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">House Allowance</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).house_allowance) }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Transport Allowance</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).transport_allowance) }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Medical Allowance</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).medical_allowance) }}</span></div>
+              <div class="ed-kv-row"><span class="ed-kv-label">Other Allowances</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).other_allowances) }}</span></div>
+              <div class="ed-kv-row ed-kv-total"><span class="ed-kv-label">Gross Pay</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt(empGross) }}</span></div>
+              <!--
+                Below the total on purpose. Insurance relief is a credit against
+                tax, not part of gross, and adding it to the figures above it
+                would overstate what the company pays.
+              -->
+              <div class="ed-kv-row"><span class="ed-kv-label">Insurance Relief</span>
+                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).insurance_relief) }}</span></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Career Details -->
         <div class="ed-section-card">
           <h3 class="ed-section-title">Career Details</h3>
@@ -1089,37 +1261,67 @@ onMounted(() => {
 
         <!-- Reporting Structure -->
         <div class="ed-section-card">
-          <h3 class="ed-section-title">Reporting Structure</h3>
+          <h3 class="ed-section-title">Organization Hierarchy</h3>
 
-          <div v-if="(employee as any).manager" class="ed-kv-list" style="margin-bottom:14px">
-            <div class="ed-kv-row">
-              <span class="ed-kv-label">Reports To</span>
-              <router-link
-                :to="{ name: 'employee-detail', params: { id: (employee as any).manager.id } }"
-                class="ed-link ed-kv-val"
-              >{{ (employee as any).manager.full_name }}</router-link>
+          <!--
+            Manager above, this person highlighted, reports below — the shape
+            the design draws. A key-value row saying "Reports To: X" states the
+            same fact but does not show where somebody sits.
+          -->
+          <div class="ed-hier">
+            <router-link
+              v-if="(employee as any).manager"
+              class="ed-hier-node"
+              :to="{ name: 'employee-detail', params: { id: (employee as any).manager.id } }"
+            >
+              <span class="ed-hier-avatar">{{ initials((employee as any).manager) }}</span>
+              <span class="ed-hier-text">
+                <strong>{{ (employee as any).manager.full_name }}</strong>
+                <em>Manager</em>
+              </span>
+            </router-link>
+
+            <div v-if="(employee as any).manager" class="ed-hier-stem" aria-hidden="true"></div>
+
+            <div class="ed-hier-node ed-hier-self">
+              <span class="ed-hier-avatar">{{ initials(employee) }}</span>
+              <span class="ed-hier-text">
+                <strong>{{ (employee as any).full_name }}</strong>
+                <em>
+                  <template v-if="(employee as any).designation?.title || (employee as any).designation?.name">
+                    {{ (employee as any).designation?.title ?? (employee as any).designation?.name }}
+                  </template>
+                  <template v-else>Role not set</template>
+                  &nbsp;•&nbsp;<span style="text-transform:capitalize">{{ (employee as any).employment_type?.replace(/_/g, " ") ?? "—" }}</span>
+                </em>
+              </span>
+              <span :class="['badge', statusBadge((employee as any).status)]" style="text-transform:capitalize">
+                {{ (employee as any).status }}
+              </span>
             </div>
+
+            <template v-if="(employee as any).direct_reports?.length">
+              <div class="ed-hier-stem" aria-hidden="true"></div>
+              <div class="ed-hier-children">
+                <router-link
+                  v-for="dr in (employee as any).direct_reports"
+                  :key="dr.id"
+                  class="ed-hier-node ed-hier-child"
+                  :to="{ name: 'employee-detail', params: { id: dr.id } }"
+                >
+                  <span class="ed-hier-avatar">{{ initials(dr) }}</span>
+                  <span class="ed-hier-text">
+                    <strong>{{ dr.full_name }}</strong>
+                    <em>{{ dr.designation?.title ?? "Role not set" }}</em>
+                  </span>
+                </router-link>
+              </div>
+            </template>
           </div>
 
-          <template v-if="(employee as any).direct_reports?.length">
-            <div class="ed-dr-header">Direct Reports ({{ (employee as any).direct_reports.length }})</div>
-            <div class="ed-dr-chips">
-              <router-link
-                v-for="dr in (employee as any).direct_reports"
-                :key="dr.id"
-                :to="{ name: 'employee-detail', params: { id: dr.id } }"
-                class="ed-dr-chip"
-              >
-                <span class="ed-dr-initials">{{ initials(dr) }}</span>
-                <div class="ed-dr-info">
-                  <span class="ed-dr-name">{{ dr.full_name }}</span>
-                  <span v-if="dr.designation?.title" class="ed-dr-role">{{ dr.designation.title }}</span>
-                </div>
-              </router-link>
-            </div>
-          </template>
-          <p v-else-if="!(employee as any).manager" class="ed-empty-hint">No reporting structure defined.</p>
-          <p v-else class="ed-empty-hint">No direct reports.</p>
+          <p v-if="!(employee as any).manager && !(employee as any).direct_reports?.length" class="ed-empty-hint">
+            Nobody reports to this person and they report to nobody — they sit alone on the chart.
+          </p>
         </div>
 
         <!-- Job Description -->
@@ -1678,22 +1880,36 @@ onMounted(() => {
           <h3 class="ed-section-title">Emergency Contacts</h3>
           <p v-if="sideError" class="error">{{ sideError }}</p>
           <table v-else-if="contacts.length" class="ed-mini-table">
-            <thead><tr><th>Name</th><th>Relationship</th><th>Phone</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Relationship</th><th>Phone</th><th></th><th></th></tr></thead>
             <tbody>
               <tr v-for="c in contacts" :key="c.id">
                 <td>{{ c.name }}</td>
                 <td>{{ c.relationship ?? "—" }}</td>
                 <td>{{ c.phone ?? "—" }}</td>
-                <td class="ed-right"><span v-if="c.is_primary" class="badge badge-green">Primary</span></td>
+                <td><span v-if="c.is_primary" class="badge badge-green">Primary</span></td>
+                <td class="ed-right">
+                  <button v-if="hasSensitive" class="ed-link ed-link-danger" @click="removeContact(c.id)">Remove</button>
+                </td>
               </tr>
             </tbody>
           </table>
-          <!-- Says what is missing and how to fix it. A blank panel reads as a
-               fault; this reads as a job. -->
+          <!--
+            Says what is missing and offers the fix in the same place. A blank
+            panel reads as a fault; sending somebody to another screen to add
+            the first one is how the table stays empty.
+          -->
           <p v-else class="ed-muted">
-            No emergency contact is recorded for this person. Add one from
-            <router-link class="ed-link" :to="{ name: 'employee-edit', params: { id: (employee as any).id } }">Edit</router-link>.
+            No emergency contact is recorded — the one thing somebody needs when it is already too
+            late to go looking.
           </p>
+
+          <form v-if="hasSensitive" class="ed-add-row" @submit.prevent="addContact">
+            <input v-model="newContact.name" class="input" placeholder="Name" required />
+            <input v-model="newContact.relationship" class="input" placeholder="Relationship" />
+            <input v-model="newContact.phone" class="input" placeholder="Phone" required />
+            <input v-model="newContact.email" class="input" type="email" placeholder="Email (optional)" />
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="addingSide">Add</button>
+          </form>
         </div>
       </div>
 
@@ -1708,16 +1924,26 @@ onMounted(() => {
           </div>
           <p v-if="sideError" class="error">{{ sideError }}</p>
           <table v-else-if="dependents.length" class="ed-mini-table">
-            <thead><tr><th>Name</th><th>Relationship</th><th>Date of Birth</th></tr></thead>
+            <thead><tr><th>Name</th><th>Relationship</th><th>Date of Birth</th><th></th></tr></thead>
             <tbody>
               <tr v-for="d in dependents" :key="d.id">
                 <td>{{ d.name }}</td>
                 <td>{{ d.relationship ?? "—" }}</td>
                 <td>{{ fmtDate(d.date_of_birth) }}</td>
+                <td class="ed-right">
+                  <button v-if="hasSensitive" class="ed-link ed-link-danger" @click="removeDependent(d.id)">Remove</button>
+                </td>
               </tr>
             </tbody>
           </table>
           <p v-else class="ed-muted">No dependents are recorded for this person.</p>
+
+          <form v-if="hasSensitive" class="ed-add-row" @submit.prevent="addDependent">
+            <input v-model="newDependent.name" class="input" placeholder="Name" required />
+            <input v-model="newDependent.relationship" class="input" placeholder="Relationship" />
+            <input v-model="newDependent.date_of_birth" class="input" type="date" aria-label="Date of birth" />
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="addingSide">Add</button>
+          </form>
         </div>
       </div>
 
@@ -1752,10 +1978,25 @@ onMounted(() => {
               <em>of {{ b.entitled_days }} · {{ b.used_days }} taken</em>
             </div>
           </div>
-          <p v-else class="ed-muted">
-            Balances and history for this person are on the Leave screen, where the request and
-            approval trail lives.
+          <p v-else-if="!isSelf" class="ed-muted">
+            Balances are shown on a person's own record. What follows is their request history.
           </p>
+
+          <h4 class="ed-sub-h">Requests</h4>
+          <p v-if="sideError" class="error">{{ sideError }}</p>
+          <table v-else-if="leaveRows.length" class="ed-mini-table">
+            <thead><tr><th>Ref</th><th>Type</th><th>Dates</th><th>Days</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr v-for="r in leaveRows" :key="r.id">
+                <td>{{ r.reference }}</td>
+                <td>{{ r.leave_type?.name ?? "—" }}</td>
+                <td>{{ leaveSpan(r) }}</td>
+                <td>{{ r.days_requested }}</td>
+                <td><span :class="['badge', leaveBadge(r.status)]" style="text-transform:capitalize">{{ r.status }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">No leave has been requested by this person.</p>
         </div>
       </div>
 
@@ -2079,4 +2320,54 @@ onMounted(() => {
 .ed-muted { font-size: 13px; color: var(--color-text-muted); margin: 0 0 12px; }
 
 .ed-tab-body-tight { margin-top: 0; }
+
+/* ── Organization hierarchy ────────────────────────────────────────────── */
+.ed-hier { display: flex; flex-direction: column; }
+
+.ed-hier-node {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-surface);
+  text-decoration: none; color: inherit;
+}
+a.ed-hier-node:hover { border-color: var(--color-brand-base); }
+
+/* The person whose record this is, so the eye finds them without reading. */
+.ed-hier-self { background: var(--color-success-light); border-color: var(--color-success); }
+
+.ed-hier-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex-shrink: 0; border-radius: 999px;
+  font-size: 12px; font-weight: 600;
+  background: var(--color-brand-light); color: var(--color-brand-base);
+}
+.ed-hier-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.ed-hier-text strong { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.ed-hier-text em { font-style: normal; font-size: 12px; color: var(--color-text-muted); }
+
+/* The line that makes it a hierarchy rather than a stack of cards. */
+.ed-hier-stem { width: 2px; height: 16px; margin-left: 28px; background: var(--color-border); }
+
+.ed-hier-children { display: flex; flex-direction: column; gap: 8px; padding-left: 28px; }
+.ed-hier-child { border-style: dashed; }
+
+/* ── Money ─────────────────────────────────────────────────────────────── */
+.ed-kv-total {
+  border-top: 1px solid var(--color-border);
+  margin-top: 4px; padding-top: 8px;
+}
+.ed-kv-total .ed-kv-val { color: var(--color-brand-base); font-weight: 600; }
+
+/* ── Adding a row without leaving the tab ──────────────────────────────── */
+.ed-add-row {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  margin-top: 14px; padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+}
+.ed-add-row .input { flex: 1 1 9rem; min-width: 0; }
+
+.ed-sub-h { font-size: 13px; font-weight: 600; color: var(--color-text); margin: 18px 0 8px; }
+.ed-link-danger { color: var(--color-error); }
 </style>
