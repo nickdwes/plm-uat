@@ -118,6 +118,33 @@ interface LeaveRow {
 
 const leaveRows = ref<LeaveRow[]>([]);
 
+// ── The three tabs that read modules owning their own data ───────────────
+interface AttendanceDay {
+  id: number; date: string; status: string; location: string | null;
+  clock_in: string | null; clock_out: string | null; hours: number | null; overtime_hours: number | null;
+}
+interface AttendanceTotals { days: number; present: number; absent: number; late: number; on_leave: number; hours: number }
+interface CycleAttendance {
+  cycle: string; from: string; to: string;
+  present: number; absent: number; expected: number;
+  rate: number | null; late: number; on_leave: number; unrecorded: number; note: string | null;
+}
+interface ReviewRow {
+  id: number; cycle: string | null; review_date: string | null;
+  rating: number | null; comments: string | null; outcomes: string | null;
+  attendance: CycleAttendance | null;
+}
+interface Payslip {
+  run_id: number; run_status: string;
+  gross: number | null; net: number | null; paye: number | null; nssf: number | null; nhif: number | null;
+}
+
+const attendance      = ref<{ from: string; to: string; days: AttendanceDay[]; totals: AttendanceTotals } | null>(null);
+const attendanceMonth = ref("");
+const reviews         = ref<ReviewRow[]>([]);
+const currentCycle    = ref<CycleAttendance | null>(null);
+const payslips        = ref<Payslip[]>([]);
+
 const contacts   = ref<EmergencyContact[]>([]);
 const dependents = ref<Dependent[]>([]);
 const balances   = ref<Balance[]>([]);
@@ -149,6 +176,24 @@ async function openTab(next: Tab): Promise<void> {
       const res = await api<{ data: Dependent[] }>(
         "GET", `/api/v1/employees/${props.id}/dependents`, { org: org() });
       dependents.value = res.data ?? [];
+    } else if (next === "attendance") {
+      await loadAttendance();
+    } else if (next === "performance") {
+      const res = await api<{ data: { reviews: ReviewRow[]; current: CycleAttendance | null } }>(
+        "GET", `/api/v1/employees/${props.id}/performance`, { org: org() });
+      reviews.value = res.data.reviews ?? [];
+      currentCycle.value = res.data.current;
+    } else if (next === "payroll") {
+      /*
+       * Pay history is refused for anybody without the sensitive permission,
+       * and that is not an error worth showing them — the rest of the tab is
+       * theirs.
+       */
+      try {
+        const res = await api<{ data: Payslip[] }>(
+          "GET", `/api/v1/employees/${props.id}/payslips`, { org: org() });
+        payslips.value = res.data ?? [];
+      } catch { payslips.value = []; }
     } else if (next === "leave") {
       /*
        * This person's requests, not the viewer's. The listing is scoped
@@ -466,6 +511,42 @@ async function removeDependent(id: number): Promise<void> {
     await api("DELETE", `/api/v1/employees/${props.id}/dependents/${id}`, { org: org() });
     dependents.value = dependents.value.filter(d => d.id !== id);
   } catch (e) { sideError.value = e instanceof Error ? e.message : "Could not remove that."; }
+}
+
+async function loadAttendance(): Promise<void> {
+  const params: Record<string, string> = {};
+
+  if (attendanceMonth.value) {
+    // A month is a from/to pair; the endpoint takes days so it can also serve
+    // a cycle window without a second shape.
+    const [y, m] = attendanceMonth.value.split("-").map(Number);
+    params.from = `${attendanceMonth.value}-01`;
+    params.to = new Date(y, m, 0).toISOString().slice(0, 10);
+  }
+
+  const res = await api<{ data: { from: string; to: string; days: AttendanceDay[]; totals: AttendanceTotals } }>(
+    "GET", `/api/v1/employees/${props.id}/attendance`, { org: org(), params });
+  attendance.value = res.data;
+  attendanceMonth.value = res.data.from.slice(0, 7);
+}
+
+function stepAttendanceMonth(by: number): void {
+  const [y, m] = (attendanceMonth.value || new Date().toISOString().slice(0, 7)).split("-").map(Number);
+  const d = new Date(y, m - 1 + by, 1);
+  attendanceMonth.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  void loadAttendance();
+}
+
+function dayTone(status: string): string {
+  return {
+    on_time: "badge-green", early: "badge-green", late: "badge-yellow",
+    absent: "badge-red", no_clock_in: "badge-gray", no_clock_out: "badge-yellow",
+    on_leave: "badge-gray", holiday: "badge-gray", weekend: "badge-gray",
+  }[status] ?? "badge-gray";
+}
+
+function plainStatus(status: string): string {
+  return status.replace(/_/g, " ");
 }
 
 /**
@@ -1770,6 +1851,21 @@ onMounted(() => {
 
       <!-- ── BENEFITS ──────────────────────────────────────────────────────── -->
       <div v-if="tab === 'payroll'" class="ed-tab-body">
+        <div v-if="payslips.length" class="ed-section-card">
+          <h3 class="ed-section-title">Pay history</h3>
+          <table class="ed-mini-table">
+            <thead><tr><th>Run</th><th>Status</th><th>Gross</th><th>PAYE</th><th>Net</th></tr></thead>
+            <tbody>
+              <tr v-for="p in payslips" :key="p.run_id">
+                <td>#{{ p.run_id }}</td>
+                <td style="text-transform:capitalize">{{ p.run_status }}</td>
+                <td>KES {{ fmt(p.gross) }}</td>
+                <td>KES {{ fmt(p.paye) }}</td>
+                <td><strong>KES {{ fmt(p.net) }}</strong></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <div class="ed-section-card">
           <div class="ed-section-hdr" style="margin-bottom:16px">
@@ -1950,16 +2046,44 @@ onMounted(() => {
       <!-- ── ATTENDANCE ────────────────────────────────────────────────── -->
       <div v-if="tab === 'attendance'" class="ed-tab-body">
         <div class="ed-section-card">
-          <h3 class="ed-section-title">Attendance Management</h3>
-          <!--
-            A window onto the attendance module, not a second implementation of
-            it. Nothing has been recorded yet, so it points at its owner rather
-            than drawing an empty chart.
-          -->
-          <p class="ed-muted">
-            Attendance is recorded by the Attendance Tracker. Nothing has been logged for anybody
-            in this organisation yet, so there is nothing to show here.
-          </p>
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Attendance Management</h3>
+            <div class="ed-month">
+              <button aria-label="Previous month" @click="stepAttendanceMonth(-1)">‹</button>
+              <span>{{ attendanceMonth || "This month" }}</span>
+              <button aria-label="Next month" @click="stepAttendanceMonth(1)">›</button>
+            </div>
+          </div>
+
+          <p v-if="sideError" class="error">{{ sideError }}</p>
+
+          <template v-else-if="attendance">
+            <div class="ed-bal-grid">
+              <div class="ed-bal"><span class="ed-bal-type">Present</span><strong>{{ attendance.totals.present }}</strong><em>of {{ attendance.totals.days }} recorded</em></div>
+              <div class="ed-bal"><span class="ed-bal-type">Absent</span><strong>{{ attendance.totals.absent }}</strong></div>
+              <div class="ed-bal"><span class="ed-bal-type">Late</span><strong>{{ attendance.totals.late }}</strong></div>
+              <div class="ed-bal"><span class="ed-bal-type">On leave</span><strong>{{ attendance.totals.on_leave }}</strong></div>
+              <div class="ed-bal"><span class="ed-bal-type">Hours</span><strong>{{ attendance.totals.hours }}</strong></div>
+            </div>
+
+            <table v-if="attendance.days.length" class="ed-mini-table" style="margin-top:16px">
+              <thead><tr><th>Date</th><th>Status</th><th>Where</th><th>In</th><th>Out</th><th>Hours</th></tr></thead>
+              <tbody>
+                <tr v-for="d in attendance.days" :key="d.id">
+                  <td>{{ fmtDate(d.date) }}</td>
+                  <td><span :class="['badge', dayTone(d.status)]" style="text-transform:capitalize">{{ plainStatus(d.status) }}</span></td>
+                  <td style="text-transform:capitalize">{{ d.location?.replace(/_/g, " ") ?? "—" }}</td>
+                  <td>{{ d.clock_in ? new Date(d.clock_in).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" }) : "—" }}</td>
+                  <td>{{ d.clock_out ? new Date(d.clock_out).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" }) : "—" }}</td>
+                  <td>{{ d.hours ?? "—" }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-else class="ed-muted" style="margin-top:12px">
+              No day in this month was recorded for this person.
+            </p>
+          </template>
+
           <router-link class="btn btn-outline btn-sm" :to="{ name: 'attendance' }">Open Attendance Tracker</router-link>
         </div>
       </div>
@@ -2002,13 +2126,63 @@ onMounted(() => {
 
       <!-- ── PERFORMANCE ───────────────────────────────────────────────── -->
       <div v-if="tab === 'performance'" class="ed-tab-body">
-        <div class="ed-section-card">
-          <h3 class="ed-section-title">Performance</h3>
+        <!--
+          Attendance is advisory here. It is shown for a reviewer to weigh and
+          computes no part of the rating — an attendance record people dispute
+          should not become an appraisal people dispute.
+        -->
+        <div v-if="currentCycle" class="ed-section-card">
+          <h3 class="ed-section-title">Attendance this cycle — {{ currentCycle.cycle }}</h3>
           <p class="ed-muted">
-            Reviews, goals and appraisals belong to the Performance module. No review has been
-            recorded for anybody in this organisation yet.
+            {{ fmtDate(currentCycle.from) }} to {{ fmtDate(currentCycle.to) }}. Shown for context;
+            it does not compute any part of a rating.
           </p>
-          <router-link class="btn btn-outline btn-sm" :to="{ name: 'performance' }">Open Performance</router-link>
+
+          <div v-if="currentCycle.rate !== null" class="ed-bal-grid">
+            <div class="ed-bal">
+              <span class="ed-bal-type">Present</span>
+              <strong>{{ currentCycle.rate }}%</strong>
+              <em>{{ currentCycle.present }} of {{ currentCycle.expected }} expected days</em>
+            </div>
+            <div class="ed-bal"><span class="ed-bal-type">Absent</span><strong>{{ currentCycle.absent }}</strong></div>
+            <div class="ed-bal"><span class="ed-bal-type">Late</span><strong>{{ currentCycle.late }}</strong></div>
+            <div class="ed-bal">
+              <span class="ed-bal-type">Approved leave</span>
+              <strong>{{ currentCycle.on_leave }}</strong><em>not counted against</em>
+            </div>
+          </div>
+          <!-- No rate, rather than nought per cent. -->
+          <p v-else class="ed-muted">{{ currentCycle.note }}</p>
+
+          <p v-if="currentCycle.unrecorded > 0" class="ed-declined" style="margin-top:12px">
+            {{ currentCycle.unrecorded }} day{{ currentCycle.unrecorded === 1 ? "" : "s" }} in this cycle
+            have no clock-in recorded. They are excluded from the figures above rather than counted
+            as absence — there is no evidence either way, and it is worth asking about.
+          </p>
+        </div>
+
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Reviews</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'performance' }">Open Performance</router-link>
+          </div>
+
+          <template v-if="reviews.length">
+            <article v-for="r in reviews" :key="r.id" class="ed-review">
+              <header>
+                <strong>{{ r.cycle ?? "No cycle recorded" }}</strong>
+                <span v-if="r.rating" class="badge badge-green">{{ r.rating }}/5</span>
+                <time>{{ fmtDate(r.review_date) }}</time>
+              </header>
+              <p v-if="r.comments">{{ r.comments }}</p>
+              <p v-if="r.outcomes" class="ed-muted" style="margin:0">{{ r.outcomes }}</p>
+              <p v-if="r.attendance && r.attendance.rate !== null" class="ed-review-att">
+                Attendance over this cycle: <strong>{{ r.attendance.rate }}%</strong>
+                ({{ r.attendance.present }} of {{ r.attendance.expected }} expected days)
+              </p>
+            </article>
+          </template>
+          <p v-else class="ed-muted">No review has been written for this person yet.</p>
         </div>
       </div>
 
@@ -2370,4 +2544,28 @@ a.ed-hier-node:hover { border-color: var(--color-brand-base); }
 
 .ed-sub-h { font-size: 13px; font-weight: 600; color: var(--color-text); margin: 18px 0 8px; }
 .ed-link-danger { color: var(--color-error); }
+
+/* ── Attendance and reviews ────────────────────────────────────────────── */
+.ed-month {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border: 1px solid var(--color-border); border-radius: 8px;
+  font-size: 12px; color: var(--color-text);
+}
+.ed-month span { min-width: 5.5rem; text-align: center; }
+.ed-month button { border: none; background: none; cursor: pointer; color: var(--color-text-muted); padding: 0 6px; font-size: 14px; }
+.ed-month button:hover { color: var(--color-brand-base); }
+
+.ed-review { padding: 12px 0; border-bottom: 1px solid var(--color-border); }
+.ed-review:last-child { border-bottom: none; }
+.ed-review header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.ed-review header strong { font-size: 14px; color: var(--color-text); }
+.ed-review time { font-size: 12px; color: var(--color-text-muted); }
+.ed-review p { font-size: 13px; color: var(--color-text); margin: 0 0 6px; white-space: pre-wrap; }
+
+/* Advisory, and it should look advisory rather than like a score. */
+.ed-review-att {
+  font-size: 12px !important; color: var(--color-text-muted) !important;
+  background: var(--color-surface-sunken);
+  border-radius: 8px; padding: 8px 10px; margin: 8px 0 0 !important;
+}
 </style>

@@ -207,6 +207,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
      * /employees because a report is a different thing from a record — it has
      * its own permission surface and its own shape.
      */
+    // Review cycles: named periods with dates, so reviews are comparable.
+    Route::prefix('performance-cycles')->group(function () {
+        Route::get('/',    [\App\Http\Controllers\HR\PerformanceCycleController::class, 'index']);
+        Route::post('/',   [\App\Http\Controllers\HR\PerformanceCycleController::class, 'store']);
+        Route::put('/{performanceCycle}', [\App\Http\Controllers\HR\PerformanceCycleController::class, 'update']);
+    });
+
     Route::prefix('reports/people')->group(function () {
         Route::get('/columns', [\App\Http\Controllers\HR\PeopleReportController::class, 'columns']);
         Route::get('/preview', [\App\Http\Controllers\HR\PeopleReportController::class, 'preview']);
@@ -261,6 +268,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::delete('/{employee}/secondments/{secondment}', [EmployeeController::class, 'destroySecondment']);
 
         // Emergency contacts (HR or self)
+        // One employee's slice of three modules that own their own records.
+        Route::get('/{employee}/attendance',  [\App\Http\Controllers\HR\EmployeeRecordController::class, 'attendance']);
+        Route::get('/{employee}/payslips',    [\App\Http\Controllers\HR\EmployeeRecordController::class, 'payslips']);
+        Route::get('/{employee}/performance', [\App\Http\Controllers\HR\EmployeeRecordController::class, 'performance']);
+
         Route::get('/{employee}/emergency-contacts',              [EmployeeEmergencyContactController::class, 'index']);
         Route::post('/{employee}/emergency-contacts',             [EmployeeEmergencyContactController::class, 'store']);
         Route::put('/{employee}/emergency-contacts/{contact}',    [EmployeeEmergencyContactController::class, 'update']);

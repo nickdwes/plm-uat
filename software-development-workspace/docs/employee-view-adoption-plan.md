@@ -194,8 +194,19 @@ None of this can be inferred from the schema:
    attached, so there is currently nothing that says which days a review
    covers. Any attendance figure needs that window to exist.
 
-Until those are answered the Performance tab stays as it is — naming the
-module that owns the data rather than drawing an empty chart.
+**Answered 2026-08-23 and built:** presence rate with approved leave excluded
+from the denominator; advisory, computing no part of the rating; windows come
+from a `performance_cycles` table. `no_clock_in` is reported separately rather
+than counted as absence — there is no evidence either way, and counting it
+accuses somebody on the strength of missing data.
+
+All three tabs now read their owning module: `GET /employees/{id}/attendance`,
+`/payslips` and `/performance`. Each renders honestly against the empty tables
+— "no rate" rather than 0%, which would say somebody never turned up.
+
+**Phase 4 is complete.** What remains is data, not code: a payroll has to be
+run, days have to be clocked, and cycles have to be created before any of
+these three shows a figure.
 
 ### 4b. Import — **buildable now**
 
