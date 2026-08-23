@@ -250,6 +250,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Profile photo
         Route::post('/{employee}/photo', [EmployeeController::class, 'uploadPhoto']);
 
+        // Confirming somebody off probation, and back again. Exit stays its
+        // own thing — it needs a date and a reason.
+        Route::post('/{employee}/status', [EmployeeController::class, 'setStatus']);
+
         // Qualifications & certifications
         Route::post('/{employee}/qualifications',                  [EmployeeController::class, 'storeQualification']);
         Route::delete('/{employee}/qualifications/{qualification}', [EmployeeController::class, 'destroyQualification']);

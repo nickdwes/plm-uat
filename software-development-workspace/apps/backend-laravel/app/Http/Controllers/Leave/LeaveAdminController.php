@@ -123,7 +123,13 @@ class LeaveAdminController extends Controller
         $year  = $data['year'];
 
         $employees = Employee::where('primary_organization_id', $orgId)
-            ->where('status', 'active')
+            /*
+             * Everybody employed. A new hire on probation missing from this
+             * seeding gets no leave entitlement at all — the worst version of
+             * this bug, because it is silent and only shows up when they ask
+             * for a day off.
+             */
+            ->employed()
             ->pluck('id');
 
         $types = LeaveType::where('organization_id', $orgId)

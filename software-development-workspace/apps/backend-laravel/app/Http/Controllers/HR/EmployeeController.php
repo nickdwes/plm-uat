@@ -48,6 +48,27 @@ class EmployeeController extends Controller
         ]);
     }
 
+    /**
+     * POST /api/v1/employees/{employee}/status
+     *
+     * Confirm somebody off probation, put them on it, suspend or reinstate.
+     */
+    public function setStatus(Request $request, int $employee): EmployeeResource
+    {
+        $record = Employee::withoutGlobalScope('organization')->findOrFail($employee);
+
+        $this->authorize('update', $record);
+
+        $data = $request->validate([
+            'status' => ['required', 'in:active,probation,on_leave,suspended'],
+            'probation_end_date' => ['nullable', 'date'],
+        ]);
+
+        return new EmployeeResource(
+            $this->service->setStatus($employee, $data['status'], $data),
+        );
+    }
+
     public function store(CreateEmployeeRequest $request): EmployeeResource
     {
         $employee = $this->service->create(

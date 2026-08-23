@@ -19,7 +19,7 @@ class DashboardController extends Controller
 
         // ── Core headcount ────────────────────────────────────────────────────
         $totalActive = Employee::where('primary_organization_id', $orgId)
-            ->where('status', 'active')->count();
+            ->employed()->count();
 
         $totalExited = Employee::where('primary_organization_id', $orgId)
             ->where('status', 'exited')->count();
@@ -58,14 +58,14 @@ class DashboardController extends Controller
 
         // ── Department headcount ──────────────────────────────────────────────
         $headcountByDept = Department::where('organization_id', $orgId)
-            ->withCount(['employees as headcount' => fn($q) => $q->where('status', 'active')])
+            ->withCount(['employees as headcount' => fn($q) => $q->employed()])
             ->orderByDesc('headcount')
             ->get(['id', 'name'])
             ->map(fn($d) => ['department' => $d->name, 'headcount' => $d->headcount]);
 
         // ── Employment type breakdown ─────────────────────────────────────────
         $employmentTypes = Employee::where('primary_organization_id', $orgId)
-            ->where('status', 'active')
+            ->employed()
             ->select('employment_type', DB::raw('count(*) as count'))
             ->groupBy('employment_type')
             ->get()
@@ -76,7 +76,7 @@ class DashboardController extends Controller
 
         // ── Gender breakdown ──────────────────────────────────────────────────
         $genderBreakdown = Employee::where('primary_organization_id', $orgId)
-            ->where('status', 'active')
+            ->employed()
             ->select('gender', DB::raw('count(*) as count'))
             ->groupBy('gender')
             ->get()

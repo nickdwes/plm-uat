@@ -173,6 +173,63 @@ class EmployeeService extends BaseService
     }
 
     /**
+     * Move somebody between employment states.
+     *
+     * Probation could be entered and never left: onboarding writes
+     * `status = 'probation'`, UpdateEmployeeRequest has no status rule at all,
+     * and the only transition in the service was exit(). So a new hire stayed
+     * on probation until they resigned.
+     *
+     * Exit is deliberately not reachable here. It needs a date and a reason,
+     * and letting it through a general status setter would produce leavers
+     * with neither — a record nobody could later explain.
+     *
+     * @param  array<string, mixed>  $extra  Dates that belong with the change.
+     */
+    public function setStatus(int $id, string $status, array $extra = []): Employee
+    {
+        $allowed = ['active', 'probation', 'on_leave', 'suspended'];
+
+        abort_unless(
+            in_array($status, $allowed, true),
+            422,
+            "'{$status}' is not a state somebody can be moved into here. Exiting an employee needs "
+            . 'a date and a reason, and is done through the exit process.',
+        );
+
+        $orgId = app('current.organization_id');
+
+        $employee = Employee::when($orgId, fn ($q) => $q->where('primary_organization_id', $orgId))
+            ->withoutGlobalScope('organization')
+            ->findOrFail($id);
+
+        abort_if(
+            $employee->status === 'exited',
+            422,
+            'This person has left. Bringing somebody back is a rehire, not a status change.',
+        );
+
+        $changes = ['status' => $status];
+
+        /*
+         * Confirming somebody clears the probation end date, because it is no
+         * longer a date anything is waiting for. Leaving it set would keep
+         * them in the overdue-confirmation count forever.
+         */
+        if ($status === 'active') {
+            $changes['probation_end_date'] = null;
+        }
+
+        if ($status === 'probation' && ! empty($extra['probation_end_date'])) {
+            $changes['probation_end_date'] = $extra['probation_end_date'];
+        }
+
+        $employee->update($changes);
+
+        return $employee->fresh();
+    }
+
+    /**
      * Attach a whole list of secondments to somebody.
      *
      * Two things this fixes over doing it inline.

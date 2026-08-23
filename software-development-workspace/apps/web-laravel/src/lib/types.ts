@@ -277,6 +277,9 @@ export interface LeaveSummary {
 export interface DirectoryFigures {
   total: number;
   active: number;
+  on_probation: number;
+  /** On probation and past their end date — the figure with a deadline. */
+  overdue_confirmation: number;
   on_leave: number;
   new_this_month: number;
   as_at: string;

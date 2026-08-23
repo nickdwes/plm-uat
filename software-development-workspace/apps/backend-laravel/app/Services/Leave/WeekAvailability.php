@@ -36,7 +36,9 @@ class WeekAvailability
         $end   = $start->copy()->endOfWeek(Carbon::SUNDAY);
 
         $people = Employee::query()
-            ->where('status', 'active')
+            // Employed, not merely 'active' — somebody on probation works
+            // here and belongs on the rota.
+            ->employed()
             ->when(
                 $employeeIds !== null,
                 fn ($q) => $q->whereIn('id', $employeeIds),

@@ -79,7 +79,8 @@ class LeaveSummary
     private function availability(int $organizationId, ?Collection $employeeIds, int $away): array
     {
         $headcount = Employee::query()
-            ->where('status', 'active')
+            // Availability is about who works here, not who is past probation.
+            ->employed()
             ->when(
                 $employeeIds !== null,
                 fn ($q) => $q->whereIn('id', $employeeIds),

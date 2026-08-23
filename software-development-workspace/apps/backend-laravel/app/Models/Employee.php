@@ -374,6 +374,38 @@ class Employee extends Model
         return $query->where('status', 'active');
     }
 
+    /**
+     * Everybody who currently works here, whatever phase they are in.
+     *
+     * `status` carries six values — draft, active, probation, on_leave,
+     * suspended, exited — and only two of them mean somebody is not on the
+     * payroll. Filtering on `active` alone therefore does not mean "employed";
+     * it means "employed and past probation and not away and not suspended",
+     * which is almost never what the caller wanted.
+     *
+     * It matters most where the answer decides something. Somebody on
+     * probation who is missing from the leave-balance seeding gets no
+     * entitlement at all; missing from the availability rota, their manager
+     * plans a week without them; missing from headcount, the figure quietly
+     * disagrees with the directory.
+     */
+    public function scopeEmployed($query)
+    {
+        return $query->whereNotIn('status', ['draft', 'exited']);
+    }
+
+    /**
+     * Serving a probation period.
+     *
+     * The status is what says so. `probation_end_date` is when it is due to
+     * finish and is not the test — a date that has passed means somebody is
+     * overdue confirmation, not that they are already confirmed.
+     */
+    public function scopeOnProbation($query)
+    {
+        return $query->where('status', 'probation');
+    }
+
     public function scopePrimary($query, int $organizationId)
     {
         return $query->where('primary_organization_id', $organizationId);

@@ -2,11 +2,10 @@
 /**
  * The employee directory, adopted from the HR portal designs.
  *
- * Four figures rather than the design's five. Employee status holds only
- * `active` and `exited` and `probation_end_date` is populated for nobody, so
- * On Probation has nothing behind it — and a card reading 0 asserts that
- * nobody is on probation, which is a different claim from not knowing. It
- * comes back when probation is something the company records.
+ * Five figures, as designed. On Probation is counted from the status rather
+ * than from a passed probation end date — a date gone by means somebody is
+ * overdue confirmation, not that they have been confirmed, and the two need
+ * different things done about them.
  */
 import { ref, computed, onMounted, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -33,7 +32,7 @@ const figuresLoading = ref(false);
  * derived from approved leave — so it travels as its own filter rather than
  * being squeezed into the status column.
  */
-type Filter = "all" | "active" | "on_leave" | "exited";
+type Filter = "all" | "active" | "probation" | "on_leave" | "exited";
 const filter = ref<Filter>("all");
 
 /* Declared here rather than inline: a template expression is not a place a
@@ -41,6 +40,7 @@ const filter = ref<Filter>("all");
 const statusTabs: { key: Filter; label: string }[] = [
   { key: "all",      label: "All Employees" },
   { key: "active",   label: "Active" },
+  { key: "probation", label: "On Probation" },
   { key: "on_leave", label: "On Leave" },
   { key: "exited",   label: "Exited" },
 ];
@@ -103,6 +103,9 @@ function statusBadge(status: string): string {
   return {
     active: "badge-green",
     exited: "badge-gray",
+    probation: "badge-yellow",
+    on_leave: "badge-gray",
+    suspended: "badge-red",
     inactive: "badge-yellow",
     draft: "badge-gray",
   }[status] ?? "badge-gray";
@@ -162,6 +165,14 @@ watch(currentOrgSlug, refresh);
       <div class="ev-fig">
         <span>Active Employees</span>
         <strong>{{ figures.active }}</strong>
+      </div>
+      <div class="ev-fig">
+        <span>On Probation</span>
+        <strong>{{ figures.on_probation }}</strong>
+        <!-- The one with a deadline: nobody has decided about them. -->
+        <em v-if="figures.overdue_confirmation" class="ev-fig-flag">
+          {{ figures.overdue_confirmation }} overdue confirmation
+        </em>
       </div>
       <div class="ev-fig">
         <span>On Leave</span>
@@ -272,7 +283,9 @@ watch(currentOrgSlug, refresh);
             </tr>
             <tr v-if="employees.length === 0">
               <td colspan="8" class="empty">
-                {{ filter === "on_leave" ? "Nobody is on leave today." : "No employees found." }}
+                {{ filter === "on_leave" ? "Nobody is on leave today."
+                   : filter === "probation" ? "Nobody is on probation."
+                   : "No employees found." }}
               </td>
             </tr>
           </tbody>
@@ -453,4 +466,7 @@ watch(currentOrgSlug, refresh);
   .ev-toolbar { padding: var(--space-3); }
   .ev-tabs { gap: var(--space-4); }
 }
+
+/* A count that needs somebody to act, not just to know. */
+.ev-fig-flag { color: var(--color-warning) !important; font-weight: 500; }
 </style>

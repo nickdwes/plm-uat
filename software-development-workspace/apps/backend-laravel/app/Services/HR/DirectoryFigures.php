@@ -13,14 +13,16 @@ use Illuminate\Support\Carbon;
  * here *or placed here* — so a secondee is counted once, by the organisation
  * that hosts them, and the headline cannot disagree with the rows.
  *
- * ── Why there is no "on probation" ──
+ * ── On probation ──
  *
- * The design shows five figures and the fifth is On Probation. Employee status
- * holds only `active` and `exited`, and `probation_end_date` is populated for
- * nobody, so there is nothing to count. A card reading 0 asserts that nobody
- * is on probation, which is a different claim from not knowing, and it is the
- * kind of claim somebody repeats in a meeting. It is left out until probation
- * is something the company records.
+ * Counted from the status, which already accepts `probation` and which the
+ * onboarding screens already write — not from `probation_end_date`. A date
+ * that has passed means somebody is overdue confirmation, not that they have
+ * been confirmed, and inferring the second from the first would quietly
+ * promote people nobody signed off.
+ *
+ * `overdue_confirmation` is counted beside it because that is the figure with
+ * a deadline attached: somebody has to decide.
  */
 class DirectoryFigures
 {
@@ -41,6 +43,11 @@ class DirectoryFigures
         return [
             'total'       => (clone $counted())->count(),
             'active'      => (clone $counted())->where('status', 'active')->count(),
+            'on_probation' => (clone $counted())->onProbation()->count(),
+            'overdue_confirmation' => (clone $counted())->onProbation()
+                ->whereNotNull('probation_end_date')
+                ->whereDate('probation_end_date', '<', $today->toDateString())
+                ->count(),
             'on_leave'    => $this->onLeave($organizationId, $today),
             'new_this_month' => (clone $counted())
                 ->whereDate('date_hired', '>=', $today->copy()->startOfMonth()->toDateString())
