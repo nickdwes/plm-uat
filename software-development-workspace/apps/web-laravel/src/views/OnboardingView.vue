@@ -20,6 +20,15 @@ interface Secondment {
   start_date: string; end_date: string; allocation_pct: number; is_billable: boolean; notes: string;
 }
 interface AssetItem   { name: string; serial: string; assigned_date: string }
+/**
+ * A vehicle for parking access — optional, unlike Next of Kin. Mirrors the
+ * fields on employee_vehicles directly, since this list is submitted straight
+ * to that table on POST /employees/{id}/vehicles with no translation step.
+ */
+interface VehicleItem {
+  registration_number: string; make: string; model: string; color: string;
+  year: string; parking_slot: string; notes: string;
+}
 interface CheckItem   { label: string; done: boolean; notes: string }
 interface PendingUpload { file: File; category: string; label: string }
 
@@ -167,10 +176,16 @@ const documents = ref<CheckItem[]>([
 ]);
 
 const assets = ref<AssetItem[]>([]);
+/** Empty by default — most new hires have nothing to register here, and
+    nothing on this screen requires one. */
+const vehicleList = ref<VehicleItem[]>([]);
 
 // ─── Document file upload queue (Step 5) ─────────────────────────────────────
 const pendingUploads = ref<PendingUpload[]>([]);
 const uploadedDocs   = ref<{ id: number; category: string; original_name: string; created_at: string }[]>([]);
+/** Already on file, shown read-only — editing an existing one happens on the
+    employee's profile, not by resubmitting it here. */
+const existingVehicles = ref<{ id: number; registration_number: string; make: string | null; model: string | null; parking_slot: string | null }[]>([]);
 
 const UPLOAD_CATEGORIES = [
   { value: "national_id",  label: "National ID / Passport" },
@@ -272,6 +287,14 @@ function setPrimaryNok(i: number): void {
 // ─── Asset helpers ────────────────────────────────────────────────────────────
 function addAsset(): void { assets.value.push({ name: "", serial: "", assigned_date: "" }); }
 function removeAsset(i: number): void { assets.value.splice(i, 1); }
+
+function addVehicle(): void {
+  vehicleList.value.push({
+    registration_number: "", make: "", model: "", color: "",
+    year: "", parking_slot: "", notes: "",
+  });
+}
+function removeVehicle(i: number): void { vehicleList.value.splice(i, 1); }
 
 // ─── Secondment helpers ───────────────────────────────────────────────────────
 function addSecondment(): void {
@@ -522,6 +545,17 @@ async function submit(): Promise<void> {
       });
     }
 
+    // Vehicles, straight onto the employee's own record.
+    for (const v of vehicleList.value.filter(x => x.registration_number.trim())) {
+      const body: Record<string, unknown> = {
+        registration_number: v.registration_number,
+        make: v.make || undefined, model: v.model || undefined, color: v.color || undefined,
+        parking_slot: v.parking_slot || undefined, notes: v.notes || undefined,
+      };
+      if (v.year) body.year = Number(v.year);
+      await api("POST", `/api/v1/employees/${employeeId}/vehicles`, { org: org(), body });
+    }
+
     // Step 5: sync inductions, document checklist, assets
     await api("PUT", `/api/v1/employees/${employeeId}/onboarding`, {
       org: org(),
@@ -568,6 +602,17 @@ onMounted(async () => {
     try {
       const docs = await api<any>("GET", `/api/v1/employees/${editId.value}/documents`, { org: org() });
       uploadedDocs.value = docs?.data ?? [];
+    } catch { /* non-fatal */ }
+    /*
+     * Existing vehicles are shown but not editable here — re-submitting them
+     * through this list would create duplicates, since the wizard only ever
+     * POSTs. Registering a new one for somebody who already has one still
+     * works; changing or removing an existing one belongs on their profile,
+     * where it is a proper edit rather than a second row.
+     */
+    try {
+      const veh = await api<any>("GET", `/api/v1/employees/${editId.value}/vehicles`, { org: org() });
+      existingVehicles.value = veh?.data ?? veh ?? [];
     } catch { /* non-fatal */ }
   }
 });
@@ -1123,6 +1168,43 @@ onMounted(async () => {
             <input v-model="a.assigned_date" class="input" type="date" />
           </div>
           <button type="button" class="btn btn-ghost btn-sm ob-asset-del ob-danger-btn" @click="removeAsset(i)">✕</button>
+        </div>
+      </div>
+
+      <div class="ob-section">
+        <div class="ob-section-title" style="display:flex;justify-content:space-between;align-items:center">
+          <span>Vehicles <span class="ob-hint">(for parking access — optional)</span></span>
+          <button type="button" class="btn btn-secondary btn-sm" @click="addVehicle">+ Add Vehicle</button>
+        </div>
+
+        <!-- Already on file, when editing somebody who has registered one
+             before. Read-only: changing it is a profile edit, not a re-submit. -->
+        <div v-if="existingVehicles.length" class="ob-uploaded-list">
+          <div v-for="v in existingVehicles" :key="v.id" class="ob-uploaded-item">
+            <span class="badge badge-blue">{{ v.registration_number }}</span>
+            <span class="ob-uploaded-name">
+              {{ [v.make, v.model].filter(Boolean).join(" ") || "No make/model recorded" }}
+              <template v-if="v.parking_slot"> · Slot {{ v.parking_slot }}</template>
+            </span>
+          </div>
+        </div>
+
+        <div v-if="vehicleList.length === 0" class="ob-empty-note">No vehicles to register yet.</div>
+        <div v-for="(v, i) in vehicleList" :key="i" class="ob-asset-row">
+          <div class="form-field" style="flex:1">
+            <label class="ob-label">Registration No.</label>
+            <input v-model="v.registration_number" type="text" class="input" placeholder="e.g. KBZ 123A" style="text-transform:uppercase" />
+          </div>
+          <div class="form-field" style="flex:1">
+            <label class="ob-label">Make &amp; Model</label>
+            <input v-model="v.make" type="text" class="input" placeholder="e.g. Toyota" />
+            <input v-model="v.model" type="text" class="input" style="margin-top:6px" placeholder="e.g. Prado" />
+          </div>
+          <div class="form-field" style="flex:1">
+            <label class="ob-label">Parking Slot</label>
+            <input v-model="v.parking_slot" type="text" class="input" placeholder="e.g. B-12" />
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm ob-asset-del ob-danger-btn" @click="removeVehicle(i)">✕</button>
         </div>
       </div>
 

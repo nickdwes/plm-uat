@@ -11,7 +11,6 @@ import EmployeeDetailView  from "../views/EmployeeDetailView.vue";
 import PeopleReportView from "../views/PeopleReportView.vue";
 import EmployeeImportView from "../views/EmployeeImportView.vue";
 import EmployeeDependentsView from "../views/EmployeeDependentsView.vue";
-import EmployeeVehiclesView   from "../views/EmployeeVehiclesView.vue";
 import MyInfoView          from "../views/MyInfoView.vue";
 import OnboardingView      from "../views/OnboardingView.vue";
 import LeaveView           from "../views/LeaveView.vue";
@@ -148,7 +147,14 @@ const routes: RouteRecordRaw[] = [
   { path: "/reports/people", name: "people-report", component: PeopleReportView },
   { path: "/employees/import", name: "employee-import", component: EmployeeImportView },
   { path: "/employees/:id/dependents", name: "employee-dependents", component: EmployeeDependentsView, props: true },
-  { path: "/employees/:id/vehicles",   name: "employee-vehicles",   component: EmployeeVehiclesView,   props: true },
+  /*
+   * Vehicles moved onto the profile itself as its own tab — it used to be a
+   * separate page with none of that person's photo, status or other tabs in
+   * view, which made editing one feel like leaving the record entirely. Kept
+   * as a redirect rather than dropped outright: the path may be bookmarked.
+   */
+  { path: "/employees/:id/vehicles",   name: "employee-vehicles",
+    redirect: to => ({ name: "employee-detail", params: to.params }) },
   { path: "/employees/:id",   name: "employee-detail",  component: EmployeeDetailView, props: true },
   { path: "/my-info",         name: "my-info",          component: MyInfoView },
   { path: "/leave",           name: "leave",            component: LeaveView },

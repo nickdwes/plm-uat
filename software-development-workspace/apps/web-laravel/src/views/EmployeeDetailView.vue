@@ -3,7 +3,7 @@ import { ref, onMounted, reactive, computed } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../lib/api";
 import { currentOrgSlug, authStore, getToken } from "../stores/auth";
-import type { Employee, EmergencyContact } from "../lib/types";
+import type { Employee, EmergencyContact, EmployeeVehicle } from "../lib/types";
 
 const props  = defineProps<{ id: string }>();
 const router = useRouter();
@@ -25,7 +25,7 @@ const error    = ref("");
  */
 type Tab =
   | "profile-overview" | "job-details" | "emergency-contacts" | "dependents"
-  | "attendance" | "leave" | "payroll" | "performance" | "documents";
+  | "attendance" | "leave" | "payroll" | "performance" | "documents" | "vehicles";
 
 const tab = ref<Tab>("profile-overview");
 
@@ -39,6 +39,13 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "payroll",            label: "Payroll" },
   { key: "performance",        label: "Performance" },
   { key: "documents",          label: "Documents" },
+  /*
+   * Not in the design, but a real screen that needs to stay reachable. It was
+   * previously its own routed page — a click away from the profile entirely,
+   * with none of this person's photo, status or other tabs in view. Folded in
+   * here so editing a vehicle happens in the same window as everything else.
+   */
+  { key: "vehicles",           label: "Vehicles" },
 ];
 
 // ── Documents ──────────────────────────────────────────────────────────────
@@ -139,6 +146,82 @@ interface Payslip {
   gross: number | null; net: number | null; paye: number | null; nssf: number | null; nhif: number | null;
 }
 
+// ── Vehicles ───────────────────────────────────────────────────────────────
+/*
+ * Folded in from what used to be a separate routed page. Editing happens
+ * inline, in an expanding form beneath the list — the same shape as the
+ * Emergency Contacts and Dependents tabs, and the Move dialog above — rather
+ * than a popup, so nothing ever leaves this window to edit a vehicle.
+ */
+const vehicles          = ref<EmployeeVehicle[]>([]);
+const showVehicleForm   = ref(false);
+const editingVehicleId  = ref<number | null>(null);
+const vehicleSaving     = ref(false);
+const vehicleError      = ref("");
+
+const VEHICLE_YEAR_NOW = new Date().getFullYear();
+const VEHICLE_YEAR_MIN = 1900;
+
+const emptyVehicleForm = () => ({
+  registration_number: "", make: "", model: "", color: "",
+  year: "" as string | number, parking_slot: "", notes: "",
+});
+const vehicleForm = reactive(emptyVehicleForm());
+
+function openAddVehicle(): void {
+  editingVehicleId.value = null;
+  Object.assign(vehicleForm, emptyVehicleForm());
+  vehicleError.value = "";
+  showVehicleForm.value = true;
+}
+
+function openEditVehicle(v: EmployeeVehicle): void {
+  editingVehicleId.value = v.id;
+  Object.assign(vehicleForm, {
+    registration_number: v.registration_number,
+    make: v.make ?? "", model: v.model ?? "", color: v.color ?? "",
+    year: v.year ?? "", parking_slot: v.parking_slot ?? "", notes: v.notes ?? "",
+  });
+  vehicleError.value = "";
+  showVehicleForm.value = true;
+}
+
+async function saveVehicle(): Promise<void> {
+  if (!vehicleForm.registration_number.trim()) {
+    vehicleError.value = "Registration number is required.";
+    return;
+  }
+  const yr = Number(vehicleForm.year);
+  if (vehicleForm.year && (isNaN(yr) || yr < VEHICLE_YEAR_MIN || yr > VEHICLE_YEAR_NOW + 1)) {
+    vehicleError.value = `Year must be between ${VEHICLE_YEAR_MIN} and ${VEHICLE_YEAR_NOW + 1}.`;
+    return;
+  }
+
+  vehicleSaving.value = true; vehicleError.value = "";
+  try {
+    const body: Record<string, unknown> = { ...vehicleForm };
+    body.year = vehicleForm.year ? Number(vehicleForm.year) : null;
+    if (!body.year) delete body.year;
+
+    if (editingVehicleId.value) {
+      await api("PUT", `/api/v1/employees/${props.id}/vehicles/${editingVehicleId.value}`, { org: org(), body });
+    } else {
+      await api("POST", `/api/v1/employees/${props.id}/vehicles`, { org: org(), body });
+    }
+    showVehicleForm.value = false;
+    loaded.value.vehicles = false;
+    await openTab("vehicles");
+  } catch (e) {
+    vehicleError.value = e instanceof Error ? e.message : "Could not save that vehicle.";
+  } finally { vehicleSaving.value = false; }
+}
+
+async function removeVehicle(id: number, reg: string): Promise<void> {
+  if (!confirm(`Remove vehicle ${reg}?`)) return;
+  await api("DELETE", `/api/v1/employees/${props.id}/vehicles/${id}`, { org: org() });
+  vehicles.value = vehicles.value.filter(v => v.id !== id);
+}
+
 const attendance      = ref<{ from: string; to: string; days: AttendanceDay[]; totals: AttendanceTotals } | null>(null);
 const attendanceMonth = ref("");
 const reviews         = ref<ReviewRow[]>([]);
@@ -194,6 +277,10 @@ async function openTab(next: Tab): Promise<void> {
           "GET", `/api/v1/employees/${props.id}/payslips`, { org: org() });
         payslips.value = res.data ?? [];
       } catch { payslips.value = []; }
+    } else if (next === "vehicles") {
+      const res = await api<{ data: EmployeeVehicle[] } | EmployeeVehicle[]>(
+        "GET", `/api/v1/employees/${props.id}/vehicles`, { org: org() });
+      vehicles.value = Array.isArray(res) ? res : (res.data ?? []);
     } else if (next === "leave") {
       /*
        * This person's requests, not the viewer's. The listing is scoped
@@ -1037,9 +1124,6 @@ onMounted(() => {
           :class="['ed-tab', { 'ed-tab-active': tab === t.key }]"
           @click="openTab(t.key)"
         >{{ t.label }}</button>
-        <!-- Not in the design, but a real screen that would otherwise become
-             unreachable from here. -->
-        <router-link :to="{ name: 'employee-vehicles', params: { id: (employee as any).id } }" class="ed-tab" active-class="ed-tab-active">Vehicles</router-link>
       </div>
 
       <!-- ── OVERVIEW ──────────────────────────────────────────────────────── -->
@@ -2069,6 +2153,88 @@ onMounted(() => {
         </div>
       </div>
 
+      <!-- ── VEHICLES ──────────────────────────────────────────────────── -->
+      <div v-if="tab === 'vehicles'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <div>
+              <h3 class="ed-section-title" style="margin:0 0 2px">Vehicles</h3>
+              <p class="ed-muted" style="margin:0">Registered for parking access.</p>
+            </div>
+            <button v-if="hasSensitive && !showVehicleForm" class="btn btn-outline btn-sm" @click="openAddVehicle">+ Add Vehicle</button>
+          </div>
+
+          <p v-if="sideError" class="error">{{ sideError }}</p>
+
+          <table v-else-if="vehicles.length" class="ed-mini-table">
+            <thead>
+              <tr><th>Registration</th><th>Make</th><th>Model</th><th>Colour</th><th>Year</th><th>Parking Slot</th><th></th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="v in vehicles" :key="v.id">
+                <td class="ed-veh-reg">{{ v.registration_number }}</td>
+                <td>{{ v.make ?? "—" }}</td>
+                <td>{{ v.model ?? "—" }}</td>
+                <td>{{ v.color ?? "—" }}</td>
+                <td>{{ v.year ?? "—" }}</td>
+                <td><span v-if="v.parking_slot" class="ed-veh-slot">{{ v.parking_slot }}</span><span v-else>—</span></td>
+                <td class="ed-right">
+                  <button v-if="hasSensitive" class="ed-link" style="margin-right:10px" @click="openEditVehicle(v)">Edit</button>
+                  <button v-if="hasSensitive" class="ed-link ed-link-danger" @click="removeVehicle(v.id, v.registration_number)">Remove</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">No vehicles are registered for this person.</p>
+
+          <!--
+            Expands in place — the same shape as Emergency Contacts, Dependents
+            and the Move dialog on this page. Vehicles used to be its own
+            routed page, a click away from this profile with none of it in
+            view; editing one now never leaves this window.
+          -->
+          <div v-if="showVehicleForm" class="ed-sub-form" style="margin-top:14px">
+            <p v-if="vehicleError" class="error" style="margin-bottom:8px">{{ vehicleError }}</p>
+            <div class="ed-comp-form-grid">
+              <div>
+                <label class="ed-form-label">Registration Number *</label>
+                <input v-model="vehicleForm.registration_number" type="text" class="input" placeholder="e.g. KBZ 123A" style="text-transform:uppercase" />
+              </div>
+              <div>
+                <label class="ed-form-label">Make</label>
+                <input v-model="vehicleForm.make" type="text" class="input" placeholder="e.g. Toyota" />
+              </div>
+              <div>
+                <label class="ed-form-label">Model</label>
+                <input v-model="vehicleForm.model" type="text" class="input" placeholder="e.g. Prado" />
+              </div>
+              <div>
+                <label class="ed-form-label">Colour</label>
+                <input v-model="vehicleForm.color" type="text" class="input" />
+              </div>
+              <div>
+                <label class="ed-form-label">Year</label>
+                <input v-model="vehicleForm.year" type="number" :min="VEHICLE_YEAR_MIN" :max="VEHICLE_YEAR_NOW + 1" class="input" />
+              </div>
+              <div>
+                <label class="ed-form-label">Parking Slot</label>
+                <input v-model="vehicleForm.parking_slot" type="text" class="input" placeholder="e.g. B-12" />
+              </div>
+              <div style="grid-column:1/-1">
+                <label class="ed-form-label">Notes</label>
+                <textarea v-model="vehicleForm.notes" class="input" rows="2" style="width:100%;resize:vertical" />
+              </div>
+            </div>
+            <div class="ed-sub-actions">
+              <button class="btn btn-ghost btn-sm" @click="showVehicleForm = false">Cancel</button>
+              <button class="btn btn-primary btn-sm" :disabled="vehicleSaving" @click="saveVehicle">
+                {{ vehicleSaving ? "Saving…" : (editingVehicleId ? "Save Changes" : "Add Vehicle") }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div v-if="tab === 'documents'" class="ed-tab-body">
         <div class="ed-section-card">
           <div class="ed-section-hdr" style="margin-bottom:12px">
@@ -2499,4 +2665,12 @@ a.ed-hier-node:hover { border-color: var(--color-brand-base); }
 .ed-row-icon { width: 13px; height: 13px; flex-shrink: 0; color: var(--color-text-light); }
 
 .ed-inline-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); white-space: nowrap; }
+
+/* ── Vehicles ──────────────────────────────────────────────────────────── */
+.ed-veh-reg { font-family: ui-monospace, monospace; font-weight: 700; font-size: 13px; color: var(--color-brand-base); text-transform: uppercase; }
+.ed-veh-slot { background: #f0fdf4; border: 1px solid #86efac; color: #166534; font-size: 12px; font-weight: 600; padding: 2px 10px; border-radius: 20px; font-family: ui-monospace, monospace; }
+
+/* Footer of an inline expanding form (Move, Vehicles) — was rendered with no
+   gap or alignment at all until now. */
+.ed-sub-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 </style>
