@@ -2,6 +2,8 @@
 import { ref, reactive, computed, onMounted } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug } from "../stores/auth";
+import { isStepUpError } from "../composables/useStepUp";
+import StepUpModal from "../components/StepUpModal.vue";
 import type {
   Employee, EmergencyContact, EmployeeDependent,
   WorkLocationToday, WorkLocationType,
@@ -52,13 +54,42 @@ function leaveStatusBadge(status: string): string {
   return { pending: "badge-yellow", approved: "badge-green", rejected: "badge-red", cancelled: "badge-gray" }[status] ?? "badge-gray";
 }
 
+/**
+ * Compensation — held behind a step-up rather than read off the general
+ * employee load, same as the HR-facing profile. Null means "not yet proven",
+ * never zero.
+ */
+interface Compensation {
+  basic_salary: number; house_allowance: number; transport_allowance: number;
+  medical_allowance: number; other_allowances: number; insurance_relief: number;
+}
+const compensation      = ref<Compensation | null>(null);
+const payrollStepUpOpen = ref(false);
+
 const empGross = computed(() => {
-  const e = employee.value as any;
-  if (!e) return 0;
-  return Number(e.basic_salary ?? 0) + Number(e.house_allowance ?? 0) +
-         Number(e.transport_allowance ?? 0) + Number(e.medical_allowance ?? 0) +
-         Number(e.other_allowances ?? 0);
+  const c = compensation.value;
+  if (!c) return 0;
+  return c.basic_salary + c.house_allowance + c.transport_allowance
+       + c.medical_allowance + c.other_allowances;
 });
+
+async function loadCompensation(): Promise<void> {
+  if (!employee.value) return;
+  try {
+    const res = await api<{ data: Compensation }>(
+      "GET", `/api/v1/employees/${(employee.value as any).id}/compensation`, { org: org() });
+    compensation.value = res.data;
+  } catch (e) {
+    if (isStepUpError(e)) { payrollStepUpOpen.value = true; }
+    else { compensation.value = null; }
+  }
+}
+
+/** The Salary tab is the one that needs a fresh proof before it loads anything. */
+function openSalaryTab(): void {
+  tab.value = "salary";
+  if (!compensation.value) void loadCompensation();
+}
 
 async function load(): Promise<void> {
   loading.value = true; error.value = "";
@@ -389,7 +420,7 @@ onMounted(async () => {
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'profile'    }]" @click="tab = 'profile'">Profile</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'personal'   }]" @click="tab = 'personal'">Personal Details</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'job'        }]" @click="tab = 'job'">Job</button>
-        <button :class="['ed-tab', { 'ed-tab-active': tab === 'salary'     }]" @click="tab = 'salary'">Salary</button>
+        <button :class="['ed-tab', { 'ed-tab-active': tab === 'salary'     }]" @click="openSalaryTab">Salary</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'contact'    }]" @click="tab = 'contact'">Contact Details</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'emergency'  }]" @click="tab = 'emergency'">Emergency Contacts</button>
         <button :class="['ed-tab', { 'ed-tab-active': tab === 'dependents' }]" @click="tab = 'dependents'">Dependents</button>
@@ -748,28 +779,39 @@ onMounted(async () => {
 
       <!-- ── SALARY ────────────────────────────────────────────────────────── -->
       <div v-if="tab === 'salary'" class="ed-tab-body">
-        <div class="ed-section-card">
+        <!--
+          Not present until a fresh step-up succeeds — "for both HR and
+          self" — proving it is you is asked again here even for your own
+          record. See EmployeeRecordController::compensation().
+        -->
+        <div v-if="!compensation" class="ed-section-card">
+          <h3 class="ed-section-title" style="margin:0 0 8px">Monthly Compensation</h3>
+          <p class="ed-empty-hint">This is protected — verify it is you before it is shown.</p>
+          <button class="btn btn-primary btn-sm" @click="payrollStepUpOpen = true">Verify to view</button>
+        </div>
+
+        <div v-else class="ed-section-card">
           <h3 class="ed-section-title">Monthly Compensation</h3>
           <div class="ed-kv-list">
             <div class="ed-kv-row">
               <span class="ed-kv-label">Basic Salary</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).basic_salary) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.basic_salary) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">House Allowance</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).house_allowance) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.house_allowance) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Transport Allowance</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).transport_allowance) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.transport_allowance) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Medical Allowance</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).medical_allowance) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.medical_allowance) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Other Allowances</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).other_allowances) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.other_allowances) }}</span>
             </div>
             <div class="ed-kv-row ed-kv-total">
               <span class="ed-kv-label">Gross Pay</span>
@@ -777,10 +819,18 @@ onMounted(async () => {
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Insurance Relief</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).insurance_relief) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.insurance_relief) }}</span>
             </div>
           </div>
         </div>
+
+        <StepUpModal
+          v-model:open="payrollStepUpOpen"
+          purpose="payroll"
+          :org="org()"
+          label="Your payroll and compensation figures are protected."
+          @verified="loadCompensation"
+        />
       </div><!-- /salary -->
 
       <!-- ── CONTACT DETAILS ───────────────────────────────────────────────── -->

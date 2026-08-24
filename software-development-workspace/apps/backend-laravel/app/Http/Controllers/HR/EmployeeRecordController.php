@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\HR;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\RequiresStepUp;
 use App\Models\Asset\Asset;
 use App\Models\Attendance\AttendanceDay;
 use App\Models\Employee;
@@ -15,7 +16,6 @@ use App\Services\Performance\CycleAttendance;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\DB;
 
 /**
  * One employee's slice of three modules that own their own data.
@@ -26,6 +26,8 @@ use Illuminate\Support\Facades\DB;
  */
 class EmployeeRecordController extends Controller
 {
+    use RequiresStepUp;
+
     /**
      * GET /api/v1/employees/{employee}/attendance
      *
@@ -79,47 +81,74 @@ class EmployeeRecordController extends Controller
     }
 
     /**
+     * GET /api/v1/employees/{employee}/compensation
+     *
+     * Basic pay and allowances — the one read this whole file exists to
+     * protect properly. Everything else on this controller answers "is this
+     * viewer allowed to see this" with a permission check; this answers it
+     * with a permission check AND proof, asked for again right now, that the
+     * session asking is really who it says.
+     */
+    public function compensation(Request $request, int $employee): JsonResponse
+    {
+        $record = $this->readable($employee);
+
+        $this->guardSensitive($request, $record);
+        $this->requireStepUp($request->user(), 'payroll');
+
+        return response()->json(['data' => [
+            'basic_salary'        => (float) $record->basic_salary,
+            'house_allowance'     => (float) $record->house_allowance,
+            'transport_allowance' => (float) $record->transport_allowance,
+            'medical_allowance'   => (float) $record->medical_allowance,
+            'other_allowances'    => (float) $record->other_allowances,
+            'insurance_relief'    => (float) $record->insurance_relief,
+        ]]);
+    }
+
+    /**
      * GET /api/v1/employees/{employee}/payslips
      *
      * What this person has been paid, across every run.
      *
-     * The payroll module already produces a payslip for one period; there has
-     * been no way to ask what somebody has been paid over time, which is the
-     * question the profile tab is actually for.
+     * PayrollService::getPayHistory() already exists and already answers this
+     * — it powers GET /payroll/history, self-service-only. This is the same
+     * read for one named person rather than the caller, which is what HR
+     * needs it for.
+     *
+     * ── What this replaces ──
+     *
+     * The previous version joined payroll_run_items to payroll_runs on
+     * employee_id and read gross_pay/net_pay/paye/nssf/nhif off the joined
+     * row. None of that lines up with the real schema: payroll_run_items has
+     * no employee_id at all — it is one row per earning or deduction line on
+     * a payslip, not one row per employee per run — and payroll_runs itself
+     * already carries employee_id, gross_pay and net_pay directly, with no
+     * join required. That version 500'd every time it actually ran; nothing
+     * had exercised the path with a real payroll run behind it before now.
      */
     public function payslips(Request $request, int $employee): JsonResponse
     {
         $record = $this->readable($employee);
 
-        /*
-         * Pay is gated the way pay is gated everywhere else — the permission,
-         * an HR role, or looking at your own record. A payslip history is the
-         * most complete picture of somebody's pay in the product.
-         */
-        abort_unless(
-            \App\Services\HR\PeopleReport::maySeeSensitive($request->user(), app('current.organization_id'))
-                || $request->user()?->employee?->id === $record->id,
-            403,
-            'Payslips need permission to see sensitive employee data.',
-        );
+        $this->guardSensitive($request, $record);
+        $this->requireStepUp($request->user(), 'payroll');
 
-        abort_unless(DB::getSchemaBuilder()->hasTable('payroll_run_items'), 404, 'Payroll is not set up.');
-
-        $items = DB::table('payroll_run_items as i')
-            ->join('payroll_runs as r', 'r.id', '=', 'i.payroll_run_id')
-            ->where('i.employee_id', $record->id)
-            ->orderByDesc('r.id')
-            ->get(['i.*', 'r.id as run_id', 'r.status as run_status']);
+        $runs = app(\App\Services\Payroll\PayrollService::class)
+            ->getPayHistory($record->id, $request->integer('per_page', 24));
 
         return response()->json([
-            'data' => $items->map(fn ($i) => [
-                'run_id'     => $i->run_id,
-                'run_status' => $i->run_status,
-                'gross'      => $i->gross_pay ?? null,
-                'net'        => $i->net_pay ?? null,
-                'paye'       => $i->paye ?? null,
-                'nssf'       => $i->nssf ?? null,
-                'nhif'       => $i->nhif ?? null,
+            'data' => collect($runs->items())->map(fn ($r) => [
+                'run_id'     => $r->id,
+                'period'     => $r->period?->name,
+                'run_status' => $r->status,
+                'gross'      => (float) $r->gross_pay,
+                'net'        => (float) $r->net_pay,
+                'paye'       => (float) $r->paye,
+                // SHIF replaced NHIF; kept under this key so the frontend,
+                // which already reads it, needs no change of its own.
+                'nhif'       => (float) $r->shif,
+                'nssf'       => (float) $r->nssf_tier1 + (float) $r->nssf_tier2,
             ]),
         ]);
     }
@@ -301,6 +330,20 @@ class EmployeeRecordController extends Controller
                 'role'          => $a->assigned_to === $record->id ? 'assigned' : 'custodian',
             ]),
         ]);
+    }
+
+    /**
+     * Pay is gated the way pay is gated everywhere else — the permission, an
+     * HR role, or looking at your own record.
+     */
+    private function guardSensitive(Request $request, Employee $record): void
+    {
+        abort_unless(
+            \App\Services\HR\PeopleReport::maySeeSensitive($request->user(), app('current.organization_id'))
+                || $request->user()?->employee?->id === $record->id,
+            403,
+            'This needs permission to see sensitive employee data.',
+        );
     }
 
     /** The employee, if this viewer may see them at all. */

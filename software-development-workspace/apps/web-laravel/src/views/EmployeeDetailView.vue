@@ -3,6 +3,8 @@ import { ref, onMounted, reactive, computed } from "vue";
 import { useRouter } from "vue-router";
 import { api } from "../lib/api";
 import { currentOrgSlug, authStore, getToken } from "../stores/auth";
+import { isStepUpError } from "../composables/useStepUp";
+import StepUpModal from "../components/StepUpModal.vue";
 import type { Employee, EmergencyContact, EmployeeVehicle } from "../lib/types";
 
 const props  = defineProps<{ id: string }>();
@@ -270,6 +272,15 @@ const reviews         = ref<ReviewRow[]>([]);
 const currentCycle    = ref<CycleAttendance | null>(null);
 const payslips        = ref<Payslip[]>([]);
 
+// ── Compensation: gated behind a fresh step-up, not present until then ────
+interface Compensation {
+  basic_salary: number; house_allowance: number; transport_allowance: number;
+  medical_allowance: number; other_allowances: number; insurance_relief: number;
+}
+/** Null means "not yet proven", not "zero" — the two must never look the same. */
+const compensation   = ref<Compensation | null>(null);
+const payrollStepUpOpen = ref(false);
+
 const contacts   = ref<EmergencyContact[]>([]);
 const dependents = ref<Dependent[]>([]);
 const balances   = ref<Balance[]>([]);
@@ -282,6 +293,35 @@ const sideError  = ref("");
  * visitors read the first one and leave.
  */
 const loaded = ref<Partial<Record<Tab, boolean>>>({});
+
+/**
+ * Compensation and pay history — the one read on this page that needs proof
+ * beyond the permission check. Both live behind the same gate, so a step-up
+ * failure on the first call skips the second rather than asking twice for
+ * something that is going to be refused the same way.
+ */
+async function loadPayroll(): Promise<void> {
+  try {
+    const res = await api<{ data: Compensation }>(
+      "GET", `/api/v1/employees/${props.id}/compensation`, { org: org() });
+    compensation.value = res.data;
+    Object.assign(comp, res.data);
+  } catch (e) {
+    if (isStepUpError(e)) { payrollStepUpOpen.value = true; return; }
+    compensation.value = null;
+  }
+
+  try {
+    const res = await api<{ data: Payslip[] }>(
+      "GET", `/api/v1/employees/${props.id}/payslips`, { org: org() });
+    payslips.value = res.data ?? [];
+  } catch {
+    // Payroll may genuinely not be set up yet, or the step-up above already
+    // opened the modal — either way, an empty history is the honest state
+    // here, not a second error banner stacked under the first.
+    payslips.value = [];
+  }
+}
 
 async function openTab(next: Tab): Promise<void> {
   tab.value = next;
@@ -309,16 +349,7 @@ async function openTab(next: Tab): Promise<void> {
       reviews.value = res.data.reviews ?? [];
       currentCycle.value = res.data.current;
     } else if (next === "payroll") {
-      /*
-       * Pay history is refused for anybody without the sensitive permission,
-       * and that is not an error worth showing them — the rest of the tab is
-       * theirs.
-       */
-      try {
-        const res = await api<{ data: Payslip[] }>(
-          "GET", `/api/v1/employees/${props.id}/payslips`, { org: org() });
-        payslips.value = res.data ?? [];
-      } catch { payslips.value = []; }
+      await loadPayroll();
     } else if (next === "tasks") {
       const res = await api<{ data: TaskRow[] }>("GET", `/api/v1/employees/${props.id}/tasks`, { org: org() });
       tasksList.value = res.data ?? [];
@@ -849,12 +880,17 @@ const grossPay = computed(() =>
   comp.medical_allowance + comp.other_allowances
 );
 
+/**
+ * Gross pay, from the compensation figures rather than the general employee
+ * record — those fields no longer live there at all. Zero until a step-up
+ * succeeds and loadPayroll() populates compensation, which is the correct
+ * state to be in before proof has been given, not a bug to work around.
+ */
 const empGross = computed(() => {
-  const e = employee.value as any;
-  if (!e) return 0;
-  return Number(e.basic_salary ?? 0) + Number(e.house_allowance ?? 0) +
-         Number(e.transport_allowance ?? 0) + Number(e.medical_allowance ?? 0) +
-         Number(e.other_allowances ?? 0);
+  const c = compensation.value;
+  if (!c) return 0;
+  return c.basic_salary + c.house_allowance + c.transport_allowance
+       + c.medical_allowance + c.other_allowances;
 });
 
 async function load(): Promise<void> {
@@ -862,13 +898,12 @@ async function load(): Promise<void> {
   try {
     const res = await api<{ data: Employee }>("GET", `/api/v1/employees/${props.id}`, { org: org() });
     employee.value = (res as any).data ?? res;
-    const e = employee.value as any;
-    comp.basic_salary        = Number(e.basic_salary ?? 0);
-    comp.house_allowance     = Number(e.house_allowance ?? 0);
-    comp.transport_allowance = Number(e.transport_allowance ?? 0);
-    comp.medical_allowance   = Number(e.medical_allowance ?? 0);
-    comp.other_allowances    = Number(e.other_allowances ?? 0);
-    comp.insurance_relief    = Number(e.insurance_relief ?? 0);
+    /*
+     * comp used to be prefilled here from the general employee load. That
+     * field is gone from this response on purpose — see loadPayroll(), which
+     * populates comp once a step-up succeeds and compensation is genuinely
+     * fetched, rather than every time any tab opens.
+     */
   } catch (err) {
     error.value = err instanceof Error ? err.message : "Failed to load employee.";
   } finally { loading.value = false; }
@@ -880,15 +915,13 @@ async function saveComp(): Promise<void> {
     const res = await api<{ data: Employee }>("PUT", `/api/v1/employees/${props.id}`, {
       org: org(), body: { ...comp },
     });
-    const updated = (res as any).data ?? res;
-    employee.value = updated;
-    const e = updated as any;
-    comp.basic_salary        = Number(e.basic_salary ?? 0);
-    comp.house_allowance     = Number(e.house_allowance ?? 0);
-    comp.transport_allowance = Number(e.transport_allowance ?? 0);
-    comp.medical_allowance   = Number(e.medical_allowance ?? 0);
-    comp.other_allowances    = Number(e.other_allowances ?? 0);
-    comp.insurance_relief    = Number(e.insurance_relief ?? 0);
+    employee.value = (res as any).data ?? res;
+    /*
+     * The response no longer carries these fields — read compensation.value
+     * back from what was just submitted instead of from the PUT's body,
+     * since comp already holds exactly what the server now has.
+     */
+    compensation.value = { ...comp };
     compSuccess.value = "Saved.";
     showCompEdit.value = false;
     setTimeout(() => { compSuccess.value = ""; }, 3000);
@@ -1861,7 +1894,20 @@ onMounted(() => {
           </table>
         </div>
 
-        <div class="ed-section-card">
+        <!--
+          Not present until a fresh step-up succeeds — the figures are absent
+          from the response until then, not merely hidden by this v-if. See
+          EmployeeRecordController::compensation().
+        -->
+        <div v-if="!compensation" class="ed-section-card">
+          <h3 class="ed-section-title" style="margin:0 0 8px">Monthly Compensation</h3>
+          <p class="ed-muted">
+            This is protected — verify it is you before it is shown.
+          </p>
+          <button class="btn btn-primary btn-sm" @click="payrollStepUpOpen = true">Verify to view</button>
+        </div>
+
+        <div v-else class="ed-section-card">
           <div class="ed-section-hdr" style="margin-bottom:16px">
             <h3 class="ed-section-title" style="margin:0">Monthly Compensation</h3>
             <div style="display:flex;gap:8px;align-items:center">
@@ -1876,23 +1922,23 @@ onMounted(() => {
           <div v-if="!showCompEdit" class="ed-kv-list">
             <div class="ed-kv-row">
               <span class="ed-kv-label">Basic Salary</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).basic_salary) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.basic_salary) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">House Allowance</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).house_allowance) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.house_allowance) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Transport Allowance</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).transport_allowance) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.transport_allowance) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Medical Allowance</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).medical_allowance) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.medical_allowance) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Other Allowances</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).other_allowances) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.other_allowances) }}</span>
             </div>
             <div class="ed-kv-row ed-kv-total">
               <span class="ed-kv-label">Gross Pay</span>
@@ -1936,7 +1982,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="ed-section-card" style="margin-top:16px">
+        <div v-if="compensation" class="ed-section-card" style="margin-top:16px">
           <h3 class="ed-section-title">Statutory Contributions (Estimated Monthly)</h3>
           <div class="ed-kv-list">
             <div class="ed-kv-row">
@@ -1953,7 +1999,7 @@ onMounted(() => {
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">Insurance Relief</span>
-              <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).insurance_relief) }}</span>
+              <span class="ed-kv-val ed-kv-mono">KES {{ fmt(compensation?.insurance_relief) }}</span>
             </div>
             <div class="ed-kv-row">
               <span class="ed-kv-label">NITA Levy</span>
@@ -1961,6 +2007,14 @@ onMounted(() => {
             </div>
           </div>
         </div>
+
+        <StepUpModal
+          v-model:open="payrollStepUpOpen"
+          purpose="payroll"
+          :org="org()"
+          label="Payroll and compensation figures are protected."
+          @verified="loadPayroll"
+        />
       </div>
 
       <!-- ═══════════════  DOCUMENTS  ═══════════════ -->

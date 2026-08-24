@@ -197,6 +197,22 @@ Route::prefix('public')->middleware('throttle:60,1')->group(function () {
 // API v1 — all routes require Sanctum auth + org context resolution
 // ─────────────────────────────────────────────────────────────────────────────
 Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function () {
+    /*
+     * Step-up verification. Not org-scoped in what it protects — proving it
+     * is really you does not depend on which tenant you currently have open
+     * — but living beside everything else here rather than in its own group.
+     *
+     * Throttled harder than most: this is exactly the endpoint a script would
+     * hammer to spam somebody's inbox with codes, or grind through six digits.
+     */
+    Route::prefix('security/step-up')->middleware('throttle:6,1')->group(function () {
+        Route::get('/status',  [\App\Http\Controllers\Security\StepUpController::class, 'status']);
+        Route::post('/request', [\App\Http\Controllers\Security\StepUpController::class, 'requestCode'])
+            ->middleware('throttle:3,1');
+        Route::post('/verify', [\App\Http\Controllers\Security\StepUpController::class, 'verify'])
+            ->middleware('throttle:8,1');
+    });
+
 
     // ── Dashboard KPIs ────────────────────────────────────────────────────────
     Route::get('/dashboard', [DashboardController::class, 'summary']);
@@ -275,6 +291,7 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // One employee's slice of three modules that own their own records.
         Route::get('/{employee}/attendance',  [\App\Http\Controllers\HR\EmployeeRecordController::class, 'attendance']);
         Route::get('/{employee}/payslips',    [\App\Http\Controllers\HR\EmployeeRecordController::class, 'payslips']);
+        Route::get('/{employee}/compensation',[\App\Http\Controllers\HR\EmployeeRecordController::class, 'compensation']);
         Route::get('/{employee}/performance', [\App\Http\Controllers\HR\EmployeeRecordController::class, 'performance']);
         Route::get('/{employee}/tasks',          [\App\Http\Controllers\HR\EmployeeRecordController::class, 'tasks']);
         Route::get('/{employee}/projects',       [\App\Http\Controllers\HR\EmployeeRecordController::class, 'projects']);

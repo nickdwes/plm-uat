@@ -220,13 +220,16 @@ class EmployeeResource extends JsonResource
                 'known_conditions'    => $this->known_conditions,
                 'disabilities'        => $this->disabilities,
 
-                // Compensation
-                'basic_salary'        => $this->basic_salary,
-                'house_allowance'     => $this->house_allowance,
-                'transport_allowance' => $this->transport_allowance,
-                'medical_allowance'   => $this->medical_allowance,
-                'other_allowances'    => $this->other_allowances,
-                'insurance_relief'    => $this->insurance_relief,
+                /*
+                 * Compensation used to sit here, gated on canSensitive alone —
+                 * which meant it rode along on every load of this resource,
+                 * present in the network response the moment an HR admin
+                 * opened any tab on this profile, whether or not they ever
+                 * opened Payroll. GET /employees/{employee}/compensation is
+                 * now the only source, gated on canSensitive AND a fresh
+                 * step-up code (see StepUpVerification) — the figures are
+                 * absent from every other response, this one included.
+                 */
 
                 // Emergency contacts (eager-loaded)
                 'emergency_contacts'  => $this->whenLoaded('emergencyContacts', fn () =>

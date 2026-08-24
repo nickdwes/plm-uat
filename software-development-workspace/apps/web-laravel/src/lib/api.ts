@@ -13,6 +13,13 @@ export class ApiError extends Error {
     public readonly status: number,
     message: string,
     public readonly errors?: Record<string, string[]>,
+    /**
+     * A machine-checkable reason distinct from the human message — right now
+     * only ever "step_up_required", set on a 401 that means "prove it is you
+     * again", not "your session is dead". Callers that care check this rather
+     * than pattern-matching the message text.
+     */
+    public readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -99,16 +106,16 @@ export async function api<T>(
   const data: unknown = await res.json().catch(() => ({ message: res.statusText }));
 
   if (!res.ok) {
-    const d = data as { message?: string; errors?: Record<string, string[]> };
+    const d = data as { message?: string; errors?: Record<string, string[]>; code?: string };
 
     /*
-     * A dead session should end the session, not decorate the page.
-     *
-     * Without this a stale token leaves every module rendering its shell with
-     * "Unauthenticated." painted across it, which reads as the module being
-     * broken rather than as needing to sign in again.
+     * A dead session should end the session, not decorate the page — but a
+     * 401 asking for a fresh step-up code is not a dead session, and treating
+     * it as one would sign somebody out the moment they opened a page that
+     * needs one. The two have to stay distinguishable here, in the one place
+     * every request passes through, rather than in each caller.
      */
-    if (res.status === 401) {
+    if (res.status === 401 && d.code !== "step_up_required") {
       clearAuth();
 
       if (!window.location.hash.startsWith("#/login")) {
@@ -116,7 +123,7 @@ export async function api<T>(
       }
     }
 
-    throw new ApiError(res.status, d.message ?? res.statusText, d.errors);
+    throw new ApiError(res.status, d.message ?? res.statusText, d.errors, d.code);
   }
 
   return data as T;
