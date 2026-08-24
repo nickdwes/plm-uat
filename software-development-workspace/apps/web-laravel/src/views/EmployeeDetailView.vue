@@ -588,6 +588,106 @@ function initials(e: any): string {
   return ((e.first_name?.[0] ?? "") + (e.last_name?.[0] ?? "")).toUpperCase() || "?";
 }
 
+// ── The profile as rows, so the view can be built from what is known ─────
+interface Row { label: string; value: string | null; date?: boolean; href?: string }
+
+/** Anything worth printing. A card with no populated row is not rendered. */
+function anyOf(rows: Row[]): boolean {
+  return rows.some(r => !!r.value);
+}
+
+/** A value, or null — never an em dash. The template decides what absence looks like. */
+function val(v: unknown): string | null {
+  if (v === null || v === undefined) return null;
+  const text = String(v).trim();
+  return text === "" ? null : text;
+}
+
+function dateVal(v: unknown): string | null {
+  const raw = val(v);
+  return raw ? fmtDate(raw) : null;
+}
+
+const personalRows = computed<Row[]>(() => {
+  const e = employee.value as any;
+  if (!e) return [];
+  return [
+    { label: "Work Email", value: val(e.work_email ?? e.email) },
+    { label: "Personal Email", value: val(e.personal_email) },
+    { label: "Date of Birth", value: dateVal(e.date_of_birth), date: true },
+    { label: "Phone", value: val(e.phone) },
+    { label: "Address", value: val(e.residential_address ?? e.address) },
+    { label: "City", value: val(e.city) },
+    { label: "Country", value: val(e.country) },
+    {
+      label: "LinkedIn",
+      value: val(e.linkedin_profile) ? "View profile" : null,
+      href: val(e.linkedin_profile) ?? undefined,
+    },
+    { label: "Enrolled on", value: dateVal(e.date_of_joining ?? e.date_hired), date: true },
+  ];
+});
+
+const statutoryRows = computed<Row[]>(() => {
+  const e = employee.value as any;
+  if (!e) return [];
+  return [
+    { label: "National ID", value: val(e.national_id) },
+    { label: "Passport No", value: val(e.passport_number) },
+    { label: "KRA PIN", value: val(e.tax_id) },
+    { label: "NSSF Number", value: val(e.nssf_number) },
+    { label: "SHA / NHIF No", value: val(e.nhif_number ?? e.sha_number) },
+  ];
+});
+
+const personalDetailRows = computed<Row[]>(() => {
+  const e = employee.value as any;
+  if (!e) return [];
+
+  /*
+   * Derived, and only where there is a birth date to derive it from. "Age —"
+   * beside "Date of Birth —" is the same absence printed twice.
+   */
+  const age = e.date_of_birth ? calcAge(e.date_of_birth) : null;
+
+  return [
+    { label: "Gender", value: val(e.gender) },
+    { label: "Marital Status", value: val(e.marital_status) },
+    { label: "Date of Birth", value: dateVal(e.date_of_birth) },
+    { label: "Age", value: age },
+  ];
+});
+
+const healthRows = computed<Row[]>(() => {
+  const e = employee.value as any;
+  if (!e) return [];
+  return [
+    { label: "Blood Group", value: val(e.blood_group) },
+    { label: "Allergies", value: val(e.allergies) },
+    { label: "Known Conditions", value: val(e.known_conditions) },
+    { label: "Disability", value: val(e.disabilities) },
+  ];
+});
+
+/**
+ * What this profile has nothing for, named once at the foot.
+ *
+ * Better than a card of dashes per section: it says what is missing in one
+ * place and offers the way to fix it. Sections the viewer is not allowed to
+ * see are left out entirely — telling somebody a card is empty when they
+ * simply cannot read it would be a different and misleading claim.
+ */
+const missingSections = computed<string[]>(() => {
+  const out: string[] = [];
+  if (!anyOf(personalRows.value)) out.push("personal and contact details");
+  if (hasSensitive.value) {
+    if (!anyOf(statutoryRows.value)) out.push("statutory IDs");
+    if (!anyOf(personalDetailRows.value)) out.push("personal details");
+    if (!anyOf(healthRows.value)) out.push("health information");
+  }
+  return out;
+});
+
 const grossPay = computed(() =>
   comp.basic_salary + comp.house_allowance + comp.transport_allowance +
   comp.medical_allowance + comp.other_allowances
@@ -655,14 +755,12 @@ async function exitEmployee(): Promise<void> {
   } finally { exiting.value = false; }
 }
 
-// ── Emergency contacts ─────────────────────────────────────────────────────
-function openAddEC() {
-  editingEC.value = null;
-  Object.assign(ecForm, { name: "", relationship: "", phone: "", email: "", is_primary: false });
-  ecError.value = "";
-  showECForm.value = true;
-}
-
+/*
+ * Emergency contacts: editing used to live on the overview and moved here with
+ * the tab. Kept rather than dropped — the tab that replaced it could add and
+ * remove but not correct, and a wrong phone number on the one record that only
+ * matters in an emergency is worse than no record.
+ */
 function openEditEC(c: EmergencyContact) {
   editingEC.value = c;
   Object.assign(ecForm, { name: c.name, relationship: c.relationship, phone: c.phone, email: c.email ?? "", is_primary: c.is_primary });
@@ -680,15 +778,14 @@ async function saveEC() {
     }
     showECForm.value = false;
     await load();
+    // Reload the tab as well, or the row on screen still shows what it said
+    // before the correction.
+    loaded.value["emergency-contacts"] = false;
+    await openTab("emergency-contacts");
   } catch (e) { ecError.value = e instanceof Error ? e.message : "Failed to save."; }
   finally { ecSaving.value = false; }
 }
 
-async function deleteEC(id: number) {
-  if (!confirm("Remove this emergency contact?")) return;
-  await api("DELETE", `/api/v1/employees/${props.id}/emergency-contacts/${id}`, { org: org() });
-  await load();
-}
 
 // ── Photo upload ───────────────────────────────────────────────────────────
 function triggerPhotoUpload() { photoInput.value?.click(); }
@@ -949,292 +1046,126 @@ onMounted(() => {
       <div v-if="tab === 'profile-overview'" class="ed-tab-body">
 
         <!--
-          The four cards the design specifies. Every field here already existed
-          on `employees`; this tab is presentation, not schema.
+          The four cards the design draws, and nothing twice.
+          Every row and every card is conditional: a profile is a record of
+          what is known, not a form somebody did not finish. A wall of em
+          dashes reads as a broken screen; an absent row reads as a fact that
+          was never captured, which is what it is.
         -->
         <div class="ed-two-col">
-          <div class="ed-section-card">
-            <h3 class="ed-section-title ed-card-h">
+          <section v-if="anyOf(personalRows)" class="ed-card">
+            <header class="ed-card-h">
               <span class="ed-card-icon" aria-hidden="true">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
                   <circle cx="10" cy="7" r="3.2" /><path d="M4 16.5c0-3 2.7-5 6-5s6 2 6 5" />
                 </svg>
               </span>
-              <span>Personal Information<em>Basic personal and contact details.</em></span>
-            </h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row"><span class="ed-kv-label">Work Email</span>
-                <span class="ed-kv-val">{{ (employee as any).work_email ?? (employee as any).email ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Personal Email</span>
-                <span class="ed-kv-val">{{ (employee as any).personal_email ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Date of Birth</span>
-                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_birth) }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Phone</span>
-                <span class="ed-kv-val">{{ (employee as any).phone ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Enrolled on</span>
-                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span></div>
-            </div>
-          </div>
+              <span><strong>Personal Information</strong><em>Basic personal and contact details.</em></span>
+            </header>
+            <dl class="ed-rows">
+              <template v-for="r in personalRows" :key="r.label">
+                <div v-if="r.value" class="ed-row">
+                  <dt>{{ r.label }}</dt>
+                  <dd>
+                    <svg v-if="r.date" class="ed-row-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                      <rect x="3" y="4.5" width="14" height="12" rx="2" /><path d="M3 8h14M7 3v3M13 3v3" />
+                    </svg>
+                    <a v-if="r.href" :href="r.href" target="_blank" rel="noopener" class="ed-link">{{ r.value }}</a>
+                    <span v-else>{{ r.value }}</span>
+                  </dd>
+                </div>
+              </template>
+            </dl>
+          </section>
 
-          <div class="ed-section-card">
-            <h3 class="ed-section-title ed-card-h">
+          <!--
+            Gated, but not shouted about. The old amber panel made a statutory
+            number look like a warning; the design treats it as one card among
+            the others, and the permission is what does the protecting.
+          -->
+          <section v-if="hasSensitive && anyOf(statutoryRows)" class="ed-card">
+            <header class="ed-card-h">
               <span class="ed-card-icon" aria-hidden="true">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
                   <rect x="3" y="4.5" width="14" height="11" rx="2" /><path d="M7 9h.01M10.5 9H14M10.5 12H14M6 12.5h2" />
                 </svg>
               </span>
-              <span>Statutory IDs<em>ID, NSSF, SHA, KRA PIN.</em></span>
-            </h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row"><span class="ed-kv-label">National ID</span>
-                <span class="ed-kv-val">{{ (employee as any).national_id ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Passport No</span>
-                <span class="ed-kv-val">{{ (employee as any).passport_number ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">KRA PIN</span>
-                <span class="ed-kv-val">{{ (employee as any).tax_id ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">NSSF Number</span>
-                <span class="ed-kv-val">{{ (employee as any).nssf_number ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">SHA / NHIF No</span>
-                <span class="ed-kv-val">{{ (employee as any).nhif_number ?? "—" }}</span></div>
-            </div>
-          </div>
+              <span><strong>Statutory IDs</strong><em>ID, NSSF, SHA, KRA PIN.</em></span>
+            </header>
+            <dl class="ed-rows">
+              <template v-for="r in statutoryRows" :key="r.label">
+                <div v-if="r.value" class="ed-row"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></div>
+              </template>
+            </dl>
+          </section>
         </div>
 
-        <div class="ed-section-card">
-          <h3 class="ed-section-title">Health Information</h3>
+        <section v-if="hasSensitive && anyOf(personalDetailRows)" class="ed-card">
+          <h3 class="ed-card-plain">Personal Details</h3>
           <div class="ed-two-col ed-two-col-flat">
-            <div class="ed-kv-list">
-              <div class="ed-kv-row"><span class="ed-kv-label">Blood Group</span>
-                <span class="ed-kv-val">{{ (employee as any).blood_group ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Allergies</span>
-                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).allergies ?? "—" }}</span></div>
-            </div>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row"><span class="ed-kv-label">Known Conditions</span>
-                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).known_conditions ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Disability</span>
-                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).disabilities ?? "—" }}</span></div>
-            </div>
+            <dl class="ed-rows">
+              <template v-for="r in personalDetailRows.slice(0, Math.ceil(personalDetailRows.length / 2))" :key="r.label">
+                <div v-if="r.value" class="ed-row"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></div>
+              </template>
+            </dl>
+            <dl class="ed-rows">
+              <template v-for="r in personalDetailRows.slice(Math.ceil(personalDetailRows.length / 2))" :key="r.label">
+                <div v-if="r.value" class="ed-row"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></div>
+              </template>
+            </dl>
           </div>
-        </div>
+        </section>
+
+        <section v-if="hasSensitive && anyOf(healthRows)" class="ed-card">
+          <h3 class="ed-card-plain">Health Information</h3>
+          <div class="ed-two-col ed-two-col-flat">
+            <dl class="ed-rows">
+              <template v-for="r in healthRows.slice(0, 2)" :key="r.label">
+                <div v-if="r.value" class="ed-row"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></div>
+              </template>
+            </dl>
+            <dl class="ed-rows">
+              <template v-for="r in healthRows.slice(2)" :key="r.label">
+                <div v-if="r.value" class="ed-row"><dt>{{ r.label }}</dt><dd>{{ r.value }}</dd></div>
+              </template>
+            </dl>
+          </div>
+        </section>
 
         <!--
-          Only on your own record. The balance endpoint answers for whoever is
-          signed in, so printing this card under somebody else's name would put
-          your figures under their heading.
+          Only on your own record: the balance endpoint answers for whoever is
+          signed in, so this card under somebody else's name would put your
+          figures under their heading.
         -->
-        <div v-if="isSelf" class="ed-section-card">
-          <h3 class="ed-section-title">Current Leave Balance</h3>
-          <div v-if="balances.length" class="ed-bal-grid">
+        <section v-if="isSelf && balances.length" class="ed-card">
+          <h3 class="ed-card-plain">Current Leave Balance</h3>
+          <div class="ed-bal-grid">
             <div v-for="b in balances" :key="b.leave_type" class="ed-bal">
               <span class="ed-bal-type">{{ b.leave_type }}</span>
               <strong>{{ b.available_days }}</strong>
               <em>of {{ b.entitled_days }} · {{ b.pending_days }} pending</em>
             </div>
           </div>
-          <p v-else class="ed-muted">No leave types are set up for this organisation yet.</p>
-        </div>
+        </section>
 
-        <div class="ed-two-col">
-
-          <!-- CONTACT -->
-          <div class="ed-section-card">
-            <h3 class="ed-section-title">Contact</h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row" v-if="(employee as any).phone !== undefined">
-                <span class="ed-kv-label">Phone</span>
-                <span class="ed-kv-val">{{ (employee as any).phone ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Work Email</span>
-                <span class="ed-kv-val">{{ (employee as any).work_email ?? (employee as any).email ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row" v-if="(employee as any).personal_email !== undefined">
-                <span class="ed-kv-label">Personal Email</span>
-                <span class="ed-kv-val">{{ (employee as any).personal_email ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row" v-if="(employee as any).linkedin_profile !== undefined">
-                <span class="ed-kv-label">LinkedIn</span>
-                <span class="ed-kv-val">
-                  <a v-if="(employee as any).linkedin_profile" :href="(employee as any).linkedin_profile" target="_blank" rel="noopener" class="ed-link">View Profile</a>
-                  <span v-else>—</span>
-                </span>
-              </div>
-              <div class="ed-kv-row" v-if="(employee as any).residential_address !== undefined || (employee as any).address !== undefined">
-                <span class="ed-kv-label">Address</span>
-                <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).residential_address ?? (employee as any).address ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row" v-if="(employee as any).city">
-                <span class="ed-kv-label">City</span>
-                <span class="ed-kv-val">{{ (employee as any).city }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- EMPLOYMENT -->
-          <div class="ed-section-card">
-            <h3 class="ed-section-title">Employment</h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Employee No</span>
-                <span class="ed-kv-val ed-kv-accent">{{ (employee as any).employee_number ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Type</span>
-                <span class="ed-kv-val" style="text-transform:capitalize">{{ (employee as any).employment_type?.replace(/_/g, " ") ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Department</span>
-                <span class="ed-kv-val">{{ (employee as any).department?.name ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Designation</span>
-                <span class="ed-kv-val">{{ (employee as any).designation?.title ?? (employee as any).designation?.name ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Start Date</span>
-                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span>
-              </div>
-              <div class="ed-kv-row" v-if="(employee as any).manager?.full_name">
-                <span class="ed-kv-label">Reports To</span>
-                <span class="ed-kv-val">{{ (employee as any).manager.full_name }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ── Sensitive sections ── -->
-        <template v-if="hasSensitive">
-
-          <div class="ed-two-col">
-            <div class="ed-section-card ed-sensitive">
-              <h3 class="ed-section-title ed-sensitive-title">🔒 Personal Details</h3>
-              <div class="ed-kv-list">
-                <div class="ed-kv-row" v-if="(employee as any).gender !== undefined">
-                  <span class="ed-kv-label">Gender</span>
-                  <span class="ed-kv-val" style="text-transform:capitalize">{{ (employee as any).gender ?? "—" }}</span>
-                </div>
-                <div class="ed-kv-row" v-if="(employee as any).date_of_birth !== undefined">
-                  <span class="ed-kv-label">Date of Birth</span>
-                  <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_birth) }}</span>
-                </div>
-                <div class="ed-kv-row" v-if="(employee as any).date_of_birth !== undefined">
-                  <span class="ed-kv-label">Age</span>
-                  <span class="ed-kv-val">{{ calcAge((employee as any).date_of_birth) }}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="ed-section-card ed-sensitive">
-              <h3 class="ed-section-title ed-sensitive-title">🔒 Statutory IDs</h3>
-              <div class="ed-kv-list">
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">National ID</span>
-                  <span class="ed-kv-val ed-kv-mono">{{ (employee as any).national_id ?? "—" }}</span>
-                </div>
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">Passport No</span>
-                  <span class="ed-kv-val ed-kv-mono">{{ (employee as any).passport_number ?? "—" }}</span>
-                </div>
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">KRA PIN</span>
-                  <span class="ed-kv-val ed-kv-mono">{{ (employee as any).tax_id ?? "—" }}</span>
-                </div>
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">NSSF Number</span>
-                  <span class="ed-kv-val ed-kv-mono">{{ (employee as any).nssf_number ?? "—" }}</span>
-                </div>
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">SHA Number</span>
-                  <span class="ed-kv-val ed-kv-mono">{{ (employee as any).nhif_number ?? "—" }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="ed-section-card ed-sensitive ed-health">
-            <h3 class="ed-section-title ed-health-title">🔒 Health Information</h3>
-            <div class="ed-health-grid">
-              <div class="ed-kv-list">
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">Blood Group</span>
-                  <span class="ed-kv-val">{{ (employee as any).blood_group ?? "—" }}</span>
-                </div>
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">Allergies</span>
-                  <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).allergies ?? "None declared" }}</span>
-                </div>
-              </div>
-              <div class="ed-kv-list">
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">Known Conditions</span>
-                  <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).known_conditions ?? "None declared" }}</span>
-                </div>
-                <div class="ed-kv-row">
-                  <span class="ed-kv-label">Disabilities</span>
-                  <span class="ed-kv-val ed-kv-wrap">{{ (employee as any).disabilities ?? "None declared" }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="ed-section-card ed-sensitive">
-            <div class="ed-section-hdr" style="margin-bottom:14px">
-              <h3 class="ed-section-title ed-sensitive-title" style="margin:0">🔒 Emergency Contacts</h3>
-              <button class="btn btn-outline btn-sm" @click="openAddEC">+ Add</button>
-            </div>
-
-            <div v-if="showECForm" class="ed-ec-form">
-              <p v-if="ecError" class="error" style="margin-bottom:8px">{{ ecError }}</p>
-              <div class="ed-comp-form-grid ed-ec-grid">
-                <div>
-                  <label class="ed-form-label">Name *</label>
-                  <input v-model="ecForm.name" type="text" class="input" placeholder="Full name" />
-                </div>
-                <div>
-                  <label class="ed-form-label">Relationship *</label>
-                  <input v-model="ecForm.relationship" type="text" class="input" placeholder="e.g. Spouse, Parent" />
-                </div>
-                <div>
-                  <label class="ed-form-label">Phone *</label>
-                  <input v-model="ecForm.phone" type="text" class="input" placeholder="+254…" />
-                </div>
-                <div>
-                  <label class="ed-form-label">Email</label>
-                  <input v-model="ecForm.email" type="email" class="input" />
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
-                <input type="checkbox" id="ec-primary" v-model="ecForm.is_primary" />
-                <label for="ec-primary" style="font-size:0.82rem;cursor:pointer">Primary contact</label>
-              </div>
-              <div style="display:flex;gap:8px;margin-top:12px">
-                <button class="btn btn-primary btn-sm" :disabled="ecSaving" @click="saveEC">{{ ecSaving ? "Saving…" : "Save" }}</button>
-                <button class="btn btn-secondary btn-sm" @click="showECForm = false">Cancel</button>
-              </div>
-            </div>
-
-            <div v-if="(employee as any).emergency_contacts?.length" class="ed-ec-list">
-              <div v-for="c in (employee as any).emergency_contacts" :key="c.id" class="ed-ec-card">
-                <div class="ed-ec-top">
-                  <span class="ed-ec-name">{{ c.name }}</span>
-                  <span v-if="c.is_primary" class="ed-ec-primary-badge">Primary</span>
-                  <span class="ed-ec-rel">{{ c.relationship }}</span>
-                  <div class="ed-ec-actions">
-                    <button class="act-btn" @click="openEditEC(c)">✏</button>
-                    <button class="act-btn act-del" @click="deleteEC(c.id)">✕</button>
-                  </div>
-                </div>
-                <div class="ed-ec-details">
-                  <span>📞 {{ c.phone }}</span>
-                  <span v-if="c.email">✉ {{ c.email }}</span>
-                </div>
-              </div>
-            </div>
-            <p v-else-if="!showECForm" class="ed-empty-hint">No emergency contacts added yet.</p>
-          </div>
-
-        </template>
+        <!--
+          Said once, at the end, rather than as a card full of dashes for each
+          thing that is missing. It names what is absent and offers the way to
+          fix it, which a blank panel does not.
+        -->
+        <section v-if="missingSections.length" class="ed-card ed-card-quiet">
+          <h3 class="ed-card-plain">Not recorded yet</h3>
+          <p class="ed-muted">
+            Nothing has been captured for
+            <strong>{{ missingSections.join(", ") }}</strong>.
+            <template v-if="!hasSensitive">
+              Some of it may also be hidden — this record shows only what your permissions allow.
+            </template>
+          </p>
+          <router-link class="btn btn-outline btn-sm" :to="{ name: 'employee-edit', params: { id: (employee as any).id } }">
+            Fill it in
+          </router-link>
+        </section>
       </div><!-- /overview -->
 
       <!-- ── CAREER ────────────────────────────────────────────────────────── -->
@@ -1747,18 +1678,21 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- ── PROFILES ──────────────────────────────────────────────────────── -->
+      <!--
+        Professional Summary, About Me and Hobbies — not in the design's four
+        cards, but not a duplicate of anything in them either, so kept rather
+        than dropped. Everything else this block used to hold (Personal,
+        Identity Documents) was a second copy of the Personal Information and
+        Statutory IDs cards above, which is the duplication this page had.
+      -->
       <div v-if="tab === 'profile-overview'" class="ed-tab-body ed-tab-body-tight">
-
-        <!-- Professional Summary (full-width, always visible) -->
-        <div class="ed-section-card">
+        <section class="ed-card">
           <div class="ed-section-hdr" style="margin-bottom:12px">
-            <h3 class="ed-section-title" style="margin:0">Professional Summary</h3>
-            <button v-if="!editingProfile" class="btn btn-outline btn-sm" @click="openEditProfile">✏ Edit</button>
+            <h3 class="ed-card-plain" style="margin:0">About</h3>
+            <button v-if="hasSensitive && !editingProfile" class="btn btn-outline btn-sm" @click="openEditProfile">✏ Edit</button>
             <button v-if="editingProfile" class="btn btn-secondary btn-sm" @click="editingProfile = false">Cancel</button>
           </div>
 
-          <!-- Edit mode -->
           <div v-if="editingProfile">
             <div class="form-group">
               <label class="ed-form-label">Professional Summary</label>
@@ -1775,78 +1709,14 @@ onMounted(() => {
             <button class="btn btn-primary btn-sm" :disabled="profileSaving" @click="saveProfile">{{ profileSaving ? "Saving…" : "Save Profile" }}</button>
           </div>
 
-          <!-- Read mode -->
-          <template v-else>
+          <!-- Nothing printed at all when none of the three is set — not
+               three cards each saying so. -->
+          <template v-else-if="(employee as any).professional_summary || (employee as any).about_me || (employee as any).hobbies_interests">
             <p v-if="(employee as any).professional_summary" class="ed-prose">{{ (employee as any).professional_summary }}</p>
-            <p v-else class="ed-empty-hint">No professional summary added. Click Edit to add one.</p>
-          </template>
-        </div>
-
-        <!-- About Me + Hobbies (read-only, two-col) -->
-        <div v-if="!editingProfile" class="ed-two-col">
-          <div class="ed-section-card">
-            <h3 class="ed-section-title">About Me</h3>
-            <p v-if="(employee as any).about_me" class="ed-prose" style="margin:0">{{ (employee as any).about_me }}</p>
-            <p v-else class="ed-empty-hint">—</p>
-          </div>
-          <div class="ed-section-card">
-            <h3 class="ed-section-title">Hobbies &amp; Interests</h3>
+            <p v-if="(employee as any).about_me" class="ed-prose">{{ (employee as any).about_me }}</p>
             <p v-if="(employee as any).hobbies_interests" class="ed-prose" style="margin:0">{{ (employee as any).hobbies_interests }}</p>
-            <p v-else class="ed-empty-hint">—</p>
-          </div>
-        </div>
-
-        <div class="ed-two-col">
-          <!-- PERSONAL -->
-          <div class="ed-section-card">
-            <h3 class="ed-section-title">Personal</h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Gender</span>
-                <span class="ed-kv-val" style="text-transform:capitalize">{{ (employee as any).gender ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Date of Birth</span>
-                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_birth) }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">City</span>
-                <span class="ed-kv-val">{{ (employee as any).city ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Country</span>
-                <span class="ed-kv-val">{{ (employee as any).country ?? "—" }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- IDENTITY DOCUMENTS -->
-          <div class="ed-section-card ed-sensitive">
-            <h3 class="ed-section-title ed-sensitive-title">🔒 Identity Documents — Sensitive</h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">National ID</span>
-                <span class="ed-kv-val ed-kv-mono">{{ (employee as any).national_id ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">Passport No</span>
-                <span class="ed-kv-val ed-kv-mono">{{ (employee as any).passport_number ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">KRA PIN</span>
-                <span class="ed-kv-val ed-kv-mono">{{ (employee as any).tax_id ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">NSSF Number</span>
-                <span class="ed-kv-val ed-kv-mono">{{ (employee as any).nssf_number ?? "—" }}</span>
-              </div>
-              <div class="ed-kv-row">
-                <span class="ed-kv-label">NHIF / SHIF No</span>
-                <span class="ed-kv-val ed-kv-mono">{{ (employee as any).nhif_number ?? "—" }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
+          </template>
+        </section>
       </div>
 
       <!-- ── BENEFITS ──────────────────────────────────────────────────────── -->
@@ -1984,6 +1854,7 @@ onMounted(() => {
                 <td>{{ c.phone ?? "—" }}</td>
                 <td><span v-if="c.is_primary" class="badge badge-green">Primary</span></td>
                 <td class="ed-right">
+                  <button v-if="hasSensitive" class="ed-link" style="margin-right:10px" @click="openEditEC(c)">Edit</button>
                   <button v-if="hasSensitive" class="ed-link ed-link-danger" @click="removeContact(c.id)">Remove</button>
                 </td>
               </tr>
@@ -1999,7 +1870,19 @@ onMounted(() => {
             late to go looking.
           </p>
 
-          <form v-if="hasSensitive" class="ed-add-row" @submit.prevent="addContact">
+          <!-- Correcting one, rather than deleting and retyping it. -->
+          <form v-if="hasSensitive && showECForm" class="ed-add-row" @submit.prevent="saveEC">
+            <input v-model="ecForm.name" class="input" placeholder="Name" required />
+            <input v-model="ecForm.relationship" class="input" placeholder="Relationship" />
+            <input v-model="ecForm.phone" class="input" placeholder="Phone" required />
+            <input v-model="ecForm.email" class="input" type="email" placeholder="Email (optional)" />
+            <label class="ed-inline-check"><input v-model="ecForm.is_primary" type="checkbox" /> Primary</label>
+            <button class="btn btn-primary btn-sm" type="submit" :disabled="ecSaving">Save</button>
+            <button class="btn btn-secondary btn-sm" type="button" @click="showECForm = false">Cancel</button>
+            <span v-if="ecError" class="error" style="flex-basis:100%">{{ ecError }}</span>
+          </form>
+
+          <form v-else-if="hasSensitive" class="ed-add-row" @submit.prevent="addContact">
             <input v-model="newContact.name" class="input" placeholder="Name" required />
             <input v-model="newContact.relationship" class="input" placeholder="Relationship" />
             <input v-model="newContact.phone" class="input" placeholder="Phone" required />
@@ -2568,4 +2451,43 @@ a.ed-hier-node:hover { border-color: var(--color-brand-base); }
   background: var(--color-surface-sunken);
   border-radius: 8px; padding: 8px 10px; margin: 8px 0 0 !important;
 }
+
+/* ── Profile Overview: cards built from what is known ──────────────────── */
+.ed-card {
+  background: var(--color-surface-raised, #fff);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+/* A quiet card for the one line naming what is missing — not styled like the
+   amber "sensitive" treatment, because absence is not a warning. */
+.ed-card-quiet { background: var(--color-surface-sunken, #fafafa); }
+
+.ed-card-plain {
+  font-size: 14px; font-weight: 600; color: var(--color-text);
+  margin: 0 0 14px;
+}
+
+/* header, not h3 — the design's card title carries an icon and a subtitle
+   beside it, not above it. */
+.ed-card-h { margin-bottom: 16px; }
+.ed-card-h strong { display: block; font-size: 14px; font-weight: 600; color: var(--color-text); }
+
+/*
+ * Label left, value right — the design's two-column row, not a table. No rule
+ * between rows: with every row conditional, a border would draw a line above
+ * a row that is not there and make the gap look like an error.
+ */
+.ed-rows { display: flex; flex-direction: column; gap: 14px; margin: 0; }
+.ed-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.ed-row dt { font-size: 12px; color: var(--color-text-muted); white-space: nowrap; }
+.ed-row dd {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0; font-size: 13px; font-weight: 500; color: var(--color-text);
+  text-align: right;
+}
+.ed-row-icon { width: 13px; height: 13px; flex-shrink: 0; color: var(--color-text-light); }
+
+.ed-inline-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); white-space: nowrap; }
 </style>
