@@ -1330,70 +1330,41 @@ onMounted(() => {
           edited on Payroll, where the statutory contributions they drive
           already live. One number, one place to change it.
         -->
-        <div class="ed-two-col">
-          <div class="ed-section-card">
-            <h3 class="ed-section-title ed-card-h">
-              <span class="ed-card-icon" aria-hidden="true">
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <rect x="3" y="6" width="9" height="11" rx="1.5" /><path d="M12 9h5v8h-5M5.5 9h4M5.5 12h4M5.5 15h4" />
-                </svg>
-              </span>
-              <span>Job Details<em>Role, team, and reporting structure.</em></span>
-            </h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row"><span class="ed-kv-label">Employee No.</span>
-                <span class="ed-kv-val ed-kv-accent">{{ (employee as any).employee_number ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Employment Type</span>
-                <span class="ed-kv-val" style="text-transform:capitalize">{{ (employee as any).employment_type?.replace(/_/g, " ") ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Department</span>
-                <span class="ed-kv-val">{{ (employee as any).host_department ?? (employee as any).department?.name ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Designation</span>
-                <span class="ed-kv-val">
-                  <template v-if="(employee as any).host_title || (employee as any).designation?.title || (employee as any).designation?.name">
-                    {{ (employee as any).host_title ?? (employee as any).designation?.title ?? (employee as any).designation?.name }}
-                  </template>
-                  <span v-else class="ed-unset">not set</span>
-                </span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Job Grade</span>
-                <span class="ed-kv-val">{{ (employee as any).job_grade?.name ?? "—" }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Date of Joining</span>
-                <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Probation / Review Date</span>
-                <span class="ed-kv-val">{{ fmtDate((employee as any).probation_end_date) }}</span></div>
-            </div>
-          </div>
-
-          <!-- Pay is gated the same way the rest of the sensitive material is. -->
-          <div v-if="hasSensitive" class="ed-section-card">
-            <h3 class="ed-section-title ed-card-h">
-              <span class="ed-card-icon" aria-hidden="true">
-                <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <ellipse cx="10" cy="5.5" rx="6" ry="2.5" /><path d="M4 5.5v9c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5v-9M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" />
-                </svg>
-              </span>
-              <span>Monthly Compensation<em>Basic pay and allowances.</em></span>
-            </h3>
-            <div class="ed-kv-list">
-              <div class="ed-kv-row"><span class="ed-kv-label">Basic Salary</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).basic_salary) }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">House Allowance</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).house_allowance) }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Transport Allowance</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).transport_allowance) }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Medical Allowance</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).medical_allowance) }}</span></div>
-              <div class="ed-kv-row"><span class="ed-kv-label">Other Allowances</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).other_allowances) }}</span></div>
-              <div class="ed-kv-row ed-kv-total"><span class="ed-kv-label">Gross Pay</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt(empGross) }}</span></div>
-              <!--
-                Below the total on purpose. Insurance relief is a credit against
-                tax, not part of gross, and adding it to the figures above it
-                would overstate what the company pays.
-              -->
-              <div class="ed-kv-row"><span class="ed-kv-label">Insurance Relief</span>
-                <span class="ed-kv-val ed-kv-mono">KES {{ fmt((employee as any).insurance_relief) }}</span></div>
-            </div>
+        <!--
+          Pay used to sit here too, in a second card beside this one. Removed:
+          Payroll is where it is edited, and a figure shown in two places
+          drifts the moment either one is changed without the other in mind.
+          One number, one place it lives.
+        -->
+        <div class="ed-section-card">
+          <h3 class="ed-section-title ed-card-h">
+            <span class="ed-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="3" y="6" width="9" height="11" rx="1.5" /><path d="M12 9h5v8h-5M5.5 9h4M5.5 12h4M5.5 15h4" />
+              </svg>
+            </span>
+            <span>Job Details<em>Role, team, and reporting structure.</em></span>
+          </h3>
+          <div class="ed-kv-list">
+            <div class="ed-kv-row"><span class="ed-kv-label">Employee No.</span>
+              <span class="ed-kv-val ed-kv-accent">{{ (employee as any).employee_number ?? "—" }}</span></div>
+            <div class="ed-kv-row"><span class="ed-kv-label">Employment Type</span>
+              <span class="ed-kv-val" style="text-transform:capitalize">{{ (employee as any).employment_type?.replace(/_/g, " ") ?? "—" }}</span></div>
+            <div class="ed-kv-row"><span class="ed-kv-label">Department</span>
+              <span class="ed-kv-val">{{ (employee as any).host_department ?? (employee as any).department?.name ?? "—" }}</span></div>
+            <div class="ed-kv-row"><span class="ed-kv-label">Designation</span>
+              <span class="ed-kv-val">
+                <template v-if="(employee as any).host_title || (employee as any).designation?.title || (employee as any).designation?.name">
+                  {{ (employee as any).host_title ?? (employee as any).designation?.title ?? (employee as any).designation?.name }}
+                </template>
+                <span v-else class="ed-unset">not set</span>
+              </span></div>
+            <div class="ed-kv-row"><span class="ed-kv-label">Job Grade</span>
+              <span class="ed-kv-val">{{ (employee as any).job_grade?.name ?? "—" }}</span></div>
+            <div class="ed-kv-row"><span class="ed-kv-label">Date of Joining</span>
+              <span class="ed-kv-val">{{ fmtDate((employee as any).date_of_joining ?? (employee as any).date_hired) }}</span></div>
+            <div class="ed-kv-row"><span class="ed-kv-label">Probation / Review Date</span>
+              <span class="ed-kv-val">{{ fmtDate((employee as any).probation_end_date) }}</span></div>
           </div>
         </div>
 
