@@ -989,7 +989,9 @@ onMounted(async () => {
 
 <style scoped>
 /* Root */
-.ed-root { padding: 24px; max-width: 88rem; }
+/* No ceiling, matching the .view convention (style.css) and the fix on the
+   same layout in EmployeeDetailView.vue — see that file for the reasoning. */
+.ed-root { padding: 24px; width: 100%; }
 
 .mi-page-title { font-size: 1.25rem; font-weight: 700; color: #0f172a; margin: 0 0 16px; }
 

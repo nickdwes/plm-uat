@@ -2130,7 +2130,16 @@ onMounted(() => {
 
 <style scoped>
 /* Root */
-.ed-root { padding: 24px; max-width: 88rem; }
+/*
+ * No ceiling here on purpose, matching the .view convention the rest of the
+ * app follows (see style.css) — this page used to hardcode max-width: 88rem,
+ * which is exactly the pattern that convention exists to rule out: content
+ * stranded in a narrow column with the right half of a wide monitor sitting
+ * empty. The two-column grid below stays two columns regardless of how wide
+ * the page gets — that shape matches the design — so nothing here actually
+ * needed the ceiling; it grows into the space it's given instead of wasting it.
+ */
+.ed-root { padding: 24px; width: 100%; }
 
 /* Breadcrumb */
 .ed-breadcrumb { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #94a3b8; margin-bottom: 20px; }
