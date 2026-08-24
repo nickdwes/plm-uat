@@ -276,6 +276,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/{employee}/attendance',  [\App\Http\Controllers\HR\EmployeeRecordController::class, 'attendance']);
         Route::get('/{employee}/payslips',    [\App\Http\Controllers\HR\EmployeeRecordController::class, 'payslips']);
         Route::get('/{employee}/performance', [\App\Http\Controllers\HR\EmployeeRecordController::class, 'performance']);
+        Route::get('/{employee}/tasks',          [\App\Http\Controllers\HR\EmployeeRecordController::class, 'tasks']);
+        Route::get('/{employee}/projects',       [\App\Http\Controllers\HR\EmployeeRecordController::class, 'projects']);
+        Route::get('/{employee}/support-tickets',[\App\Http\Controllers\HR\EmployeeRecordController::class, 'supportTickets']);
+        Route::get('/{employee}/assets',         [\App\Http\Controllers\HR\EmployeeRecordController::class, 'assets']);
 
         Route::get('/{employee}/emergency-contacts',              [EmployeeEmergencyContactController::class, 'index']);
         Route::post('/{employee}/emergency-contacts',             [EmployeeEmergencyContactController::class, 'store']);

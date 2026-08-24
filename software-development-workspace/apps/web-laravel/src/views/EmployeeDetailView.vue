@@ -25,7 +25,9 @@ const error    = ref("");
  */
 type Tab =
   | "profile-overview" | "job-details" | "emergency-contacts" | "dependents"
-  | "attendance" | "leave" | "payroll" | "performance" | "documents" | "vehicles";
+  | "attendance" | "leave" | "payroll" | "performance"
+  | "assets" | "support-tickets" | "training" | "projects" | "tasks"
+  | "documents" | "vehicles";
 
 const tab = ref<Tab>("profile-overview");
 
@@ -38,6 +40,17 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "leave",              label: "Leave Management" },
   { key: "payroll",            label: "Payroll" },
   { key: "performance",        label: "Performance" },
+  /*
+   * Each a window onto a module that owns its own data — the same rule
+   * Attendance, Leave, Payroll and Performance already follow. Nothing here
+   * is a second implementation of tasks, projects, the service desk or the
+   * asset register; it is that module's rows, read for one person.
+   */
+  { key: "assets",             label: "Assets Assigned" },
+  { key: "support-tickets",    label: "Support Tickets" },
+  { key: "training",           label: "Training" },
+  { key: "projects",           label: "Projects" },
+  { key: "tasks",              label: "Tasks" },
   { key: "documents",          label: "Documents" },
   /*
    * Not in the design, but a real screen that needs to stay reachable. It was
@@ -222,6 +235,35 @@ async function removeVehicle(id: number, reg: string): Promise<void> {
   vehicles.value = vehicles.value.filter(v => v.id !== id);
 }
 
+// ── Windows onto tasks, projects, the service desk, assets and training ──
+interface TaskRow {
+  id: number; title: string; status: string; priority: string | null;
+  deadline: string | null; project: { id: number; name: string } | null;
+}
+interface ProjectRow {
+  id: number; name: string; account: string | null; status: string; priority: string | null;
+  deadline: string | null; role: "lead" | "team";
+}
+interface TicketRow {
+  id: number; reference: string; subject: string; account: string | null;
+  status: string | null; priority: string | null; role: "assigned" | "raised"; created_at: string | null;
+}
+interface AssetRow {
+  id: number; name: string; tag: string | null; serial: string | null; model: string | null;
+  status: string; assigned_date: string | null; role: "assigned" | "custodian";
+}
+interface TrainingRow {
+  id: number; course_name: string; provider: string | null;
+  completion_date: string | null; certification_no: string | null;
+}
+
+const tasksList    = ref<TaskRow[]>([]);
+const projectsList = ref<ProjectRow[]>([]);
+const ticketsList  = ref<TicketRow[]>([]);
+const ticketsNote  = ref("");
+const assetsList   = ref<AssetRow[]>([]);
+const trainingList = ref<TrainingRow[]>([]);
+
 const attendance      = ref<{ from: string; to: string; days: AttendanceDay[]; totals: AttendanceTotals } | null>(null);
 const attendanceMonth = ref("");
 const reviews         = ref<ReviewRow[]>([]);
@@ -277,6 +319,33 @@ async function openTab(next: Tab): Promise<void> {
           "GET", `/api/v1/employees/${props.id}/payslips`, { org: org() });
         payslips.value = res.data ?? [];
       } catch { payslips.value = []; }
+    } else if (next === "tasks") {
+      const res = await api<{ data: TaskRow[] }>("GET", `/api/v1/employees/${props.id}/tasks`, { org: org() });
+      tasksList.value = res.data ?? [];
+    } else if (next === "projects") {
+      const res = await api<{ data: ProjectRow[] }>("GET", `/api/v1/employees/${props.id}/projects`, { org: org() });
+      projectsList.value = res.data ?? [];
+    } else if (next === "support-tickets") {
+      const res = await api<{ data: TicketRow[]; note?: string }>(
+        "GET", `/api/v1/employees/${props.id}/support-tickets`, { org: org() });
+      ticketsList.value = res.data ?? [];
+      ticketsNote.value = res.note ?? "";
+    } else if (next === "assets") {
+      const res = await api<{ data: AssetRow[] }>("GET", `/api/v1/employees/${props.id}/assets`, { org: org() });
+      assetsList.value = res.data ?? [];
+    } else if (next === "training") {
+      /*
+       * Reuses the existing performance/training listing rather than a new
+       * read — it already answers "this person's training", filtered by
+       * employee_id, and is gated on an org-wide permission a viewer of this
+       * page may not hold. A refusal here is not an error worth surfacing;
+       * the rest of the tab is still theirs.
+       */
+      try {
+        const res = await api<{ data: TrainingRow[] }>(
+          "GET", "/api/v1/performance/training", { org: org(), params: { employee_id: props.id } });
+        trainingList.value = res.data ?? [];
+      } catch { trainingList.value = []; }
     } else if (next === "vehicles") {
       const res = await api<{ data: EmployeeVehicle[] } | EmployeeVehicle[]>(
         "GET", `/api/v1/employees/${props.id}/vehicles`, { org: org() });
@@ -2232,6 +2301,130 @@ onMounted(() => {
               </button>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- ── ASSETS ASSIGNED ──────────────────────────────────────────── -->
+      <div v-if="tab === 'assets'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Assets Assigned</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'assets' }">Open Asset Register</router-link>
+          </div>
+          <table v-if="assetsList.length" class="ed-mini-table">
+            <thead><tr><th>Asset</th><th>Tag</th><th>Model</th><th>Status</th><th>Since</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="a in assetsList" :key="a.id">
+                <td>{{ a.name }}</td>
+                <td>{{ a.tag ?? "—" }}</td>
+                <td>{{ a.model ?? "—" }}</td>
+                <td style="text-transform:capitalize">{{ a.status?.replace(/_/g, " ") }}</td>
+                <td>{{ fmtDate(a.assigned_date) }}</td>
+                <!-- Assigned and custodian are different facts about an
+                     asset — worth saying which one this is. -->
+                <td><span class="badge badge-gray" style="text-transform:capitalize">{{ a.role }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">Nothing in the asset register is assigned to this person.</p>
+        </div>
+      </div>
+
+      <!-- ── SUPPORT TICKETS ──────────────────────────────────────────── -->
+      <div v-if="tab === 'support-tickets'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Support Tickets</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'support' }">Open Service Desk</router-link>
+          </div>
+          <table v-if="ticketsList.length" class="ed-mini-table">
+            <thead><tr><th>Ref</th><th>Subject</th><th>Account</th><th>Status</th><th>Priority</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="t in ticketsList" :key="t.id">
+                <td>{{ t.reference }}</td>
+                <td>{{ t.subject }}</td>
+                <td>{{ t.account ?? "—" }}</td>
+                <td>{{ t.status ?? "—" }}</td>
+                <td>{{ t.priority ?? "—" }}</td>
+                <!-- Working it and having raised it are different things to
+                     be on this list for. -->
+                <td><span class="badge badge-gray" style="text-transform:capitalize">{{ t.role }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">
+            {{ ticketsNote || "No support ticket is assigned to or was raised by this person." }}
+          </p>
+        </div>
+      </div>
+
+      <!-- ── TRAINING ──────────────────────────────────────────────────── -->
+      <div v-if="tab === 'training'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Training</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'training' }">Open Training</router-link>
+          </div>
+          <table v-if="trainingList.length" class="ed-mini-table">
+            <thead><tr><th>Course</th><th>Provider</th><th>Completed</th><th>Certification No.</th></tr></thead>
+            <tbody>
+              <tr v-for="r in trainingList" :key="r.id">
+                <td>{{ r.course_name }}</td>
+                <td>{{ r.provider ?? "—" }}</td>
+                <td>{{ fmtDate(r.completion_date) }}</td>
+                <td>{{ r.certification_no ?? "—" }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">No training has been recorded for this person.</p>
+        </div>
+      </div>
+
+      <!-- ── PROJECTS ──────────────────────────────────────────────────── -->
+      <div v-if="tab === 'projects'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Projects</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'projects' }">Open Projects</router-link>
+          </div>
+          <table v-if="projectsList.length" class="ed-mini-table">
+            <thead><tr><th>Project</th><th>Account</th><th>Status</th><th>Deadline</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="p in projectsList" :key="p.id">
+                <td>{{ p.name }}</td>
+                <td>{{ p.account ?? "—" }}</td>
+                <td style="text-transform:capitalize">{{ p.status?.replace(/_/g, " ") }}</td>
+                <td>{{ fmtDate(p.deadline) }}</td>
+                <!-- Leading a project and delivering on one are different
+                     facts about somebody. -->
+                <td><span class="badge badge-gray" style="text-transform:capitalize">{{ p.role }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">This person does not lead or deliver on any project.</p>
+        </div>
+      </div>
+
+      <!-- ── TASKS ─────────────────────────────────────────────────────── -->
+      <div v-if="tab === 'tasks'" class="ed-tab-body">
+        <div class="ed-section-card">
+          <div class="ed-section-hdr" style="margin-bottom:12px">
+            <h3 class="ed-section-title" style="margin:0">Tasks</h3>
+            <router-link class="btn btn-outline btn-sm" :to="{ name: 'tasks' }">Open Tasks</router-link>
+          </div>
+          <table v-if="tasksList.length" class="ed-mini-table">
+            <thead><tr><th>Task</th><th>Project</th><th>Status</th><th>Priority</th><th>Deadline</th></tr></thead>
+            <tbody>
+              <tr v-for="t in tasksList" :key="t.id">
+                <td>{{ t.title }}</td>
+                <td>{{ t.project?.name ?? "—" }}</td>
+                <td style="text-transform:capitalize">{{ t.status.replace(/_/g, " ") }}</td>
+                <td style="text-transform:capitalize">{{ t.priority ?? "—" }}</td>
+                <td>{{ fmtDate(t.deadline) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-else class="ed-muted">Nothing is assigned to this person right now.</p>
         </div>
       </div>
 
