@@ -12,6 +12,7 @@ use App\Http\Resources\Account\AccountContactResource;
 use App\Http\Resources\Account\AccountContractResource;
 use App\Http\Resources\Account\AccountResource;
 use App\Models\Account\Account;
+use App\Models\Pipeline\Opportunity;
 use App\Models\Account\AccountActivity;
 use App\Models\Account\AccountAttachment;
 use App\Models\Account\AccountContact;
@@ -27,6 +28,7 @@ use App\Support\Authorization\Permission;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Storage;
 use App\Support\Storage\DocumentVault;
 use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -89,11 +91,55 @@ class AccountController extends Controller
             ? null
             : $request->user()->employeeId();
 
-        return AccountResource::collection($this->service->list(
+        $page = $this->service->list(
             filters: $request->only(['search', 'status', 'account_type_id', 'account_sector_id', 'country', 'account_manager_id']),
             perPage: (int) $request->input('per_page', 20),
             limitToManager: $limit,
-        ));
+        );
+
+        /*
+         * Totals for the whole book, sent with the page rather than as a second
+         * request — the header reads them on first paint, and a strip that
+         * arrives after the table is a strip that makes the page jump.
+         *
+         * Across the whole book, not the current page: "68 customers, 3 with a
+         * deal in play" is the sentence somebody opens this list to read, and
+         * it must not change when they turn the page.
+         */
+        return AccountResource::collection($page)->additional([
+            'totals' => $this->bookTotals($limit),
+        ]);
+    }
+
+    /**
+     * What the customer book adds up to.
+     *
+     * `never_contacted` is here because it is the number worth acting on: the
+     * activity feed is empty org-wide, so every customer reads as untouched,
+     * and a figure saying so is more use than 68 rows each saying "Never".
+     *
+     * @return array<string, int|float|null>
+     */
+    private function bookTotals(?int $limitToManager): array
+    {
+        $q = Account::query()->when($limitToManager, fn ($w, $id) => $w->managedBy($id));
+
+        $openDeal = fn ($w) => $w->where(fn ($d) => $d
+            ->whereHas('phase', fn ($p) => $p->whereNull('outcome'))
+            ->orWhereNull('opportunity_phase_id'));
+
+        return [
+            'customers'       => (clone $q)->count(),
+            'active'          => (clone $q)->where('status', 'active')->count(),
+            'never_contacted' => (clone $q)->whereDoesntHave('activities')->count(),
+            'unowned'         => (clone $q)->whereNull('account_manager_id')->count(),
+            'open_pipeline'   => request()->user()?->hasPermission(Permission::PIPELINE_VIEW_COMMERCIALS)
+                ? (float) Opportunity::query()
+                    ->whereIn('account_id', (clone $q)->select('id'))
+                    ->where($openDeal)
+                    ->sum('amount')
+                : null,
+        ];
     }
 
     public function store(StoreAccountRequest $request): AccountResource
@@ -135,6 +181,113 @@ class AccountController extends Controller
         }
 
         return new AccountResource($this->service->update($account, $data));
+    }
+
+    /**
+     * A client's logo — a small mark shown beside the name. Public disk, like
+     * the organisation's own logo, so the returned URL is directly servable.
+     * The previous file is removed on replace so old logos don't pile up.
+     */
+    public function uploadLogo(Request $request, Account $account): AccountResource
+    {
+        $this->authorize('update', $account);
+
+        $request->validate([
+            'logo' => ['required', 'image', 'mimes:png,jpg,jpeg,svg,webp', 'max:2048'],
+        ]);
+
+        if ($account->logo_path) {
+            Storage::disk('public')->delete($account->logo_path);
+        }
+
+        $path = $request->file('logo')->store("account-logos/{$account->id}", 'public');
+        $account->update(['logo_path' => $path]);
+
+        return new AccountResource($account->fresh(self::DETAIL));
+    }
+
+    public function removeLogo(Account $account): AccountResource
+    {
+        $this->authorize('update', $account);
+
+        if ($account->logo_path) {
+            Storage::disk('public')->delete($account->logo_path);
+            $account->update(['logo_path' => null]);
+        }
+
+        return new AccountResource($account->fresh(self::DETAIL));
+    }
+
+    /**
+     * Auto-fetch this client's logo from its contact-email domain. 422 with a
+     * reason when there is no corporate domain to fetch from or the fetch fails,
+     * so the UI can say why rather than silently doing nothing.
+     */
+    public function fetchLogo(Account $account, \App\Services\Account\AccountLogoFetcher $fetcher): AccountResource
+    {
+        $this->authorize('update', $account);
+
+        $result = $fetcher->fetch($account, force: true);
+        abort_if($result === 'no_domain', 422, 'No corporate contact email to derive a website from.');
+        abort_if($result === 'failed', 422, 'No logo could be fetched for that domain.');
+
+        return new AccountResource($account->fresh(self::DETAIL));
+    }
+
+    /**
+     * Auto-fetch logos for every client that does not have one yet, from each
+     * one's contact-email domain. Returns a tally so the UI can report coverage.
+     */
+    public function fetchLogos(\App\Services\Account\AccountLogoFetcher $fetcher): JsonResponse
+    {
+        $this->authorize('create', Account::class);
+
+        $tally = ['fetched' => 0, 'no_domain' => 0, 'failed' => 0];
+
+        Account::whereNull('logo_path')->with('contacts')->chunkById(100, function ($accounts) use ($fetcher, &$tally) {
+            foreach ($accounts as $account) {
+                $result = $fetcher->fetch($account);
+                if (isset($tally[$result])) {
+                    $tally[$result]++;
+                }
+            }
+        });
+
+        return response()->json(['data' => $tally]);
+    }
+
+    /**
+     * Fetch logos from an explicit id → domain map — for well-known clients
+     * whose official domain is supplied rather than derived from an email.
+     * Returns the outcome per account so the caller sees what resolved.
+     */
+    public function fetchLogosByDomain(Request $request, \App\Services\Account\AccountLogoFetcher $fetcher): JsonResponse
+    {
+        $this->authorize('create', Account::class);
+
+        $data = $request->validate([
+            'domains'   => ['required', 'array', 'min:1', 'max:500'],
+            'domains.*' => ['nullable', 'string', 'max:255'],
+            'force'     => ['sometimes', 'boolean'],
+        ]);
+        $force = (bool) ($data['force'] ?? false);
+
+        $accounts = Account::whereIn('id', array_keys($data['domains']))->get()->keyBy('id');
+
+        $results = [];
+        $tally = ['fetched' => 0, 'failed' => 0, 'skipped' => 0];
+        foreach ($data['domains'] as $id => $domain) {
+            $account = $accounts->get((int) $id);
+            if (! $account) {
+                $results[$id] = 'not_found';
+                continue;
+            }
+            $result = $fetcher->fetchFromDomain($account, $domain, $force);
+            $results[$id] = $result;
+            $tally[$result === 'fetched' ? 'fetched' : ($result === 'failed' || $result === 'no_domain' ? 'failed' : 'skipped')]++;
+        }
+
+        return response()->json(['data' => ['tally' => $tally, 'results' => $results]]);
     }
 
     public function destroy(Account $account): JsonResponse
@@ -184,8 +337,266 @@ class AccountController extends Controller
                 'pipeline_value' => $showsMoney ? (float) $deals->where('is_open', true)->sum('amount') : null,
 
                 'open_leads' => $account->leads()->open()->count(),
+
+                /*
+                 * Last year's won total, so the headline figure can say which
+                 * way it is going. Calendar years, not rolling twelve months:
+                 * "vs last year" is how the business talks about it, and a
+                 * rolling window would move the comparison every day.
+                 */
+                'won_value_last_year' => $showsMoney
+                    ? (float) $deals->where('outcome', 'won')
+                        ->filter(fn ($d) => $d->closed_at?->year === now()->subYear()->year)
+                        ->sum('amount')
+                    : null,
+                'won_value_this_year' => $showsMoney
+                    ? (float) $deals->where('outcome', 'won')
+                        ->filter(fn ($d) => $d->closed_at?->year === now()->year)
+                        ->sum('amount')
+                    : null,
+
+                'renewal'      => $this->nextRenewal($account, $showsMoney),
+                'last_contact' => $this->lastContact($account),
+                'contracts'    => $this->contractTotals($account, $showsMoney),
+
+                // Tab badges. Counted here rather than by loading each
+                // collection, so opening the page does not read six tables to
+                // print six numbers.
+                'counts' => [
+                    'contacts'      => $account->contacts()->count(),
+                    'contracts'     => $account->contracts()->count(),
+                    'activities'    => $account->activities()->count(),
+                    'leads'         => $account->leads()->count(),
+                    'opportunities' => $deals->count(),
+                    'projects'      => $account->projects()->count(),
+                    'support'       => $account->supportTickets()->count(),
+                    'travels'       => $account->travelRequests()->count(),
+                    'team'          => $account->team()->count(),
+                ],
             ],
         ]);
+    }
+
+    /**
+     * The next contract to fall due.
+     *
+     * The soonest end date that has not passed, among contracts still running.
+     * A renewal is a date somebody has to act before, so an expiry already gone
+     * is not a renewal — it is a lapse, and saying "renews in -40 days" would
+     * be worse than saying nothing.
+     */
+    private function nextRenewal(Account $account, bool $showsMoney): ?array
+    {
+        // `reorder()` first: the relation is newest-first, and appending an
+        // ascending order to a descending one leaves the descending one
+        // winning — which returns the furthest renewal instead of the nearest.
+        $contract = $account->contracts()
+            ->where('status', 'active')
+            ->whereNull('completed_at')
+            ->whereDate('end_date', '>=', now()->toDateString())
+            ->reorder('end_date')
+            ->first();
+
+        if (! $contract) {
+            return null;
+        }
+
+        return [
+            'date'     => $contract->end_date?->toDateString(),
+            'days_out' => (int) now()->startOfDay()->diffInDays($contract->end_date, false),
+            'name'     => $contract->name,
+            'value'    => $showsMoney ? (float) $contract->contract_value : null,
+        ];
+    }
+
+    /**
+     * When somebody last spoke to them, and who.
+     *
+     * From the activity feed rather than `accounts.last_contact_at`, because
+     * the feed also knows the channel and the person — "4 days ago" alone
+     * tells you the account is warm but not who to ask about it.
+     */
+    private function lastContact(Account $account): ?array
+    {
+        $latest = $account->activities()->with('employee:id,first_name,last_name')->first();
+
+        if (! $latest) {
+            return null;
+        }
+
+        return [
+            'at'     => $latest->occurred_at?->toIso8601String(),
+            'type'   => $latest->type,
+            'person' => $latest->employee
+                ? trim($latest->employee->first_name . ' ' . $latest->employee->last_name)
+                : null,
+        ];
+    }
+
+    /** The three figures the Contracts tab leads with. */
+    private function contractTotals(Account $account, bool $showsMoney): array
+    {
+        $contracts = $account->contracts()->get();
+
+        $nextExpiry = $contracts
+            ->where('status', 'active')
+            ->whereNull('completed_at')
+            ->filter(fn ($c) => $c->end_date && ! $c->end_date->isPast())
+            ->sortBy('end_date')
+            ->first();
+
+        return [
+            'contracted_value' => $showsMoney ? (float) $contracts->sum('contract_value') : null,
+            'active'           => $contracts->where('status', 'active')->whereNull('completed_at')->count(),
+            'total'            => $contracts->count(),
+            'next_expiry'      => $nextExpiry?->end_date?->toDateString(),
+        ];
+    }
+
+    /**
+     * Work delivered for this customer.
+     *
+     * Progress is counted from the project's own tasks rather than stored:
+     * there is no percentage column, and one would immediately disagree with
+     * the task board it was supposed to summarise.
+     */
+    public function projects(Account $account): JsonResponse
+    {
+        $this->authorize('view', $account);
+
+        $projects = $account->projects()
+            ->with('projectLead:id,first_name,last_name')
+            ->withCount([
+                'tasks',
+                'tasks as done_tasks_count' => fn ($q) => $q->whereNotNull('completed_at'),
+            ])
+            ->orderByRaw("CASE WHEN delivered_on IS NULL THEN 0 ELSE 1 END")
+            ->orderBy('deadline')
+            ->get();
+
+        return response()->json([
+            'data' => $projects->map(fn ($p) => [
+                'id'          => $p->id,
+                'reference'   => $p->reference,
+                'name'        => $p->name,
+                'status'      => $p->status,
+                'rag'         => $p->rag,
+                'deadline'    => $p->deadline?->toDateString(),
+                'delivered_on' => $p->delivered_on?->toDateString(),
+                'lead'        => $p->projectLead
+                    ? trim($p->projectLead->first_name . ' ' . $p->projectLead->last_name)
+                    : null,
+                'tasks_total' => $p->tasks_count,
+                'tasks_done'  => $p->done_tasks_count,
+                // Null rather than 0% when there are no tasks: a project nobody
+                // has planned is not a project that has done nothing.
+                'progress'    => $p->tasks_count > 0
+                    ? (int) round($p->done_tasks_count / $p->tasks_count * 100)
+                    : null,
+            ]),
+        ]);
+    }
+
+    /**
+     * Problems raised about that work, and how well they are being answered.
+     *
+     * The four figures above the table are the ones a customer asks about in a
+     * review: how many are open, how many have missed their promise, how fast
+     * we pick up, and what they thought of it.
+     */
+    public function supportTickets(Account $account): JsonResponse
+    {
+        $this->authorize('view', $account);
+
+        $tickets = $account->supportTickets()
+            ->with(['status:id,name,state', 'priority:id,name', 'assignee:id,name', 'sla', 'survey'])
+            ->latest('updated_at')
+            ->limit(100)
+            ->get();
+
+        $open = $tickets->filter(fn ($t) => $t->status?->state === 'open');
+
+        // Breaching means the resolution promise has passed and the ticket is
+        // still not resolved. A ticket answered late is a missed target, not a
+        // live breach — those are two different conversations.
+        $breaching = $open->filter(
+            fn ($t) => $t->sla?->resolution_due_at
+                && $t->sla->resolution_due_at->isPast()
+                && $t->sla->resolution_met !== true,
+        );
+
+        /*
+         * A response stamped within a minute of the ticket being raised was
+         * not measured, it was imported.
+         *
+         * 102 of 300 imported tickets carry `first_response_at == created_at`
+         * outright, and on the largest account every remaining "response" lands
+         * between 1 and 25 seconds — the importer writing the two fields as it
+         * walked the rows. Counting those gives a headline of "0m", which reads
+         * as an instant desk and is simply false.
+         *
+         * A minute is a floor, not a claim that nobody answers faster. Losing
+         * the rare genuine 40-second reply costs little; publishing a fabricated
+         * zero costs the figure its meaning.
+         */
+        $responded = $tickets->filter(
+            fn ($t) => $t->first_response_at && $t->created_at
+                && $t->created_at->diffInSeconds($t->first_response_at) >= 60,
+        );
+
+        $avgMinutes = $responded->isEmpty()
+            ? null
+            : (int) round($responded->avg(fn ($t) => $t->created_at->diffInMinutes($t->first_response_at)));
+
+        $rated = $tickets->filter(fn ($t) => $t->survey?->rating !== null);
+
+        return response()->json([
+            'stats' => [
+                'open'                 => $open->count(),
+                'breaching'            => $breaching->count(),
+                'avg_response_minutes' => $avgMinutes,
+                'satisfaction'         => $rated->isEmpty() ? null : round($rated->avg(fn ($t) => $t->survey->rating), 1),
+                'rated'                => $rated->count(),
+                // How many the average is drawn from, so a figure from three
+                // tickets is not read as a figure from three hundred.
+                'responded'            => $responded->count(),
+            ],
+            'data' => $tickets->map(fn ($t) => [
+                'id'         => $t->id,
+                'reference'  => $t->reference,
+                'subject'    => $t->subject,
+                'status'     => $t->status?->name,
+                'state'      => $t->status?->state,
+                'priority'   => $t->priority?->name,
+                'assignee'   => $t->assignee?->name,
+                'updated_at' => $t->updated_at?->toIso8601String(),
+                'breaching'  => $breaching->contains($t),
+            ]),
+        ]);
+    }
+
+    /**
+     * Watch a customer, or stop.
+     *
+     * A personal bookmark, so it hangs off `view` — being told about an account
+     * you may read is not a further privilege.
+     */
+    public function follow(Request $request, Account $account): JsonResponse
+    {
+        $this->authorize('view', $account);
+
+        $account->followers()->syncWithoutDetaching([$request->user()->id]);
+
+        return response()->json(['data' => ['following' => true]]);
+    }
+
+    public function unfollow(Request $request, Account $account): JsonResponse
+    {
+        $this->authorize('view', $account);
+
+        $account->followers()->detach($request->user()->id);
+
+        return response()->json(['data' => ['following' => false]]);
     }
 
     /**
@@ -436,7 +847,19 @@ class AccountController extends Controller
         $this->authorize('update', $account);
         abort_unless($contact->account_id === $account->id, 404);
 
-        return new AccountContactResource($this->service->updateContact($contact, $request->validated()));
+        $data = $request->validated();
+
+        /*
+         * You cannot edit what you cannot read. A caller without
+         * accounts.view_contacts received these fields MASKED — letting the
+         * update through would overwrite the real address with the mask the
+         * moment they save an unrelated edit to the same card.
+         */
+        if (! ($request->user()?->hasPermission(\App\Support\Authorization\Permission::ACCOUNTS_VIEW_CONTACTS) ?? false)) {
+            unset($data['email'], $data['phone'], $data['alternate_phone']);
+        }
+
+        return new AccountContactResource($this->service->updateContact($contact, $data));
     }
 
     public function destroyContact(Account $account, AccountContact $contact): JsonResponse

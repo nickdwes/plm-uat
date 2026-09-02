@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class PayrollPeriod extends Model
 {
-    use BelongsToOrganization;
+    use BelongsToOrganization, \App\Models\Concerns\RecordsAuditTrail;
 
     public const STATUS_DRAFT      = 'draft';
     public const STATUS_PROCESSING = 'processing';

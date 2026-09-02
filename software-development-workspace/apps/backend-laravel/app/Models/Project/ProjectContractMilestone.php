@@ -7,6 +7,7 @@ use App\Models\Task\Task;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 /**
@@ -49,6 +50,57 @@ class ProjectContractMilestone extends Model
     public function task(): BelongsTo
     {
         return $this->belongsTo(Task::class, 'task_id');
+    }
+
+    /** The tasks and phases that must be complete before it is earned. */
+    public function links(): HasMany
+    {
+        return $this->hasMany(ProjectMilestoneLink::class, 'milestone_id');
+    }
+
+    /** Proof-of-delivery documents finance invoices against. */
+    public function proofs(): HasMany
+    {
+        return $this->hasMany(ProjectAttachment::class, 'milestone_id')->latest('id');
+    }
+
+    /**
+     * Whether every linked task and phase is complete — the milestone is
+     * earned. Null when nothing is linked: readiness cannot be judged, so it is
+     * neither met nor unmet. Expects `links.task` and `links.phase` loaded.
+     */
+    public function getRequirementsMetAttribute(): ?bool
+    {
+        if ($this->links->isEmpty()) {
+            return null;
+        }
+
+        return $this->links->every(function (ProjectMilestoneLink $link) {
+            if ($link->task) {
+                return $link->task->status === Task::DONE;
+            }
+            if ($link->phase) {
+                return $link->phase->isComplete();
+            }
+
+            return true; // a link whose target was deleted no longer gates.
+        });
+    }
+
+    public function getHasProofAttribute(): bool
+    {
+        return $this->proofs->isNotEmpty();
+    }
+
+    /**
+     * Ready for finance to invoice: still pending, the work is done (or was
+     * never gated on work), and proof of delivery is attached.
+     */
+    public function getReadyToInvoiceAttribute(): bool
+    {
+        return $this->status === 'pending'
+            && $this->requirements_met !== false
+            && $this->has_proof;
     }
 
     // ── Derived ───────────────────────────────────────────────────────────

@@ -123,6 +123,22 @@ class AzureSsoController extends Controller
             return response()->json(['message' => 'User account not found.'], 404);
         }
 
+        /*
+         * Disabled here means disabled however they arrive.
+         *
+         * Microsoft having authenticated somebody says they are who they claim,
+         * not that this application still wants them — a contractor whose
+         * mailbox is intact but whose access here was withdrawn would otherwise
+         * walk straight past the front door by using the Microsoft button.
+         */
+        if (! $user->canSignIn()) {
+            return response()->json([
+                'message' => $user->account_status === User::STATUS_SUSPENDED
+                    ? 'This account is suspended. Speak to an administrator.'
+                    : 'This account has been disabled.',
+            ], 403);
+        }
+
         // Revoke previous tokens
         $user->tokens()->delete();
 

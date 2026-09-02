@@ -20,6 +20,8 @@ export interface LoginResponse {
   token: string;
   user: AuthUser;
   organizations: Organization[];
+  /** The caller's rights in the first organisation — seeds the client's copy. */
+  permissions?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -563,7 +565,19 @@ export interface OrgFunctionalUnit {
   name: string;
   code: string | null;
   description: string | null;
+  /** The function head — the level an escalation reaches above a department. */
+  lead_employee_id: number | null;
   departments: OrgDepartment[];
+}
+
+/** One row of "who runs what", at any level of the structure. */
+export interface LeadershipRow {
+  id: number;
+  level: 'function' | 'department' | 'business_unit' | 'practice';
+  name: string;
+  code: string | null;
+  parent: string | null;
+  lead: { id: number; name: string; employee_number: string | null; work_email: string | null } | null;
 }
 
 export interface OrgStructureData {
@@ -832,13 +846,18 @@ export type TrainingDelivery = 'in_person' | 'virtual' | 'e_learning' | 'blended
 export type TrainingStatus = 'enrolled' | 'in_progress' | 'completed' | 'expired' | 'withdrawn' | 'failed';
 export type TrainingAssignmentType = 'self_assigned' | 'mandatory' | 'manager_assigned' | 'approval_based';
 
+export type TrainingLevel = "beginner" | "foundation" | "associate" | "professional" | "expert" | "master";
+
 export interface TrainingItem {
   id: number;
   uuid: string;
+  training_code: string | null;
   title: string;
+  training_version: string | null;
   description: string | null;
   type: TrainingType;
   delivery: TrainingDelivery;
+  level: TrainingLevel | null;
   duration_hours: number;
   duration_minutes: number;
   is_long_course: boolean;
@@ -854,9 +873,129 @@ export interface TrainingItem {
   budget_amount: number | null;
   max_enrollments: number | null;
   thumbnail_url: string | null;
+  is_technical: boolean;
+  requires_proctored_exam: boolean;
+  certificate_issued: boolean;
+  certification_name: string | null;
+  exam_code: string | null;
+  exam_duration: string | null;
+  passing_score: number | null;
+  exam_provider: string | null;
+  validity_years: number | null;
+  renewal_required: boolean;
+  cpe_credits: number | null;
+  training_provider_type: TrainingProviderType | null;
+  certifying_body?: { id: number; name: string } | null;
+  vendor_partner?: { id: number; name: string } | null;
+  products?: { id: number; name: string }[];
+  oem_compliance?: { required_headcount: number; notes: string | null } | null;
   competencies?: CompetencyItem[];
   training_records_count?: number;
   created_at: string;
+}
+
+export type TrainingProviderType = "certifying_body" | "vendor_oem";
+
+export interface TrainingCertifyingBody {
+  id: number;
+  uuid: string;
+  name: string;
+  is_active: boolean;
+}
+
+export interface TrainingBudgetSummaryRow {
+  cost_currency: string;
+  total_items: number;
+  budgeted_items: number;
+  total_budgeted_amount: number;
+  total_estimated_cost: number;
+}
+
+export type TrainingBudgetRequestMode = "by_training" | "by_employee";
+export type TrainingBudgetRequestStatus = "pending_manager" | "pending_finance" | "approved" | "rejected";
+
+export interface TrainingBudgetRequestItemSummary {
+  id: number;
+  employee: { id: number; name: string };
+  training_item: { id: number; title: string };
+  cost: number;
+  achieve_by_date: string | null;
+}
+
+export interface TrainingBudgetRequestSummary {
+  id: number;
+  uuid: string;
+  mode: TrainingBudgetRequestMode;
+  training_item: { id: number; title: string } | null;
+  employee: { id: number; name: string } | null;
+  payment_instructions: string;
+  total_amount: number;
+  currency: string;
+  status: TrainingBudgetRequestStatus;
+  manager: { id: number; name: string } | null;
+  manager_decided_at: string | null;
+  manager_notes: string | null;
+  finance_decided_by: { id: number; name: string } | null;
+  finance_decided_at: string | null;
+  finance_notes: string | null;
+  rejected_stage: "manager" | "finance" | null;
+  rejection_reason: string | null;
+  submitted_by: { id: number; name: string } | null;
+  items?: TrainingBudgetRequestItemSummary[];
+  created_at: string;
+}
+
+export interface TrainingBudgetThreshold {
+  approval_threshold_amount: number | null;
+  approval_threshold_currency: string;
+}
+
+export interface TrainingReportBucket {
+  label: string;
+  count: number;
+}
+
+export interface TrainingReportVendorBucket {
+  vendor: string;
+  count: number;
+}
+
+export interface TrainingReportBudgetRow {
+  currency: string;
+  total_budgeted_amount: number;
+  total_estimated_cost: number;
+}
+
+export interface TrainingReportBudgetRequestRow {
+  status: TrainingBudgetRequestStatus;
+  currency: string;
+  count: number;
+  total: number;
+}
+
+export interface TrainingReportSummary {
+  overview: {
+    active_learners: number;
+    completions_this_month: number;
+    overdue: number;
+    completion_rate_percent: number;
+    catalog_total: number;
+    catalog_active: number;
+  };
+  catalog_by_type: TrainingReportBucket[];
+  catalog_by_delivery: TrainingReportBucket[];
+  catalog_by_provider_type: TrainingReportBucket[];
+  top_vendors: TrainingReportVendorBucket[];
+  enrollment_by_status: TrainingReportBucket[];
+  budget: TrainingReportBudgetRow[];
+  budget_requests_by_status: TrainingReportBudgetRequestRow[];
+  certifications: {
+    certificate_issuing_items: number;
+    certificates_held: number;
+    expiring_within_90_days: number;
+    expired: number;
+  };
+  competencies_count: number;
 }
 
 export interface CompetencyItem {
@@ -914,6 +1053,8 @@ export interface EmployeeTrainingRecord {
   completed_at: string | null;
   due_date: string | null;
   score: number | null;
+  certificate_number: string | null;
+  certificate_expiry_date: string | null;
   is_priority: boolean;
   priority_reason: string | null;
   training_item: TrainingItem;
@@ -1030,7 +1171,63 @@ export interface VendorComplianceStatus {
 }
 
 // ── Vendor Module (registration + lifecycle) ─────────────────────────────────
+/** @deprecated Single-valued classification — read `active_roles` instead. */
 export type VendorType = 'supplier' | 'service_provider' | 'contractor' | 'consultant' | 'distributor' | 'partner';
+
+/**
+ * What a party does for us. Several may be true at once, each for a period —
+ * a distributor that is also an OEM is the ordinary case, not an exception.
+ */
+export type StakeholderRoleName =
+  | 'oem' | 'distributor' | 'channel_partner' | 'supplier' | 'service_provider'
+  | 'contractor_company' | 'contractor_individual' | 'consultant' | 'subcontractor';
+
+/** A question a party's roles make worth asking. */
+export interface RoleField {
+  key: string;
+  label: string;
+  type: 'text' | 'textarea' | 'number' | 'date' | 'select' | 'boolean';
+  options: string[] | null;
+  help: string | null;
+  section: string;
+  is_required: boolean;
+  role: string | null;
+}
+
+export interface VendorApproval {
+  id: number;
+  stage: string;
+  label: string;
+  sequence: number;
+  status: 'pending' | 'approved' | 'rejected' | 'skipped';
+  comment: string | null;
+  decided_at: string | null;
+  decided_by: number | null;
+}
+
+export interface StakeholderRole {
+  id: number;
+  role: StakeholderRoleName;
+  label: string;
+  valid_from: string | null;
+  /** Null = still in force. An ended role keeps its row. */
+  valid_until: string | null;
+  in_force: boolean;
+  notes: string | null;
+}
+
+/** Every role, and the labels people read. */
+export const STAKEHOLDER_ROLES: { value: StakeholderRoleName; label: string; individualOnly?: boolean; companyOnly?: boolean }[] = [
+  { value: 'oem',                   label: 'OEM',                    companyOnly: true },
+  { value: 'distributor',           label: 'Distributor',            companyOnly: true },
+  { value: 'channel_partner',       label: 'Channel Partner',        companyOnly: true },
+  { value: 'supplier',              label: 'Supplier' },
+  { value: 'service_provider',      label: 'Service Provider' },
+  { value: 'contractor_company',    label: 'Contractor (Company)' },
+  { value: 'contractor_individual', label: 'Contractor (Individual)', individualOnly: true },
+  { value: 'consultant',            label: 'Consultant' },
+  { value: 'subcontractor',         label: 'Subcontractor' },
+];
 export type VendorOnboardingStatus = 'draft' | 'pending_review' | 'approved' | 'rejected' | 'suspended';
 
 export interface Vendor {
@@ -1041,7 +1238,25 @@ export interface Vendor {
   name: string;
   registration_number: string | null;
   tax_id: string | null;
+  /** Organisation or a person (independent contractor, consultant). */
+  party_class: 'organization' | 'individual';
+  /** Every role including ended ones; `active_roles` is what they are today. */
+  roles?: StakeholderRole[];
+  active_roles?: StakeholderRoleName[];
+  /** @deprecated Derived from `roles` — kept for older consumers. */
   vendor_type: VendorType;
+  /** @deprecated Now the `oem` entry in `roles`. */
+  is_oem_vendor: boolean;
+  /** The onboarding chain, in the order it signs. */
+  approvals?: VendorApproval[];
+  submitted_by?: number | null;
+  submitted_at?: string | null;
+  /** What stands between this party and being traded with. */
+  activation_blockers?: string[];
+  /** Answers to whatever this party's roles ask about it. */
+  role_details?: Record<string, unknown>;
+  /** Names the FIELDS awaiting confirmation, never their proposed values. */
+  pending_change?: { fields: string[]; proposed_by: number | null; proposed_at: string | null } | null;
   category: string | null;
   description: string | null;
   // Contact
@@ -1062,6 +1277,15 @@ export interface Vendor {
   renewal_cost: number | null;
   renewal_cost_currency: string | null;
   renewal_reminder_days: number | null;
+  // Remittance & terms — how this supplier actually gets paid
+  bank_name: string | null;
+  bank_branch: string | null;
+  account_name: string | null;
+  account_number: string | null;
+  swift_code: string | null;
+  payment_terms_days: number | null;
+  credit_limit: number | null;
+  credit_limit_currency: string | null;
   // Status
   is_active: boolean;
   onboarding_status: VendorOnboardingStatus;
@@ -1143,14 +1367,35 @@ export interface VendorCertification {
   updated_at: string;
 }
 
+/** One named obligation a tier carries. */
+export interface VendorTierRequirement {
+  id?: number;
+  requirement_type: 'training' | 'assessment' | 'certification';
+  training_item_id: number | null;
+  vendor_professional_certification_id?: number | null;
+  required_headcount: number;
+  label?: string;
+  notes?: string | null;
+}
+
 export interface VendorPartnershipTier {
   id: number;
   uuid: string;
   vendor_partner_id: number;
   tier_name: string;
   tier_order: number;
+  /** Held on the partnership generally, or on one product line. */
+  scope?: 'general' | 'product';
+  vendor_product_id?: number | null;
+  product?: { id: number; name: string } | null;
   revenue_target: number | null;
   revenue_currency: string;
+  /** Seats are what make a revenue target checkable. */
+  seats_required?: number | null;
+  seats_activated?: number | null;
+  tier_requirements?: VendorTierRequirement[];
+  valid_from?: string | null;
+  valid_until?: string | null;
   min_certifications: number | null;
   min_headcount: number | null;
   requirements: string | null;

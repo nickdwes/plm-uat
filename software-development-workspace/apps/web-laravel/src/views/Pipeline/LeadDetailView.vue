@@ -36,15 +36,16 @@ interface Activity {
   id: number; kind: string; type: string; body: string | null;
   occurred_at: string; owner: Person;
 }
-interface Dimension { key: string; label: string; value: number | null }
+/** One answer on offer, and what it is worth. Authored server-side. */
+interface Answer { value: string; points: number; label: string; help: string }
+interface Dimension {
+  key: string; label: string; question: string;
+  options: Answer[]; value: number | null; answer: Answer | null;
+}
 interface Qualification {
   dimensions: Dimension[];
   score: number | null; band: string | null; completeness: number; percentile: number | null;
-  summary: {
-    budget_availability: string | null; stakeholder_engagement: string | null;
-    timeline_estimate: string | null; technical_readiness: string | null;
-    decision_authority_access: string | null;
-  };
+  unanswered: string[];
   notes: string | null;
 }
 interface Contact {
@@ -69,11 +70,15 @@ interface Lead {
   stakeholders?: Stakeholder[];
   attachments?: Attachment[];
   qualification: Qualification;
-  opportunity?: { id: number; reference: string | null; name: string } | null;
+  opportunity?: {
+    id: number; reference: string | null; name: string;
+    status: string; strength: number; qualified_at: string | null;
+  } | null;
   created_at: string | null;
 }
 
-type Tab = "overview" | "company" | "activities" | "qualifications" | "documents";
+type Tab = "overview" | "company" | "activities" | "qualifications" | "correspondence" | "documents";
+type Thread = "meetings" | "emails" | "requests";
 
 const router  = useRouter();
 const lead    = ref<Lead | null>(null);
@@ -90,6 +95,7 @@ const tabs: { key: Tab; label: string }[] = [
   { key: "company",        label: "Company" },
   { key: "activities",     label: "Activities" },
   { key: "qualifications", label: "Qualifications" },
+  { key: "correspondence", label: "Correspondence" },
   { key: "documents",      label: "Documents" },
 ];
 
@@ -137,7 +143,9 @@ async function loadActivities() {
 watch(tab, (t) => {
   if (t === "company" && !company.value) void loadCompany();
   if (t === "activities" && activities.value.length === 0) void loadActivities();
+  if (t === "correspondence") void loadThread(thread.value);
 });
+
 
 // ── Editing the lead ────────────────────────────────────────────────────────
 
@@ -183,53 +191,361 @@ async function save() {
 
 // ── Qualification ───────────────────────────────────────────────────────────
 
-const qualifying = ref(false);
-const quality = ref({
-  fit_company: null as number | null, fit_budget: null as number | null,
-  fit_solution: null as number | null, fit_timeline: null as number | null,
-  fit_stakeholder: null as number | null,
-  budget_availability: "", stakeholder_engagement: "", timeline_estimate: "",
-  technical_readiness: "", decision_authority_access: "", qualification_notes: "",
-});
+/*
+ * Answering happens one question at a time, in place.
+ *
+ * The form this replaced saved all five at once behind an "Assess this lead"
+ * button, and across 160 live leads it was never once used — including the 80
+ * that were converted anyway. Asking for everything before recording anything
+ * makes a partial answer feel like a failed one, when a partial answer is
+ * exactly what the arithmetic is built to report.
+ *
+ * `answering` holds the key of the question whose options are open, so only one
+ * expands at a time and the page does not turn back into a form.
+ */
+const answering = ref<string | null>(null);
+const notes = ref("");
+const answeringKey = ref<string | null>(null);   // which question is saving
 
 function fillQualification(q: Qualification) {
-  const byKey = Object.fromEntries(q.dimensions.map((d) => [d.key, d.value]));
-  quality.value = {
-    fit_company: byKey.fit_company ?? null,
-    fit_budget: byKey.fit_budget ?? null,
-    fit_solution: byKey.fit_solution ?? null,
-    fit_timeline: byKey.fit_timeline ?? null,
-    fit_stakeholder: byKey.fit_stakeholder ?? null,
-    budget_availability: q.summary.budget_availability ?? "",
-    stakeholder_engagement: q.summary.stakeholder_engagement ?? "",
-    timeline_estimate: q.summary.timeline_estimate ?? "",
-    technical_readiness: q.summary.technical_readiness ?? "",
-    decision_authority_access: q.summary.decision_authority_access ?? "",
-    qualification_notes: q.notes ?? "",
-  };
+  notes.value = q.notes ?? "";
 }
 
-async function saveQualification() {
+/** Pick an answer. Saves immediately; picking the current one takes it back. */
+async function answer(dimension: Dimension, option: Answer | null) {
+  if (answeringKey.value) return;
+
+  // Clicking the answer already recorded means "I am no longer sure", which
+  // is different from answering with the worst option — that one is a finding.
+  const chosen = option && option.value === dimension.answer?.value ? null : option?.value ?? null;
+
+  answeringKey.value = dimension.key;
+  try {
+    lead.value = (await api<{ data: Lead }>("POST", `${base.value}/qualify`, {
+      org: org(), body: { [dimension.key]: chosen },
+    })).data;
+    fillQualification(lead.value.qualification);
+    answering.value = null;
+  } catch (e) { fail(e, "Could not record that answer."); }
+  finally { answeringKey.value = null; }
+}
+
+async function saveNotes() {
+  if ((lead.value?.qualification.notes ?? "") === notes.value) return;
   saving.value = true;
   try {
     lead.value = (await api<{ data: Lead }>("POST", `${base.value}/qualify`, {
-      org: org(),
-      body: {
-        ...quality.value,
-        budget_availability: quality.value.budget_availability || null,
-        stakeholder_engagement: quality.value.stakeholder_engagement || null,
-        timeline_estimate: quality.value.timeline_estimate || null,
-        technical_readiness: quality.value.technical_readiness || null,
-        decision_authority_access: quality.value.decision_authority_access || null,
-        qualification_notes: quality.value.qualification_notes || null,
-      },
+      org: org(), body: { qualification_notes: notes.value || null },
     })).data;
-    fillQualification(lead.value.qualification);
-    qualifying.value = false;
-    flash("Assessment saved.");
-  } catch (e) { fail(e, "Could not save the assessment."); }
+    flash("Note saved.");
+  } catch (e) { fail(e, "Could not save the note."); }
   finally { saving.value = false; }
 }
+
+/**
+ * Qualify, and become a deal.
+ *
+ * Qualifying is not a state a lead rests in — it is the act of turning into an
+ * opportunity, so the button does that rather than moving a card into a column
+ * that held nothing in 160 leads. The name, customer, owner, description and
+ * the five answers all travel with it; nothing is retyped.
+ *
+ * The decision lives here rather than only on the board because assessing in
+ * one place and deciding in another is most of why the assessment got skipped.
+ */
+async function qualifyIntoDeal() {
+  if (!confirm(`Qualify "${lead.value?.name}" and open it as a deal? The assessment goes with it.`)) return;
+
+  saving.value = true;
+  try {
+    const deal = (await api<{ data: { id: number } }>("POST", `${base.value}/convert`, {
+      org: org(), body: {},
+    })).data;
+    flash("Qualified — the deal is open.");
+    router.push({ name: "opportunity", params: { id: deal.id } });
+  } catch (e) { fail(e, "Could not qualify this lead."); }
+  finally { saving.value = false; }
+}
+
+/** Write it off. Stays on the board, in the column that says why. */
+async function writeOff() {
+  saving.value = true;
+  try {
+    lead.value = (await api<{ data: Lead }>("POST", `${base.value}/status`, {
+      org: org(), body: { status: "unqualified" },
+    })).data;
+    flash("Lead written off.");
+  } catch (e) { fail(e, "Could not update the lead."); }
+  finally { saving.value = false; }
+}
+
+// ── Correspondence ──────────────────────────────────────────────────────────
+//
+// Three lists under one tab: what we arranged, what arrived, and what pursuing
+// this is costing. They are separate requests because they are separate
+// records — and because a mailbox pull is slow and nobody should wait for it
+// to see a meeting.
+
+interface Attendee { name: string | null; address: string; side?: string }
+interface Meeting {
+  id: number; subject: string; scheduled_at: string | null; duration_minutes: number;
+  agenda: string | null; attendees: Attendee[]; join_url: string | null;
+  recording_url: string | null; has_transcript: boolean; status: string;
+  cancelled_at: string | null; created_by: string | null; is_past: boolean;
+}
+interface Email {
+  id: number; subject: string | null; from_name: string | null; from_email: string | null;
+  body_preview: string | null; body_html: string | null; has_attachments: boolean;
+  received_at: string | null; matched_address: string | null;
+}
+interface ResourceRequest {
+  id: number; reference: string | null; kind: string; kind_label: string;
+  purpose: string; location: string | null; needed_on: string | null; people: number | null;
+  estimated_cost: string | null; currency: string; notes: string | null; status: string;
+  decision_comment: string | null; decided_at: string | null; decided_by: string | null;
+  requested_by: string | null; created_at: string | null;
+}
+
+const thread = ref<Thread>("meetings");
+const threads: { key: Thread; label: string }[] = [
+  { key: "meetings", label: "Meetings" },
+  { key: "emails",   label: "Emails" },
+  { key: "requests", label: "Requests" },
+];
+
+const meetings   = ref<Meeting[]>([]);
+const emails     = ref<Email[]>([]);
+const requests   = ref<ResourceRequest[]>([]);
+const suggested  = ref<Attendee[]>([]);
+const correspondents = ref<string[]>([]);
+const kinds      = ref<{ value: string; label: string }[]>([]);
+const loaded     = ref<Record<Thread, boolean>>({ meetings: false, emails: false, requests: false });
+const busy       = ref(false);
+const openEmail  = ref<number | null>(null);
+
+// Each thread is fetched when first opened, not on mount: three requests for a
+// tab most readers never open is three requests wasted.
+watch(thread, (t) => { if (tab.value === "correspondence") void loadThread(t); });
+
+async function loadThread(which: Thread, force = false) {
+  if (loaded.value[which] && !force) return;
+  busy.value = true;
+  try {
+    if (which === "meetings") {
+      const res = await api<{ data: Meeting[]; suggested_attendees: Attendee[] }>(
+        "GET", `${base.value}/meetings`, { org: org() });
+      meetings.value = res.data;
+      suggested.value = res.suggested_attendees;
+    } else if (which === "emails") {
+      const res = await api<{ data: Email[]; correspondents: string[] }>(
+        "GET", `${base.value}/emails`, { org: org() });
+      emails.value = res.data;
+      correspondents.value = res.correspondents;
+    } else {
+      const res = await api<{ data: ResourceRequest[]; kinds: { value: string; label: string }[] }>(
+        "GET", `${base.value}/requests`, { org: org() });
+      requests.value = res.data;
+      kinds.value = res.kinds;
+    }
+    loaded.value[which] = true;
+  } catch (e) { fail(e, "Could not load correspondence."); }
+  finally { busy.value = false; }
+}
+
+// ── Meetings ────────────────────────────────────────────────────────────────
+
+const showMeeting = ref(false);
+const meetingForm = ref({ subject: "", scheduled_at: "", duration_minutes: 45, agenda: "" });
+
+/*
+ * The invitation list, built rather than merely ticked.
+ *
+ * The first cut offered only the people already recorded against the lead, so
+ * a lead with nobody named on it produced an empty list and a button that could
+ * never enable — a meeting scheduler you cannot schedule a meeting with. Three
+ * ways in now: the suggestions, any colleague by name, and anybody else by
+ * address, because the person you most want at a first call is often somebody
+ * nobody has filed yet.
+ */
+const invitees   = ref<Attendee[]>([]);
+const guestEmail = ref("");
+const guestName  = ref("");
+const colleague  = ref<number | null>(null);
+
+const invited = (address: string) =>
+  invitees.value.some((a) => a.address.toLowerCase() === address.toLowerCase());
+
+function invite(a: Attendee) {
+  if (!invited(a.address)) invitees.value.push(a);
+}
+
+function uninvite(address: string) {
+  invitees.value = invitees.value.filter((a) => a.address !== address);
+}
+
+function toggleInvite(a: Attendee) {
+  invited(a.address) ? uninvite(a.address) : invite(a);
+}
+
+/** A colleague picked by name. Their work address is what Teams needs. */
+function inviteColleague(m: { full_name: string; work_email: string | null } | null) {
+  colleague.value = null;
+  if (!m) return;
+
+  if (!m.work_email) {
+    notifyFailed(`${m.full_name} has no work email on file, so there is nowhere to send the invitation.`);
+    return;
+  }
+
+  invite({ name: m.full_name, address: m.work_email, side: "ours" });
+}
+
+function inviteGuest() {
+  const address = guestEmail.value.trim();
+  if (!address) return;
+
+  invite({ name: guestName.value.trim() || null, address, side: "theirs" });
+  guestEmail.value = "";
+  guestName.value = "";
+}
+
+function openMeetingForm() {
+  meetingForm.value = {
+    subject: lead.value ? `${lead.value.name} — introduction` : "",
+    scheduled_at: "", duration_minutes: 45, agenda: "",
+  };
+  // Everybody already named, pre-invited: the common case is "all of them",
+  // and removing one is less work than finding five addresses.
+  invitees.value = [...suggested.value];
+  guestEmail.value = "";
+  guestName.value = "";
+  colleague.value = null;
+  showMeeting.value = true;
+}
+
+async function scheduleMeeting() {
+  saving.value = true;
+  try {
+    const created = (await api<{ data: Meeting }>("POST", `${base.value}/meetings`, {
+      org: org(),
+      body: {
+        ...meetingForm.value,
+        attendees: invitees.value.map((a) => ({ name: a.name, address: a.address })),
+      },
+    })).data;
+    meetings.value = [created, ...meetings.value];
+    showMeeting.value = false;
+    flash("Teams meeting created — the invitation is out.");
+  } catch (e) { fail(e, "Could not schedule the meeting."); }
+  finally { saving.value = false; }
+}
+
+async function cancelMeeting(m: Meeting) {
+  if (!confirm(`Cancel "${m.subject}"? Everyone invited will be told.`)) return;
+  saving.value = true;
+  try {
+    const updated = (await api<{ data: Meeting }>("POST", `${base.value}/meetings/${m.id}/cancel`, { org: org() })).data;
+    meetings.value = meetings.value.map((x) => (x.id === updated.id ? updated : x));
+    flash("Meeting cancelled.");
+  } catch (e) { fail(e, "Could not cancel the meeting."); }
+  finally { saving.value = false; }
+}
+
+// ── Emails ──────────────────────────────────────────────────────────────────
+
+async function syncEmails() {
+  busy.value = true;
+  try {
+    const res = await api<{ message: string; data: Email[] }>(
+      "POST", `${base.value}/emails/sync`, { org: org() });
+    emails.value = res.data;
+    flash(res.message);
+  } catch (e) { fail(e, "Could not check the mailbox."); }
+  finally { busy.value = false; }
+}
+
+// ── Requests ────────────────────────────────────────────────────────────────
+
+const showRequest = ref(false);
+const requestForm = ref({
+  kind: "transport", purpose: "", location: "", needed_on: "",
+  people: null as number | null, estimated_cost: null as number | null, notes: "",
+});
+
+function openRequestForm() {
+  requestForm.value = {
+    kind: "transport", purpose: "", location: "", needed_on: "",
+    people: null, estimated_cost: null, notes: "",
+  };
+  showRequest.value = true;
+}
+
+async function submitRequest() {
+  saving.value = true;
+  try {
+    const created = (await api<{ data: ResourceRequest }>("POST", `${base.value}/requests`, {
+      org: org(),
+      body: {
+        ...requestForm.value,
+        location: requestForm.value.location || null,
+        needed_on: requestForm.value.needed_on || null,
+        notes: requestForm.value.notes || null,
+      },
+    })).data;
+    requests.value = [created, ...requests.value];
+    showRequest.value = false;
+    flash("Request raised.");
+  } catch (e) { fail(e, "Could not raise the request."); }
+  finally { saving.value = false; }
+}
+
+async function decideRequest(r: ResourceRequest, status: "approved" | "declined") {
+  // A refusal has to say why, so it is asked for rather than assumed.
+  const comment = status === "declined"
+    ? prompt(`Declining "${r.purpose}". Why?`)
+    : prompt(`Approving "${r.purpose}". Any note? (optional)`, "") ?? "";
+
+  if (status === "declined" && !comment) return;
+
+  saving.value = true;
+  try {
+    const updated = (await api<{ data: ResourceRequest }>("POST", `${base.value}/requests/${r.id}/decide`, {
+      org: org(), body: { status, decision_comment: comment || null },
+    })).data;
+    requests.value = requests.value.map((x) => (x.id === updated.id ? updated : x));
+    flash(status === "approved" ? "Approved." : "Declined.");
+  } catch (e) { fail(e, "Could not record the decision."); }
+  finally { saving.value = false; }
+}
+
+async function fulfilRequest(r: ResourceRequest) {
+  saving.value = true;
+  try {
+    const updated = (await api<{ data: ResourceRequest }>("POST", `${base.value}/requests/${r.id}/fulfil`, { org: org() })).data;
+    requests.value = requests.value.map((x) => (x.id === updated.id ? updated : x));
+    flash("Marked as provided.");
+  } catch (e) { fail(e, "Could not update the request."); }
+  finally { saving.value = false; }
+}
+
+async function withdrawRequest(r: ResourceRequest) {
+  if (!confirm(`Withdraw the request for ${r.kind_label.toLowerCase()}?`)) return;
+  saving.value = true;
+  try {
+    await api("DELETE", `${base.value}/requests/${r.id}`, { org: org() });
+    requests.value = requests.value.filter((x) => x.id !== r.id);
+    flash("Request withdrawn.");
+  } catch (e) { fail(e, "Could not withdraw the request."); }
+  finally { saving.value = false; }
+}
+
+/** 45000.00 is a number to decode; 45,000 is one to read. */
+const money = (v: string | null) =>
+  v === null ? null : Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+const REQUEST_PILL: Record<string, string> = {
+  pending: "pill-warn", approved: "pill-ok", declined: "pill-danger", fulfilled: "pill-info",
+};
 
 // ── Stakeholders ────────────────────────────────────────────────────────────
 
@@ -346,6 +662,15 @@ const date = (v: string | null) =>
 const titleCase = (v: string | null) =>
   v ? v.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()) : "—";
 
+const STATUS_BADGES: Record<string, string> = {
+  new: "badge-blue", contacted: "badge-indigo", qualified: "badge-green",
+  unqualified: "badge-gray", converted: "badge-teal",
+};
+const statusBadge = (status: string) => STATUS_BADGES[status] ?? "badge-gray";
+
+const PRIORITY_BADGES: Record<string, string> = { low: "badge-gray", medium: "badge-amber", high: "badge-red" };
+const priorityBadge = (priority: string) => PRIORITY_BADGES[priority] ?? "badge-gray";
+
 const initials = (name: string | null | undefined) =>
   (name ?? "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 
@@ -404,23 +729,34 @@ onMounted(load);
         <button class="btn-ghost" @click="editing = !editing">{{ editing ? "Cancel" : "Edit" }}</button>
       </header>
 
+      <!-- Where it got to. Naming the deal is pointless here — on a converted
+           lead the deal carries the lead's own title, so the old banner read
+           "this became itself". What is worth knowing is how far it has run. -->
       <div v-if="lead.opportunity" class="ld-banner">
         This lead became
         <button class="link-btn" @click="router.push({ name: 'opportunity', params: { id: lead.opportunity.id } })">
-          {{ lead.opportunity.reference }} — {{ lead.opportunity.name }}
+          {{ lead.opportunity.reference ?? "the deal" }}
         </button>
+        <span class="ld-dot">•</span>
+        <span>{{ lead.opportunity.qualified_at ? "qualified" : titleCase(lead.opportunity.status) }}</span>
+        <span class="ld-dot">•</span>
+        <span>strength {{ lead.opportunity.strength }}/100</span>
       </div>
 
+      <!-- One strip rather than two panels. Eight facts, six of them usually
+           blank, do not need half the screen each; wrapping them lets the page
+           get to the tabs. The calendar emoji that used to sit on Deadline
+           rendered as tofu in Google Sans — the label already says Deadline. -->
       <div class="ld-facts-row">
         <dl class="ld-facts">
-          <div><dt>Deadline</dt><dd>📅 {{ date(lead.deadline) }}</dd></div>
-          <div><dt>Status</dt><dd class="ld-status">{{ titleCase(lead.status) }}</dd></div>
+          <div><dt>Deadline</dt><dd>{{ date(lead.deadline) }}</dd></div>
+          <div><dt>Status</dt><dd><span class="badge" :class="statusBadge(lead.status)">{{ titleCase(lead.status) }}</span></dd></div>
           <div><dt>Priority</dt>
-            <dd><span :class="['ld-priority', `prio-${lead.priority}`]">⚑ {{ titleCase(lead.priority) }} priority</span></dd></div>
+            <dd><span class="badge" :class="priorityBadge(lead.priority)">⚑ {{ titleCase(lead.priority) }}</span></dd></div>
           <div><dt>Lead Team</dt>
             <dd>
               <button class="ld-stack-btn" @click="showTeam = true">
-                <span v-if="!lead.team?.length" class="ld-muted">Add</span>
+                <span v-if="!lead.team?.length" class="ld-add-inline">+ Add</span>
                 <span v-else class="ld-stack">
                   <span v-for="m in lead.team.slice(0, 4)" :key="m.id" class="ld-avatar"
                         :title="m.employee.name ?? ''">{{ initials(m.employee.name) }}</span>
@@ -458,13 +794,13 @@ onMounted(load);
       <!-- ── Overview ────────────────────────────────────────────────── -->
       <section v-if="tab === 'overview'" class="ld-panel">
         <template v-if="!editing">
-          <div class="ld-block">
+          <div class="ld-card ld-block">
             <h3 class="ld-block-title">Problem Statement</h3>
             <p v-if="lead.problem_statement" class="ld-prose">{{ lead.problem_statement }}</p>
             <p v-else class="ld-muted">Not written up yet.</p>
           </div>
 
-          <div class="ld-block">
+          <div class="ld-card ld-block">
             <h3 class="ld-block-title">Proposed Solution Scope</h3>
             <p v-if="lead.proposed_solution" class="ld-prose">{{ lead.proposed_solution }}</p>
             <p v-else class="ld-muted">Not written up yet.</p>
@@ -484,11 +820,13 @@ onMounted(load);
             <label class="ld-field ld-span"><span>One-line summary</span>
               <input v-model="form.summary" class="control" placeholder="Shown on the board card" /></label>
 
+            <!-- No "Qualified" here: qualifying opens a deal, which is an act
+                 with a consequence, not a value on a dropdown. It lives at the
+                 foot of the assessment where the reasoning is. -->
             <label class="ld-field"><span>Status</span>
               <select v-model="form.status" class="control">
                 <option value="new">New</option>
                 <option value="contacted">Contacted</option>
-                <option value="qualified">Qualified</option>
                 <option value="unqualified">Unqualified</option>
               </select></label>
 
@@ -630,51 +968,55 @@ onMounted(load);
         </div>
       </section>
 
-      <!-- ── Qualifications ──────────────────────────────────────────── -->
+      <!-- ── Qualifications ──────────────────────────────────────────────
+           Read first, answer in place. Five questions, each standing on its
+           own: answering one records it and leaves the rest alone. -->
       <section v-else-if="tab === 'qualifications'" class="ld-panel">
-        <div class="ld-panel-actions">
-          <button class="btn-ghost" @click="qualifying = !qualifying">
-            {{ qualifying ? "Cancel" : lead.qualification.score === null ? "Assess this lead" : "Update assessment" }}
-          </button>
-        </div>
+        <div class="ld-qual-grid">
+          <!-- Score. Present whether or not anything has been answered, so
+               the page does not reflow the moment the first one lands. -->
+          <div class="ld-card ld-qual-score">
+            <h3 class="ld-block-label">Qualification Score</h3>
 
-        <template v-if="!qualifying">
-          <div v-if="lead.qualification.score === null" class="ld-empty">
-            <h3 class="ld-empty-title">Not assessed yet</h3>
-            <p class="ld-empty-sub">
-              Grade the five dimensions to see how this lead compares with the rest
-              of the book. Nothing is assumed — an unassessed lead has no score,
-              rather than a score of zero.
-            </p>
-            <button class="btn-primary" @click="qualifying = true">Assess this lead</button>
-          </div>
+            <div class="ld-gauge-row">
+              <svg class="ld-gauge" viewBox="0 0 180 180" role="img"
+                   :aria-label="lead.qualification.score === null
+                     ? 'Not assessed yet'
+                     : `${lead.qualification.score} out of 100`">
+                <circle class="ld-gauge-track" cx="90" cy="90" :r="GAUGE.radius"
+                        :stroke-dasharray="`${GAUGE.circumference} ${GAUGE.circumference * 2}`" />
+                <circle v-if="lead.qualification.score !== null"
+                        :class="['ld-gauge-fill', `band-${lead.qualification.band}`]" cx="90" cy="90" :r="GAUGE.radius"
+                        :stroke-dasharray="`${GAUGE.circumference} ${GAUGE.circumference * 2}`"
+                        :stroke-dashoffset="gaugeOffset" />
+                <text x="90" y="84" class="ld-gauge-label">
+                  {{ BAND_LABELS[lead.qualification.band ?? ""] ?? "Unanswered" }}
+                </text>
+                <text x="90" y="118" class="ld-gauge-value">
+                  {{ lead.qualification.score === null ? "—" : `${lead.qualification.score}%` }}
+                </text>
+              </svg>
 
-          <div v-else class="ld-qual-grid">
-            <!-- Score -->
-            <div class="ld-card">
-              <h3 class="ld-block-label">Qualification Score</h3>
-              <div class="ld-gauge-row">
-                <svg class="ld-gauge" viewBox="0 0 180 180" role="img"
-                     :aria-label="`${lead.qualification.score} out of 100`">
-                  <circle class="ld-gauge-track" cx="90" cy="90" :r="GAUGE.radius"
-                          :stroke-dasharray="`${GAUGE.circumference} ${GAUGE.circumference * 2}`" />
-                  <circle :class="['ld-gauge-fill', `band-${lead.qualification.band}`]" cx="90" cy="90" :r="GAUGE.radius"
-                          :stroke-dasharray="`${GAUGE.circumference} ${GAUGE.circumference * 2}`"
-                          :stroke-dashoffset="gaugeOffset" />
-                  <text x="90" y="84" class="ld-gauge-label">
-                    {{ BAND_LABELS[lead.qualification.band ?? ""] ?? "" }}
-                  </text>
-                  <text x="90" y="118" class="ld-gauge-value">{{ lead.qualification.score }}%</text>
-                </svg>
+              <div class="ld-gauge-note">
+                <p class="ld-prose">
+                  Fit across company, budget, solution, timeline and stakeholder access.
+                </p>
 
-                <div class="ld-gauge-note">
-                  <p class="ld-prose">
-                    Fit across company, budget, solution, timeline and stakeholder access.
+                <template v-if="lead.qualification.score === null">
+                  <p class="ld-hint">
+                    Nothing answered yet. An unassessed lead has no score rather
+                    than a score of zero — answer whichever questions you can.
                   </p>
-                  <!-- Said out loud: 90 from one dimension and 90 from five are
-                       not the same claim. -->
+                </template>
+
+                <template v-else>
+                  <!-- Said out loud: one answer and five answers are not the
+                       same claim. -->
                   <p class="ld-hint">
                     Based on {{ lead.qualification.completeness }}% of the assessment.
+                  </p>
+                  <p v-if="lead.qualification.unanswered.length" class="ld-hint">
+                    Still open: {{ lead.qualification.unanswered.join(", ") }}.
                   </p>
                   <span v-if="lead.qualification.percentile !== null" class="pill pill-ok">
                     Top {{ Math.max(lead.qualification.percentile, 1) }}% of all leads
@@ -682,130 +1024,287 @@ onMounted(load);
                   <span v-else class="ld-hint">
                     Too few assessed leads to rank this one yet.
                   </span>
-                </div>
+                </template>
               </div>
             </div>
+          </div>
 
-            <!-- Summary -->
-            <div class="ld-card">
-              <h3 class="ld-block-label">Qualification Summary</h3>
-              <dl class="ld-mini">
-                <div><dt>Budget Availability</dt>
-                  <dd><span :class="['pill', lead.qualification.summary.budget_availability === 'available' ? 'pill-ok' : 'pill-warn']">
-                    {{ titleCase(lead.qualification.summary.budget_availability) }}</span></dd></div>
-                <div><dt>Stakeholder Engagement</dt>
-                  <dd><span :class="['pill', lead.qualification.summary.stakeholder_engagement === 'high' ? 'pill-ok' : 'pill-warn']">
-                    {{ titleCase(lead.qualification.summary.stakeholder_engagement) }}</span></dd></div>
-                <div><dt>Timeline</dt><dd>{{ lead.qualification.summary.timeline_estimate ?? "—" }}</dd></div>
-                <div><dt>Technical Readiness</dt>
-                  <dd><span class="pill pill-info">{{ titleCase(lead.qualification.summary.technical_readiness) }}</span></dd></div>
-                <div><dt>Decision Authority Access</dt>
-                  <dd><span :class="['pill', lead.qualification.summary.decision_authority_access === 'available' ? 'pill-ok' : 'pill-warn']">
-                    {{ titleCase(lead.qualification.summary.decision_authority_access) }}</span></dd></div>
-              </dl>
-            </div>
+          <!-- The five questions -->
+          <div class="ld-card ld-qual-assess">
+            <h3 class="ld-block-label">Assessment</h3>
 
-            <!-- Breakdown -->
-            <div class="ld-card">
-              <h3 class="ld-block-label">Qualification Breakdown</h3>
-              <ul class="ld-bars">
-                <li v-for="d in lead.qualification.dimensions" :key="d.key">
-                  <span class="ld-bar-label">{{ d.label }}</span>
-                  <span class="ld-bar-track">
-                    <span class="ld-bar-fill" :style="{ width: `${d.value ?? 0}%` }"></span>
+            <ul class="ld-questions">
+              <li v-for="d in lead.qualification.dimensions" :key="d.key" class="ld-question">
+                <button class="ld-question-head" :aria-expanded="answering === d.key"
+                        @click="answering = answering === d.key ? null : d.key">
+                  <span class="ld-question-text">
+                    <span class="ld-question-label">{{ d.label }}</span>
+                    <span class="ld-question-ask">{{ d.question }}</span>
                   </span>
-                  <span class="ld-bar-value">{{ d.value === null ? "—" : `${d.value}%` }}</span>
-                </li>
-              </ul>
-              <p v-if="lead.qualification.notes" class="ld-prose">{{ lead.qualification.notes }}</p>
-            </div>
 
-            <!-- Decision makers -->
-            <div class="ld-card">
-              <div class="ld-card-head">
-                <h3 class="ld-block-label">Key Decision Makers</h3>
+                  <span class="ld-question-state">
+                    <span v-if="d.answer" class="pill pill-info">{{ d.answer.label }}</span>
+                    <span v-else class="ld-unanswered">Not answered</span>
+                    <span class="ld-question-points">{{ d.value === null ? "—" : `${d.value}%` }}</span>
+                  </span>
+                </button>
+
+                <!-- The bar reads the answer at a glance once the row is shut. -->
+                <span class="ld-bar-track">
+                  <span class="ld-bar-fill" :style="{ width: `${d.value ?? 0}%` }"></span>
+                </span>
+
+                <div v-if="answering === d.key" class="ld-options">
+                  <button v-for="o in d.options" :key="o.value"
+                          :class="['ld-option', { chosen: d.answer?.value === o.value }]"
+                          :disabled="answeringKey === d.key"
+                          @click="answer(d, o)">
+                    <span class="ld-option-label">{{ o.label }}</span>
+                    <span class="ld-option-help">{{ o.help }}</span>
+                    <span class="ld-option-points">{{ o.points }}</span>
+                  </button>
+
+                  <p class="ld-hint ld-option-note">
+                    Choosing the answer already recorded takes it back — which is
+                    not the same as answering with the last option, since that one
+                    is itself a finding.
+                  </p>
+                </div>
+              </li>
+            </ul>
+
+            <label class="ld-field ld-notes"><span>Notes</span>
+              <textarea v-model="notes" class="control" rows="3"
+                        placeholder="What the answers above do not capture."
+                        @blur="saveNotes"></textarea></label>
+
+            <!-- The decision, on the screen that informed it. -->
+            <div class="ld-decide">
+              <p class="ld-hint">
+                <template v-if="lead.opportunity">
+                  Already qualified — this lead is now a deal.
+                </template>
+                <template v-else-if="lead.status === 'unqualified'">This lead was written off.</template>
+                <template v-else-if="lead.qualification.score === null">
+                  Qualifying opens this as a deal. You can do it without answering
+                  anything — but then the decision is the only record of why.
+                </template>
+                <template v-else>
+                  Assessed at {{ lead.qualification.score }}%. Qualifying opens this
+                  as a deal and takes the answers with it.
+                </template>
+              </p>
+
+              <div v-if="!lead.opportunity" class="ld-decide-actions">
+                <button class="btn-ghost" :disabled="saving || lead.status === 'unqualified'"
+                        @click="writeOff">Not worth pursuing</button>
+                <button class="btn-primary" :disabled="saving" @click="qualifyIntoDeal">
+                  Qualify — open as a deal
+                </button>
               </div>
-
-              <p v-if="!lead.stakeholders?.length" class="ld-muted">Nobody named yet.</p>
-
-              <table v-else class="ld-table flush">
-                <thead><tr><th>Name</th><th>Role</th><th>Actions</th></tr></thead>
-                <tbody>
-                  <tr v-for="s in lead.stakeholders" :key="s.id">
-                    <td>
-                      <span class="ld-person">
-                        <span class="ld-avatar">{{ initials(s.name) }}</span>{{ s.name }}
-                      </span>
-                    </td>
-                    <td>{{ s.role ?? "—" }}</td>
-                    <td>
-                      <button class="icon-btn icon-danger" aria-label="Remove"
-                              @click="removeStakeholder(s)">🗑</button>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <button class="btn-primary ld-add-stake" @click="showStakeholder = true">+ Add Stakeholder</button>
             </div>
           </div>
-        </template>
 
-        <!-- Assessment form -->
-        <div v-else class="ld-card">
-          <p class="ld-hint">
-            Grade each dimension from 0 to 100, or leave one blank if nobody has
-            looked at it — a blank is skipped rather than counted as zero.
-          </p>
+          <!-- Decision makers -->
+          <div class="ld-card ld-qual-people">
+            <div class="ld-card-head">
+              <h3 class="ld-block-label">Key Decision Makers</h3>
+              <button class="btn-ghost" @click="showStakeholder = true">+ Add</button>
+            </div>
 
-          <div class="ld-grid">
-            <label class="ld-field"><span>Company Fit</span>
-              <input v-model.number="quality.fit_company" class="control" type="number" min="0" max="100" /></label>
-            <label class="ld-field"><span>Budget Alignment</span>
-              <input v-model.number="quality.fit_budget" class="control" type="number" min="0" max="100" /></label>
-            <label class="ld-field"><span>Solution Match</span>
-              <input v-model.number="quality.fit_solution" class="control" type="number" min="0" max="100" /></label>
-            <label class="ld-field"><span>Timeline Fit</span>
-              <input v-model.number="quality.fit_timeline" class="control" type="number" min="0" max="100" /></label>
-            <label class="ld-field"><span>Stakeholder Access</span>
-              <input v-model.number="quality.fit_stakeholder" class="control" type="number" min="0" max="100" /></label>
-          </div>
+            <p v-if="!lead.stakeholders?.length" class="ld-muted">
+              Nobody named yet. Stakeholder Access above asks who we are talking
+              to; this is where you say who they are.
+            </p>
 
-          <h4 class="ld-block-label">Summary</h4>
-          <div class="ld-grid">
-            <label class="ld-field"><span>Budget availability</span>
-              <select v-model="quality.budget_availability" class="control">
-                <option value="">—</option><option value="available">Available</option>
-                <option value="limited">Limited</option><option value="none">None</option>
-              </select></label>
-            <label class="ld-field"><span>Stakeholder engagement</span>
-              <select v-model="quality.stakeholder_engagement" class="control">
-                <option value="">—</option><option value="high">High</option>
-                <option value="medium">Medium</option><option value="low">Low</option>
-              </select></label>
-            <label class="ld-field"><span>Timeline</span>
-              <input v-model="quality.timeline_estimate" class="control" placeholder="3–4 Months" /></label>
-            <label class="ld-field"><span>Technical readiness</span>
-              <select v-model="quality.technical_readiness" class="control">
-                <option value="">—</option><option value="high">High</option>
-                <option value="medium">Medium</option><option value="low">Low</option>
-              </select></label>
-            <label class="ld-field"><span>Decision authority access</span>
-              <select v-model="quality.decision_authority_access" class="control">
-                <option value="">—</option><option value="available">Available</option>
-                <option value="limited">Limited</option><option value="none">None</option>
-              </select></label>
-            <label class="ld-field ld-span"><span>Notes</span>
-              <textarea v-model="quality.qualification_notes" class="control" rows="3"></textarea></label>
-          </div>
-
-          <div class="ld-actions">
-            <button class="btn-primary" :disabled="saving" @click="saveQualification">
-              {{ saving ? "Saving…" : "Save assessment" }}
-            </button>
+            <table v-else class="ld-table flush">
+              <thead><tr><th>Name</th><th>Role</th><th>Actions</th></tr></thead>
+              <tbody>
+                <tr v-for="s in lead.stakeholders" :key="s.id">
+                  <td>
+                    <span class="ld-person">
+                      <span class="ld-avatar">{{ initials(s.name) }}</span>{{ s.name }}
+                    </span>
+                  </td>
+                  <td>{{ s.role ?? "—" }}</td>
+                  <td>
+                    <button class="icon-btn icon-danger" aria-label="Remove"
+                            @click="removeStakeholder(s)">🗑</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
+
+
+      <!-- ── Correspondence ──────────────────────────────────────────────
+           What we arranged, what arrived, and what pursuing this costs. -->
+      <section v-else-if="tab === 'correspondence'" class="ld-panel">
+        <nav class="ld-threads" role="tablist">
+          <button v-for="t in threads" :key="t.key" role="tab" :aria-selected="thread === t.key"
+                  :class="['ld-thread', { active: thread === t.key }]"
+                  @click="thread = t.key">{{ t.label }}</button>
+        </nav>
+
+        <!-- Meetings -->
+        <template v-if="thread === 'meetings'">
+          <div class="ld-panel-actions">
+            <button class="btn-primary" :disabled="busy" @click="openMeetingForm">+ Schedule a meeting</button>
+          </div>
+
+          <p v-if="busy && !loaded.meetings" class="ld-muted">Loading…</p>
+
+          <div v-else-if="!meetings.length" class="ld-empty">
+            <h3 class="ld-empty-title">No meetings yet</h3>
+            <p class="ld-empty-sub">
+              A Teams invitation goes out from the company calendar, to whoever
+              you pick from the people named on this lead.
+            </p>
+            <button class="btn-primary" @click="openMeetingForm">Schedule a meeting</button>
+          </div>
+
+          <ul v-else class="ld-corr-list">
+            <li v-for="m in meetings" :key="m.id" :class="['ld-corr', { spent: m.status === 'cancelled' }]">
+              <div class="ld-corr-main">
+                <h4 class="ld-corr-title">{{ m.subject }}</h4>
+                <p class="ld-corr-meta">
+                  {{ date(m.scheduled_at) }} · {{ m.duration_minutes }} min
+                  <template v-if="m.attendees.length">
+                    · {{ m.attendees.length }} invited
+                  </template>
+                  <template v-if="m.created_by"> · by {{ m.created_by }}</template>
+                </p>
+                <p v-if="m.agenda" class="ld-corr-body">{{ m.agenda }}</p>
+              </div>
+
+              <div class="ld-corr-side">
+                <span v-if="m.status === 'cancelled'" class="pill pill-danger">Cancelled</span>
+                <span v-else-if="m.is_past" class="pill pill-info">Held</span>
+                <span v-else class="pill pill-ok">Scheduled</span>
+
+                <a v-if="m.join_url && m.status !== 'cancelled'" :href="m.join_url"
+                   class="link-btn" target="_blank" rel="noopener">Join</a>
+                <a v-if="m.recording_url" :href="m.recording_url" class="link-btn"
+                   target="_blank" rel="noopener">Recording</a>
+                <button v-if="m.status !== 'cancelled' && !m.is_past" class="btn-ghost btn-sm"
+                        :disabled="saving" @click="cancelMeeting(m)">Cancel</button>
+              </div>
+            </li>
+          </ul>
+        </template>
+
+        <!-- Emails -->
+        <template v-else-if="thread === 'emails'">
+          <div class="ld-panel-actions">
+            <button class="btn-primary" :disabled="busy" @click="syncEmails">
+              {{ busy ? "Checking…" : "Check the mailbox" }}
+            </button>
+          </div>
+
+          <!-- Said out loud, because an empty list means one of two very
+               different things: nobody wrote, or nobody has been named. -->
+          <p class="ld-hint ld-corr-note">
+            <template v-if="correspondents.length">
+              Searching the company mailbox for mail involving
+              {{ correspondents.join(", ") }}.
+            </template>
+            <template v-else>
+              Nobody is named on this lead, so there is nothing to search for.
+              Add a decision maker under Qualifications, or contacts on the customer.
+            </template>
+          </p>
+
+          <p v-if="busy && !loaded.emails" class="ld-muted">Loading…</p>
+
+          <div v-else-if="!emails.length" class="ld-empty">
+            <h3 class="ld-empty-title">Nothing filed yet</h3>
+            <p class="ld-empty-sub">
+              Mail is not watched — it is pulled when you ask for it, so what is
+              here is what was here at the last check.
+            </p>
+          </div>
+
+          <ul v-else class="ld-corr-list">
+            <li v-for="e in emails" :key="e.id" class="ld-corr">
+              <div class="ld-corr-main">
+                <h4 class="ld-corr-title">{{ e.subject ?? "(no subject)" }}</h4>
+                <p class="ld-corr-meta">
+                  {{ e.from_name ?? e.from_email ?? "Unknown sender" }}
+                  <template v-if="e.received_at"> · {{ date(e.received_at) }}</template>
+                  <template v-if="e.has_attachments"> · has attachments</template>
+                </p>
+
+                <p v-if="openEmail !== e.id" class="ld-corr-body">{{ e.body_preview }}</p>
+                <div v-else class="ld-corr-body ld-email-body" v-html="e.body_html ?? e.body_preview ?? ''"></div>
+
+                <button class="link-btn ld-corr-more"
+                        @click="openEmail = openEmail === e.id ? null : e.id">
+                  {{ openEmail === e.id ? "Show less" : "Read it" }}
+                </button>
+              </div>
+
+              <div class="ld-corr-side">
+                <!-- Why this message is on this lead at all. -->
+                <span v-if="e.matched_address" class="ld-hint">via {{ e.matched_address }}</span>
+              </div>
+            </li>
+          </ul>
+        </template>
+
+        <!-- Requests -->
+        <template v-else>
+          <div class="ld-panel-actions">
+            <button class="btn-primary" :disabled="busy" @click="openRequestForm">+ Raise a request</button>
+          </div>
+
+          <p v-if="busy && !loaded.requests" class="ld-muted">Loading…</p>
+
+          <div v-else-if="!requests.length" class="ld-empty">
+            <h3 class="ld-empty-title">Nothing asked for yet</h3>
+            <p class="ld-empty-sub">
+              Transport, travel, lunch or a site survey — what pursuing this lead
+              costs before it is a deal. Someone else approves it, which is the
+              point: the money goes on something that may never close.
+            </p>
+            <button class="btn-primary" @click="openRequestForm">Raise a request</button>
+          </div>
+
+          <ul v-else class="ld-corr-list">
+            <li v-for="r in requests" :key="r.id" class="ld-corr">
+              <div class="ld-corr-main">
+                <h4 class="ld-corr-title">{{ r.kind_label }} — {{ r.purpose }}</h4>
+                <p class="ld-corr-meta">
+                  <span v-if="r.reference" class="ld-ref">{{ r.reference }}</span>
+                  <template v-if="r.needed_on"> · needed {{ date(r.needed_on) }}</template>
+                  <template v-if="r.location"> · {{ r.location }}</template>
+                  <template v-if="r.people"> · {{ r.people }} people</template>
+                  <template v-if="r.estimated_cost"> · {{ r.currency }} {{ money(r.estimated_cost) }}</template>
+                  <template v-if="r.requested_by"> · asked by {{ r.requested_by }}</template>
+                </p>
+                <p v-if="r.notes" class="ld-corr-body">{{ r.notes }}</p>
+                <p v-if="r.decision_comment" class="ld-corr-body ld-corr-decision">
+                  {{ r.decided_by ?? "Decided" }}: {{ r.decision_comment }}
+                </p>
+              </div>
+
+              <div class="ld-corr-side">
+                <span :class="['pill', REQUEST_PILL[r.status] ?? 'pill-info']">{{ titleCase(r.status) }}</span>
+
+                <template v-if="r.status === 'pending'">
+                  <button class="btn-ghost btn-sm" :disabled="saving" @click="decideRequest(r, 'declined')">Decline</button>
+                  <button class="btn-primary btn-sm" :disabled="saving" @click="decideRequest(r, 'approved')">Approve</button>
+                  <button class="link-btn" :disabled="saving" @click="withdrawRequest(r)">Withdraw</button>
+                </template>
+                <button v-else-if="r.status === 'approved'" class="btn-ghost btn-sm"
+                        :disabled="saving" @click="fulfilRequest(r)">Mark provided</button>
+              </div>
+            </li>
+          </ul>
+        </template>
+      </section>
+
 
       <!-- ── Documents ───────────────────────────────────────────────── -->
       <section v-else class="ld-panel">
@@ -843,6 +1342,135 @@ onMounted(load);
     </template>
 
     <!-- Add document -->
+    <!-- Schedule a meeting -->
+    <div v-if="showMeeting" class="ld-modal-backdrop" @click.self="showMeeting = false">
+      <div class="ld-modal ld-modal-lg ld-modal-picker" role="dialog" aria-modal="true" aria-label="Schedule a meeting">
+        <div class="ld-modal-head">
+          <h3 class="ld-modal-title">Schedule a meeting</h3>
+          <button class="ld-close" aria-label="Close" @click="showMeeting = false">×</button>
+        </div>
+
+        <label class="ld-field"><span>Subject</span>
+          <input v-model="meetingForm.subject" class="control" /></label>
+
+        <div class="ld-grid">
+          <label class="ld-field"><span>When</span>
+            <input v-model="meetingForm.scheduled_at" class="control" type="datetime-local" /></label>
+          <label class="ld-field"><span>Minutes</span>
+            <input v-model.number="meetingForm.duration_minutes" class="control" type="number" min="5" max="480" /></label>
+        </div>
+
+        <label class="ld-field"><span>Agenda</span>
+          <textarea v-model="meetingForm.agenda" class="control" rows="3"
+                    placeholder="What this call is for."></textarea></label>
+
+        <div class="ld-field">
+          <span>Who to invite</span>
+
+          <!-- Suggested: our side and theirs, both offered, because the first
+               version listed only the customer's people and a lead with none
+               could never book anything. -->
+          <ul v-if="suggested.length" class="ld-invitees ld-invitees-scroll">
+            <li v-for="a in suggested" :key="a.address">
+              <label class="ld-invitee">
+                <input type="checkbox" :checked="invited(a.address)" @change="toggleInvite(a)" />
+                <span class="ld-invitee-name">{{ a.name ?? a.address }}</span>
+                <span class="ld-invitee-side">{{ a.side === "ours" ? "ours" : "theirs" }}</span>
+                <span class="ld-invitee-address">{{ a.address }}</span>
+              </label>
+            </li>
+          </ul>
+
+          <div class="ld-add-row">
+            <EmployeePicker v-model="colleague" placeholder="Add a colleague by name…"
+                            @chosen="inviteColleague" />
+          </div>
+
+          <div class="ld-guest-row">
+            <input v-model="guestName" class="control" placeholder="Name (optional)" />
+            <input v-model="guestEmail" class="control" type="email" placeholder="anyone@else.com"
+                   @keydown.enter.prevent="inviteGuest" />
+            <button class="btn-ghost" :disabled="!guestEmail.trim()" @click="inviteGuest">Add</button>
+          </div>
+        </div>
+
+        <!-- What is actually going out, whichever way each person got here. -->
+        <div class="ld-field">
+          <span>Invitation goes to</span>
+          <p v-if="!invitees.length" class="ld-hint">
+            Nobody yet — tick somebody above, pick a colleague, or type an address.
+          </p>
+          <ul v-else class="ld-chips ld-chips-scroll">
+            <li v-for="a in invitees" :key="a.address" class="ld-chip">
+              {{ a.name ?? a.address }}
+              <button class="ld-chip-x" :aria-label="`Remove ${a.name ?? a.address}`"
+                      @click="uninvite(a.address)">×</button>
+            </li>
+          </ul>
+        </div>
+
+        <p class="ld-hint">
+          A Microsoft Teams meeting is created on the company calendar and the
+          join link goes out with the invitation.
+        </p>
+
+        <div class="ld-actions">
+          <button class="btn-primary"
+                  :disabled="saving || !meetingForm.subject || !meetingForm.scheduled_at || !invitees.length"
+                  @click="scheduleMeeting">
+            {{ saving ? "Creating the Teams meeting…" : "Create the Teams meeting" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Raise a request -->
+    <div v-if="showRequest" class="ld-modal-backdrop" @click.self="showRequest = false">
+      <div class="ld-modal ld-modal-lg" role="dialog" aria-modal="true" aria-label="Raise a request">
+        <div class="ld-modal-head">
+          <h3 class="ld-modal-title">Raise a request</h3>
+          <button class="ld-close" aria-label="Close" @click="showRequest = false">×</button>
+        </div>
+
+        <div class="ld-grid">
+          <label class="ld-field"><span>What is needed</span>
+            <select v-model="requestForm.kind" class="control">
+              <option v-for="k in kinds" :key="k.value" :value="k.value">{{ k.label }}</option>
+            </select></label>
+          <label class="ld-field"><span>When</span>
+            <input v-model="requestForm.needed_on" class="control" type="date" /></label>
+        </div>
+
+        <label class="ld-field ld-span"><span>What it is for</span>
+          <input v-model="requestForm.purpose" class="control"
+                 placeholder="Survey the Nakuru branch" /></label>
+
+        <div class="ld-grid">
+          <label class="ld-field"><span>Where</span>
+            <input v-model="requestForm.location" class="control" placeholder="Nakuru" /></label>
+          <label class="ld-field"><span>How many people</span>
+            <input v-model.number="requestForm.people" class="control" type="number" min="1" /></label>
+          <label class="ld-field"><span>Estimated cost (KES)</span>
+            <input v-model.number="requestForm.estimated_cost" class="control" type="number" min="0" /></label>
+        </div>
+
+        <label class="ld-field ld-span"><span>Anything else</span>
+          <textarea v-model="requestForm.notes" class="control" rows="3"></textarea></label>
+
+        <p class="ld-hint">
+          This goes to somebody else to approve — pre-sales money is spent on a
+          deal that may never close, which is why it is asked for rather than
+          claimed afterwards.
+        </p>
+
+        <div class="ld-actions">
+          <button class="btn-primary" :disabled="saving || !requestForm.purpose" @click="submitRequest">
+            {{ saving ? "Sending…" : "Raise it" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div v-if="showDoc" class="ld-modal-backdrop" @click.self="showDoc = false">
       <div class="ld-modal">
         <div class="ld-modal-head">
@@ -905,7 +1533,7 @@ onMounted(load);
 
     <!-- Lead team -->
     <div v-if="showTeam" class="ld-modal-backdrop" @click.self="showTeam = false">
-      <div class="ld-modal">
+      <div class="ld-modal ld-modal-picker">
         <div class="ld-modal-head">
           <h3 class="ld-modal-title">Lead Team</h3>
           <button class="ld-close" aria-label="Close" @click="showTeam = false">×</button>
@@ -918,7 +1546,7 @@ onMounted(load);
           <button class="btn-primary" :disabled="saving || !newMember.employee_id" @click="addMember">Add</button>
         </div>
 
-        <ul v-if="lead?.team?.length" class="ld-people">
+        <ul v-if="lead?.team?.length" class="ld-people ld-people-scroll">
           <li v-for="m in lead.team" :key="m.id">
             <span class="ld-person">
               <span class="ld-avatar">{{ initials(m.employee.name) }}</span>{{ m.employee.name }}
@@ -950,25 +1578,37 @@ onMounted(load);
 .ld-byline { @apply flex flex-wrap items-center; gap: var(--space-2); font-size: var(--text-sm-size); color: var(--color-text-muted); margin: var(--space-2) 0 0; }
 .ld-dot { color: var(--color-text-light); }
 
-.ld-banner {
+.ld-banner { @apply flex flex-wrap items-center; gap: var(--space-2);
   padding: var(--space-3) var(--space-4); border-radius: var(--radius-md);
   background: var(--color-success-subtle); color: var(--color-success-text);
   font-size: var(--text-sm-size); margin-bottom: var(--space-4);
 }
 
-.ld-facts-row { @apply grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3) var(--space-8); margin-bottom: var(--space-5); }
-@media (max-width: 48rem) { .ld-facts-row { grid-template-columns: 1fr; } }
-.ld-facts { margin: 0; }
-.ld-facts > div { @apply flex items-center; gap: var(--space-3); padding: var(--space-1) 0; min-height: 2rem; }
+/* One strip, two columns inside it. The chrome moved from each list to the
+   row around them: eight facts about one lead are one thing to read, and two
+   bordered panels made them look like two. */
+.ld-facts-row {
+  @apply grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0; margin-bottom: var(--space-5); overflow: hidden;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.ld-facts { margin: 0; padding: var(--space-4) var(--space-5); }
+.ld-facts + .ld-facts { border-left: 1px solid var(--color-border); }
+@media (max-width: 48rem) {
+  .ld-facts-row { grid-template-columns: 1fr; }
+  .ld-facts + .ld-facts { border-left: none; border-top: 1px solid var(--color-border); }
+}
+.ld-facts > div { @apply flex items-center; gap: var(--space-3); padding: var(--space-2) 0; min-height: 2rem; }
+.ld-facts > div + div { border-top: 1px solid var(--color-border); }
 .ld-facts dt { font-size: var(--text-sm-size); color: var(--color-text-muted); min-width: 7rem; }
 .ld-facts dd { font-size: var(--text-sm-size); color: var(--color-text); margin: 0; }
-.ld-status { border-left: 2px solid var(--color-text-light); padding-left: var(--space-2); }
-.ld-priority { font-size: var(--text-sm-size); }
-.prio-high   { color: var(--color-danger-text); font-weight: 500; }
-.prio-medium { color: var(--color-warning-text); }
-.prio-low    { color: var(--color-text-muted); }
 
-.ld-tabs { @apply flex flex-wrap gap-1 overflow-x-auto; border-bottom: 1px solid var(--color-border); }
+/* No overflow-x: the bar wraps, so it never scrolls sideways — and asking
+   for overflow on one axis computes the other to auto, which is what put a
+   vertical scrollbar beside five tabs that fit. */
+.ld-tabs { @apply flex flex-wrap gap-1; border-bottom: 1px solid var(--color-border); }
 .ld-tab {
   @apply cursor-pointer border-none bg-transparent;
   padding: var(--space-2) var(--space-3);
@@ -982,7 +1622,6 @@ onMounted(load);
 .ld-panel-actions { @apply flex justify-end; }
 
 .ld-block-title { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); margin: 0 0 var(--space-2); }
-.ld-block { margin-bottom: var(--space-2); }
 .ld-block-label {
   font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); margin: 0;
 }
@@ -990,6 +1629,8 @@ onMounted(load);
 .ld-strong { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); margin: 0; }
 .ld-link   { font-size: var(--text-sm-size); color: var(--color-brand-on-surface); margin: 0; }
 .ld-muted  { font-size: var(--text-sm-size); color: var(--color-text-light); margin: 0; }
+/* It sits inside a button; it should look like one thing you can press. */
+.ld-add-inline { font-size: var(--text-sm-size); color: var(--color-brand-on-surface); font-weight: 500; }
 .ld-hint   { font-size: var(--text-xs-size); color: var(--color-text-light); margin: 0; }
 .ld-req    { font-style: normal; color: var(--color-danger-text); }
 .ld-nowrap { white-space: nowrap; }
@@ -1024,8 +1665,24 @@ onMounted(load);
 @media (max-width: 56rem) { .ld-contact-grid { grid-template-columns: 1fr; } }
 
 /* ── Qualification ─────────────────────────────────────────────────────── */
-.ld-qual-grid { @apply grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
-@media (max-width: 56rem) { .ld-qual-grid { grid-template-columns: 1fr; } }
+/* Score and decision-makers stack down the narrow column; the questions —
+   the thing you came to answer — take the wide one beside them for their
+   whole height, so opening a question never pushes another card around. */
+.ld-qual-grid {
+  @apply grid; gap: var(--space-4); align-items: start;
+  grid-template-columns: minmax(0, 22rem) minmax(0, 1fr);
+}
+.ld-qual-score  { grid-column: 1; grid-row: 1; }
+.ld-qual-people { grid-column: 1; grid-row: 2; }
+.ld-qual-assess { grid-column: 2; grid-row: 1 / span 2; }
+/* One column: the explicit placement above has to be released too, or the
+   cards keep trying for a column 2 that no longer exists. */
+@media (max-width: 56rem) {
+  .ld-qual-grid { grid-template-columns: 1fr; }
+  .ld-qual-score, .ld-qual-people, .ld-qual-assess { grid-column: auto; grid-row: auto; }
+  /* Answer first; the score is a consequence of the answers. */
+  .ld-qual-assess { order: -1; }
+}
 
 .ld-gauge-row { @apply flex flex-wrap items-center; gap: var(--space-4); }
 .ld-gauge { width: 11rem; height: 11rem; transform: rotate(135deg); flex-shrink: 0; }
@@ -1043,14 +1700,74 @@ onMounted(load);
 .ld-gauge-value { font-size: 30px; font-weight: 700; }
 .ld-gauge-note { @apply flex flex-col; gap: var(--space-2); flex: 1; min-width: 12rem; align-items: flex-start; }
 
-.ld-bars { @apply list-none; margin: 0; padding: 0; }
-.ld-bars li { @apply flex items-center; gap: var(--space-3); padding: var(--space-2) 0; }
-.ld-bar-label { font-size: var(--text-sm-size); color: var(--color-text-muted); width: 9rem; flex-shrink: 0; }
 .ld-bar-track { @apply block; flex: 1; height: 8px; border-radius: 999px; background: var(--color-surface-sunken); overflow: hidden; }
-.ld-bar-fill  { @apply block; height: 100%; border-radius: 999px; background: var(--color-brand-base); }
-.ld-bar-value { font-size: var(--text-xs-size); color: var(--color-brand-on-surface); width: 3rem; text-align: right; font-variant-numeric: tabular-nums; }
+.ld-bar-fill  { @apply block; height: 100%; border-radius: 999px; background: var(--color-brand-base); transition: width 240ms ease; }
 
-.ld-add-stake { align-self: flex-start; }
+/* ── The five questions ───────────────────────────────────────────────────
+   A row per question, readable shut and answerable open. The bar under each
+   row is what makes the list scannable once every question is answered and
+   the pills all read differently. */
+.ld-questions { @apply list-none flex flex-col; margin: 0; padding: 0; }
+.ld-question  { @apply flex flex-col; gap: var(--space-2); padding: var(--space-3) 0; }
+.ld-question + .ld-question { border-top: 1px solid var(--color-border); }
+
+.ld-question-head {
+  @apply flex items-start justify-between w-full text-left cursor-pointer border-none;
+  gap: var(--space-3); padding: 0; background: none;
+}
+.ld-question-text  { @apply flex flex-col; gap: 2px; min-width: 0; }
+.ld-question-label { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); }
+.ld-question-ask   { font-size: var(--text-xs-size); color: var(--color-text-light); }
+
+.ld-question-state { @apply flex items-center; gap: var(--space-2); flex-shrink: 0; }
+.ld-question-points {
+  font-size: var(--text-xs-size); font-family: var(--font-family-mono);
+  color: var(--color-text-muted); width: 2.75rem; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Dashed, because an unanswered question is an outline of one. */
+.ld-unanswered {
+  font-size: var(--text-xs-size); color: var(--color-text-light);
+  padding: 2px var(--space-2); border-radius: var(--radius-full);
+  border: 1px dashed var(--color-border-strong);
+}
+/* The list is a column, so the shared bar rule's flex:1 would stretch it. */
+.ld-question .ld-bar-track { flex: none; }
+
+.ld-options {
+  @apply grid; gap: var(--space-2); margin-top: var(--space-1);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+.ld-option {
+  @apply flex flex-col cursor-pointer text-left; gap: 2px;
+  padding: var(--space-3); border-radius: var(--radius-md);
+  border: 1px solid var(--color-border); background: var(--color-surface-raised);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.ld-option:hover:not(:disabled) { background: var(--color-neutral-100); }
+.ld-option:disabled { @apply cursor-wait opacity-60; }
+.ld-option.chosen {
+  border-color: var(--color-brand-base); background: var(--color-brand-light);
+}
+.ld-option-label  { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); }
+.ld-option-help   { font-size: var(--text-xs-size); color: var(--color-text-muted); line-height: 1.5; }
+.ld-option-points {
+  font-size: var(--text-xs-size); font-family: var(--font-family-mono);
+  color: var(--color-text-light); margin-top: var(--space-1);
+}
+.ld-option.chosen .ld-option-points { color: var(--color-brand-on-surface); }
+.ld-option-note { grid-column: 1 / -1; }
+
+.ld-notes { margin-top: var(--space-4); }
+
+/* The decision, on the screen that informed it. */
+.ld-decide {
+  @apply flex flex-wrap items-center justify-between;
+  gap: var(--space-3); margin-top: var(--space-4);
+  padding-top: var(--space-4); border-top: 1px solid var(--color-border);
+}
+.ld-decide-actions { @apply flex; gap: var(--space-2); }
+
 
 /* ── Documents ─────────────────────────────────────────────────────────── */
 .ld-file { @apply inline-flex items-center; gap: var(--space-3); }
@@ -1142,6 +1859,7 @@ onMounted(load);
 .pill-ok      { background: var(--color-success-subtle); color: var(--color-success-text); border-color: color-mix(in oklab, var(--color-success-text) 30%, transparent); }
 .pill-warn    { background: var(--color-warning-subtle); color: var(--color-warning-text); border-color: color-mix(in oklab, var(--color-warning-text) 30%, transparent); }
 .pill-info    { background: var(--color-brand-subtle);   color: var(--color-brand-on-surface); border-color: color-mix(in oklab, var(--color-brand-base) 30%, transparent); }
+.pill-danger  { background: var(--color-danger-subtle);  color: var(--color-danger-text); border-color: color-mix(in oklab, var(--color-danger-text) 30%, transparent); }
 
 .icon-btn { @apply cursor-pointer border-none bg-transparent p-0; font-size: var(--text-sm-size); color: var(--color-text-muted); }
 .icon-danger:hover { color: var(--color-danger-text); }
@@ -1169,5 +1887,95 @@ onMounted(load);
 .btn-ghost   { background: var(--color-surface); color: var(--color-text); border: 1px solid var(--color-border-strong); }
 .btn-block   { width: 100%; }
 .btn-primary:disabled, .btn-ghost:disabled { @apply cursor-not-allowed opacity-50; }
+
+/* ── Correspondence ───────────────────────────────────────────────────────
+   Three lists under one tab. They share a row shape — what it is on the left,
+   what you can do about it on the right — because they are read the same way
+   even though they are three different kinds of record. */
+.ld-threads { @apply flex flex-wrap; gap: var(--space-1); margin-bottom: var(--space-4); }
+.ld-thread {
+  @apply cursor-pointer border-none; padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full); background: transparent;
+  font-family: inherit; font-size: var(--text-sm-size); color: var(--color-text-muted);
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.ld-thread:hover { background: var(--color-neutral-200); }
+.ld-thread.active { background: var(--color-brand-base); color: var(--color-on-brand); }
+
+.ld-corr-note { margin-bottom: var(--space-3); }
+
+.ld-corr-list { @apply list-none flex flex-col; margin: 0; padding: 0; gap: var(--space-2); }
+.ld-corr {
+  @apply flex flex-wrap items-start justify-between;
+  gap: var(--space-3); padding: var(--space-4);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+}
+/* Cancelled, declined — still on the record, visibly spent. */
+.ld-corr.spent { opacity: 0.62; }
+
+.ld-corr-main  { @apply flex flex-col; gap: var(--space-1); flex: 1; min-width: 16rem; }
+.ld-corr-title { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); margin: 0; }
+.ld-corr-meta  { font-size: var(--text-xs-size); color: var(--color-text-light); margin: 0; }
+.ld-corr-body  { font-size: var(--text-sm-size); color: var(--color-text-muted); margin: 0; line-height: 1.6; white-space: pre-wrap; }
+.ld-corr-decision { padding-left: var(--space-3); border-left: 2px solid var(--color-border-strong); }
+.ld-corr-more  { align-self: flex-start; }
+.ld-corr-side  { @apply flex flex-wrap items-center; gap: var(--space-2); flex-shrink: 0; }
+
+.ld-ref { font-family: var(--font-family-mono); }
+
+/* Mail is somebody else's HTML: it must not push the page sideways or bring
+   its own typography in. */
+.ld-email-body { max-width: 100%; overflow-x: auto; }
+.ld-email-body :deep(img) { max-width: 100%; height: auto; }
+.ld-email-body :deep(table) { max-width: 100%; }
+.ld-email-body :deep(*) { font-size: var(--text-sm-size) !important; font-family: inherit !important; }
+
+.ld-invitees { @apply list-none flex flex-col; margin: 0; padding: 0; gap: var(--space-1); }
+.ld-invitee {
+  @apply flex items-center cursor-pointer; gap: var(--space-2);
+  padding: var(--space-2); border-radius: var(--radius-md);
+}
+.ld-invitee:hover { background: var(--color-neutral-100); }
+.ld-invitee-name    { font-size: var(--text-sm-size); color: var(--color-text); }
+.ld-invitee-address { font-size: var(--text-xs-size); color: var(--color-text-light); }
+/* Which side of the table they sit on — an invitation that quietly includes
+   the customer when you meant an internal huddle is worth one word to avoid. */
+.ld-invitee-side {
+  font-size: var(--text-xs-size); color: var(--color-text-light);
+  padding: 1px var(--space-2); border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-strong);
+}
+
+.ld-guest-row { @apply grid; gap: var(--space-2); grid-template-columns: 1fr 1.4fr auto; margin-top: var(--space-2); }
+@media (max-width: 32rem) { .ld-guest-row { grid-template-columns: 1fr; } }
+
+.ld-chips { @apply list-none flex flex-wrap; margin: 0; padding: 0; gap: var(--space-2); }
+.ld-chip {
+  @apply inline-flex items-center; gap: var(--space-1);
+  padding: 2px var(--space-2); border-radius: var(--radius-full);
+  background: var(--color-brand-light); color: var(--color-brand-on-surface);
+  font-size: var(--text-xs-size);
+}
+.ld-chip-x { @apply cursor-pointer border-none bg-transparent p-0; color: inherit; font-size: var(--text-sm-size); line-height: 1; }
+
+/* The stakeholder and document dialogs are "are you sure" width; a meeting
+   with an attendee list and a request with six fields are not. */
+.ld-modal-lg { max-width: 38rem; }
+
+/* A dialog holding a typeahead must not clip it.
+   `.ld-modal` scrolls itself, and a scrolling box crops the absolutely
+   positioned dropdown inside it — which left the picker showing one result and
+   a scrollbar. The dialog spills instead, and the list below it takes the
+   scroll, so nothing here ever needs the modal to. */
+.ld-modal-picker { overflow: visible; }
+.ld-people-scroll { max-height: 40vh; overflow-y: auto; }
+/* The same bargain in the meeting dialog: it spills so the typeahead is not
+   cropped, and its two growable lists take the scroll instead, so the dialog
+   itself never needs to. */
+.ld-invitees-scroll { max-height: 22vh; overflow-y: auto; }
+.ld-chips-scroll    { max-height: 14vh; overflow-y: auto; }
+
+.btn-sm { padding: 4px var(--space-3); font-size: var(--text-xs-size); }
 
 </style>

@@ -7,6 +7,7 @@
  * Only ever one of the two holds a session; switching clears the other.
  */
 import { computed, reactive, readonly } from "vue";
+import { setPermissions, clearPermissions, fetchPermissions } from "./permissions";
 import type { AuthUser, Organization } from "../lib/types";
 
 const STORAGE_KEY = "hrms_laravel_auth";
@@ -87,10 +88,24 @@ export function getToken(): string | null {
   return state.token;
 }
 
-export function setAuth(user: AuthUser, organizations: Organization[], token: string): void {
+export function setAuth(
+  user: AuthUser,
+  organizations: Organization[],
+  token: string,
+  permissions?: string[],
+): void {
   state.user = user;
   state.organizations = organizations;
   state.currentOrg = organizations[0] ?? null;
+
+  // Login already computed the caller's rights for this org; seed the
+  // permissions store so first paint asks nothing. A restored session (no
+  // list here) fetches on the first guarded navigation instead.
+  if (permissions) {
+    setPermissions(permissions);
+  } else {
+    clearPermissions();
+  }
   state.token = token;
   persist();
 }
@@ -98,6 +113,9 @@ export function setAuth(user: AuthUser, organizations: Organization[], token: st
 export function setOrg(org: Organization): void {
   state.currentOrg = org;
   persist();
+
+  // Rights differ per organisation; the old list describes the old one.
+  void fetchPermissions(true);
 }
 
 /**
@@ -120,6 +138,7 @@ export function updateOrgBranding(
 export function clearAuth(): void {
   state.user = null;
   state.organizations = [];
+  clearPermissions();
   state.currentOrg = null;
   state.token = null;
   // Clear both: sign-out must not leave a remembered session behind.

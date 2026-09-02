@@ -16,7 +16,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class IntegrationConnection extends Model
 {
-    use BelongsToOrganization, HasFactory, SoftDeletes;
+    use BelongsToOrganization, HasFactory, SoftDeletes, \App\Models\Concerns\RecordsAuditTrail;
 
     public const PROVIDER_MICROSOFT = 'microsoft';
 

@@ -50,7 +50,10 @@ return [
     |
     */
 
-    'expiration' => null,
+    // Tokens expire so a leaked one ages out on its own rather than granting
+    // access forever. 12 hours by default; override with SANCTUM_TOKEN_EXPIRATION
+    // (minutes). The frontend already re-authenticates on a 401.
+    'expiration' => (int) env('SANCTUM_TOKEN_EXPIRATION', 720),
 
     /*
     |--------------------------------------------------------------------------

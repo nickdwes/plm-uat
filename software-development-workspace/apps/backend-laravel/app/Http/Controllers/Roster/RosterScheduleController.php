@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Roster;
 
+use App\Support\Authorization\Permission;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Roster\AssignShiftRequest;
 use App\Http\Requests\Roster\BulkAssignShiftRequest;
@@ -27,7 +28,7 @@ class RosterScheduleController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_VIEW),
             403
         );
 
@@ -46,7 +47,7 @@ class RosterScheduleController extends Controller
     public function store(StoreRosterScheduleRequest $request): JsonResponse
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -65,7 +66,7 @@ class RosterScheduleController extends Controller
     public function show(Request $request, RosterSchedule $schedule): RosterScheduleResource
     {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_VIEW),
             403
         );
 
@@ -80,7 +81,7 @@ class RosterScheduleController extends Controller
     public function update(StoreRosterScheduleRequest $request, RosterSchedule $schedule): RosterScheduleResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -97,7 +98,7 @@ class RosterScheduleController extends Controller
     public function publish(Request $request, RosterSchedule $schedule): RosterScheduleResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -114,7 +115,7 @@ class RosterScheduleController extends Controller
     public function destroy(Request $request, RosterSchedule $schedule): JsonResponse
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -139,7 +140,7 @@ class RosterScheduleController extends Controller
         $filters = $request->only(['date']);
 
         // Non-managers are scoped to their own employee record.
-        if (! $request->user()->isManagerIn($orgId)) {
+        if (! $request->user()->hasPermission(Permission::ROSTER_VIEW)) {
             $employee = $request->user()->employee;
             abort_if(! $employee, 403, 'No employee record linked to this account.');
             $filters['employee_id'] = $employee->id;
@@ -158,7 +159,7 @@ class RosterScheduleController extends Controller
     public function assign(AssignShiftRequest $request, RosterSchedule $schedule): JsonResponse
     {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_MANAGE),
             403
         );
 
@@ -175,7 +176,7 @@ class RosterScheduleController extends Controller
     public function bulkAssign(BulkAssignShiftRequest $request, RosterSchedule $schedule): JsonResponse
     {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_MANAGE),
             403
         );
 
@@ -199,7 +200,7 @@ class RosterScheduleController extends Controller
         RosterAssignment $assignment
     ): JsonResponse {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_MANAGE),
             403
         );
 

@@ -19,6 +19,22 @@ const showShell = computed(() =>
   && route.name !== "login"
   && !String(route.name ?? "").startsWith("portal-"));
 
+/**
+ * Switching organisation reloads whatever is on screen.
+ *
+ * Every screen fetches its data once, on mount, for the organisation that was
+ * in context at the time. Changing the selector used to update the store and
+ * nothing else, so the page carried on showing the previous tenant's records —
+ * or, more often, an empty board, because the new tenant has none of them and
+ * nothing had gone back to ask.
+ *
+ * Keying the view on the organisation remounts it, which re-runs exactly the
+ * load every screen already does. A full `location.reload()` would work too and
+ * costs a white flash, a bundle re-parse and the sign-in state being read back
+ * off disk — for the same result.
+ */
+const orgKey = computed(() => authStore.currentOrg?.slug ?? "no-org");
+
 // ── Per-org theme ────────────────────────────────────────────────────────────
 
 /*
@@ -87,7 +103,7 @@ watchEffect(() => applyOrgTheme(authStore.currentOrg?.primary_color, resolvedThe
     <div v-if="showShell" class="app-main">
       <AppHeader />
       <div class="app-content">
-        <router-view />
+        <router-view :key="orgKey" />
       </div>
     </div>
     <router-view v-else />

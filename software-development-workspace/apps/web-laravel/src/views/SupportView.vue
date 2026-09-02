@@ -13,8 +13,11 @@
  * write it.
  */
 import { computed, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, getToken } from "../stores/auth";
+
+const router = useRouter();
 import { excerpt, splitQuoted } from "../lib/richText";
 
 const org = () => currentOrgSlug.value;
@@ -84,14 +87,23 @@ const taxonomy = ref<{
 const rows      = ref<TicketRow[]>([]);
 const listBusy  = ref(false);
 const listError = ref("");
+const listPage    = ref(1);
+const listLastPage = ref(1);
+const listTotal   = ref(0);
 const query     = ref("");
 const stateFilter = ref("");
+const statusFilter = ref("");
+const priorityFilter = ref("");
 const teamFilter  = ref("");
 const unassignedOnly = ref(false);
+const assignedToMeOnly = ref(false);
+const noFirstResponseOnly = ref(false);
+const slaBreachedOnly = ref(false);
+const openedFrom = ref("");
+const openedTo   = ref("");
 const showAll   = ref(false);
 
 const open      = ref<TicketDetail | null>(null);
-const openBusy  = ref(false);
 const openError = ref("");
 const minutesLogged = ref(0);
 const slaUsed  = ref(0);
@@ -110,41 +122,50 @@ async function loadTaxonomy(): Promise<void> {
   } catch { /* the list still renders; pickers simply stay empty */ }
 }
 
-async function loadList(): Promise<void> {
+async function loadList(toPage = 1): Promise<void> {
   listBusy.value = true; listError.value = "";
+  listPage.value = toPage;
   try {
     const params = new URLSearchParams();
+    params.set("page", String(toPage));
+    params.set("per_page", "40");
     if (query.value.trim()) params.set("q", query.value.trim());
     if (stateFilter.value) params.set("state", stateFilter.value);
+    if (statusFilter.value) params.set("status", statusFilter.value);
+    if (priorityFilter.value) params.set("priority", priorityFilter.value);
     if (showAll.value) params.set("all", "1");
     if (teamFilter.value) params.set("team", teamFilter.value);
     if (unassignedOnly.value) params.set("unassigned", "1");
+    if (assignedToMeOnly.value) params.set("mine", "1");
+    if (noFirstResponseOnly.value) params.set("no_first_response", "1");
+    if (slaBreachedOnly.value) params.set("sla_breached", "1");
+    if (openedFrom.value) params.set("opened_from", openedFrom.value);
+    if (openedTo.value) params.set("opened_to", openedTo.value);
 
-    const res = await api<{ data: TicketRow[] }>(
+    const res = await api<{ data: TicketRow[]; current_page: number; last_page: number; total: number }>(
       "GET", `/api/v1/support/tickets?${params.toString()}`, { org: org() },
     );
     rows.value = res.data;
+    listLastPage.value = res.last_page ?? 1;
+    listTotal.value = res.total ?? res.data.length;
   } catch (e) {
     listError.value = e instanceof Error ? e.message : "Could not load the queue.";
   } finally { listBusy.value = false; }
 }
 
+/*
+ * A ticket now opens on its own page (see TicketDetailView.vue) rather than
+ * in this dialog — a thread and sixteen sidebar controls need real width,
+ * which a modal over the queue could never give them. Every row/list-item
+ * click across the queue and desk board already calls this one function, so
+ * redirecting it here is what moves all of them at once without touching
+ * six separate templates. The state and functions below that only existed
+ * to feed the old dialog (open, reply, escalation, split, merge, and the
+ * dialog's own template further down) are unreachable now but left in place
+ * rather than excised from a file this size in the same pass.
+ */
 async function openTicket(row: TicketRow): Promise<void> {
-  openBusy.value = true; openError.value = ""; reply.value = { body: "", visibility: "public" };
-  try {
-    const res = await api<{
-      data: TicketDetail; minutes_logged: number;
-      sla_minutes_used: number; elapsed_minutes: number;
-    }>("GET", `/api/v1/support/tickets/${row.id}`, { org: org() });
-    open.value = res.data;
-    minutesLogged.value = res.minutes_logged;
-    void loadSuggestions();
-    void loadSuggested();
-    slaUsed.value = res.sla_minutes_used;
-    elapsed.value = res.elapsed_minutes;
-  } catch (e) {
-    openError.value = e instanceof Error ? e.message : "Could not open the ticket.";
-  } finally { openBusy.value = false; }
+  router.push({ name: "ticket-detail", params: { id: row.id } });
 }
 
 async function refreshOpen(): Promise<void> {
@@ -231,17 +252,6 @@ const showAssign  = ref(false);
 const assignReason = ref("");
 const assignTo    = ref<number | null>(null);
 
-async function loadSuggestions(): Promise<void> {
-  if (!open.value) return;
-  suggestBusy.value = true;
-  try {
-    const res = await api<{ suggestions: Suggestion[] }>(
-      "GET", `/api/v1/support/tickets/${open.value.id}/suggest`, { org: org() },
-    );
-    suggestions.value = res.suggestions;
-  } catch { suggestions.value = []; }
-  finally { suggestBusy.value = false; }
-}
 
 async function assignTicket(): Promise<void> {
   if (!open.value || !assignReason.value.trim()) return;
@@ -332,8 +342,14 @@ async function resolveEscalation(id: number): Promise<void> {
 const desk = ref<{
   unassigned: TicketRow[]; at_risk: TicketRow[]; waiting: TicketRow[]; mine: TicketRow[];
   open_escalations: any[];
+  counts: { open: number; in_progress: number; closed: number; sla_violations: number };
+  by_type: { type: string; tickets_count: number }[];
+  active_tickets: TicketRow[];
+  top_assignees: { user_id: number; name: string; tickets_count: number }[];
 } | null>(null);
 const deskBusy = ref(false);
+// The open+pending total, for scaling the category breakdown bars.
+const openTotal = computed(() => (desk.value?.by_type ?? []).reduce((s, c) => s + c.tickets_count, 0));
 
 async function loadDesk(): Promise<void> {
   deskBusy.value = true;
@@ -1091,15 +1107,6 @@ const suggested = ref<any[]>([]);
 const assetQuery = ref("");
 const assetHits  = ref<any[]>([]);
 
-async function loadSuggested(): Promise<void> {
-  if (!open.value) return;
-  try {
-    const res = await api<{ data: any[] }>(
-      "GET", `/api/v1/support/tickets/${open.value.id}/suggested-articles`, { org: org() },
-    );
-    suggested.value = res.data;
-  } catch { suggested.value = []; }
-}
 
 /** Drop an article's text into the reply box rather than retyping it. */
 async function useArticle(id: number): Promise<void> {
@@ -1745,6 +1752,32 @@ function when(v: string | null): string {
   return v ? v.slice(0, 16).replace("T", " ") : "—";
 }
 
+/**
+ * How long a ticket has been open, in hours. Measured against now rather
+ * than a close timestamp — the queue's TicketRow doesn't carry closed_at,
+ * and "age since opened" is still the honest answer for anything still
+ * sitting in this list.
+ */
+function hoursOpen(openedAt: string | null): string {
+  if (!openedAt) return "—";
+  const hours = (Date.now() - new Date(openedAt).getTime()) / 3600000;
+  if (hours < 1) return `${Math.max(0, Math.round(hours * 60))}m`;
+  if (hours < 48) return `${Math.round(hours)}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+// A stable colour per ticket category, so the same kind reads the same way in
+// the breakdown widget and the active-ticket table. Types carry no colour of
+// their own, so it is assigned by name here.
+const TYPE_COLORS: Record<string, string> = {
+  "Incident": "#dc2626", "Service Request": "#2563eb", "Problem": "#c2410c",
+  "Change Request": "#7c3aed", "Feature Request": "#0891b2", "Network Request": "#0d9488",
+  "Unclassified": "#64748b",
+};
+function typeColor(name: string | null | undefined): string {
+  return (name && TYPE_COLORS[name]) || "#64748b";
+}
+
 function init(): void {
   void loadTaxonomy();
   void loadList();
@@ -1757,11 +1790,20 @@ function init(): void {
   // Categories are needed by the queue filters and the new-ticket form, not
   // only by the contracts tab.
   void loadContracts();
+  // Same reasoning as held mail: an SLA breach nobody has seen because
+  // nobody happened to open the desk tab is the risk this counts against.
+  void loadDesk();
 }
 
 onMounted(init);
 watch(currentOrgSlug, init);
-watch([stateFilter, showAll, teamFilter, unassignedOnly], loadList);
+watch([
+  stateFilter, statusFilter, priorityFilter, showAll, teamFilter, unassignedOnly,
+  assignedToMeOnly, noFirstResponseOnly, slaBreachedOnly, openedFrom, openedTo,
+], () => loadList());
+// Mutually exclusive by definition — nobody's tickets are also nobody's.
+watch(unassignedOnly, (v) => { if (v) assignedToMeOnly.value = false; });
+watch(assignedToMeOnly, (v) => { if (v) unassignedOnly.value = false; });
 // ── The service review ─────────────────────────────────────────────────────────
 /*
  * The month, in numbers somebody has to defend in a meeting.
@@ -1950,7 +1992,11 @@ watch(tab, (t) => {
 
     <div class="sd-tabs">
       <button :class="['sd-tabbtn', { on: tab === 'queue' }]" @click="tab = 'queue'">Queue</button>
-      <button :class="['sd-tabbtn', { on: tab === 'desk' }]" @click="tab = 'desk'">Service Desk</button>
+      <button :class="['sd-tabbtn', { on: tab === 'desk' }]" @click="tab = 'desk'">
+        Service Desk
+        <span v-if="desk?.counts.sla_violations" class="sd-badge sd-badge-bad">{{ desk.counts.sla_violations }}</span>
+        <span v-else-if="desk?.unassigned.length" class="sd-badge">{{ desk.unassigned.length }}</span>
+      </button>
       <!--
         The count is on the tab because held mail nobody looks at is the same
         as mail that was discarded — which is the outcome this whole mechanism
@@ -1976,25 +2022,53 @@ watch(tab, (t) => {
 
     <template v-if="tab === 'queue'">
     <div class="sd-filters">
-      <input v-model="query" class="control sd-search" placeholder="Reference, subject, requester"
-             @keyup.enter="loadList" />
+      <input v-model="query" class="control sd-search" placeholder="Reference, subject, requester, client"
+             @keyup.enter="loadList()" />
       <select v-model="stateFilter" class="control sd-select">
         <option value="">All open work</option>
         <option v-for="(label, key) in taxonomy.states" :key="key" :value="key">{{ label }}</option>
+      </select>
+      <select v-model="statusFilter" class="control sd-select">
+        <option value="">Any status</option>
+        <option v-for="s in taxonomy.statuses" :key="s.id" :value="String(s.id)">{{ s.name }}</option>
+      </select>
+      <select v-model="priorityFilter" class="control sd-select">
+        <option value="">Any priority</option>
+        <option v-for="p in taxonomy.priorities" :key="p.id" :value="String(p.id)">{{ p.name }}</option>
       </select>
       <select v-model="teamFilter" class="control sd-select">
         <option value="">Any team</option>
         <option v-for="t in teams" :key="t.id" :value="String(t.id)">{{ t.name }}</option>
       </select>
+
+      <label class="sd-field-inline"><span>Opened from</span>
+        <input v-model="openedFrom" type="date" class="control" />
+      </label>
+      <label class="sd-field-inline"><span>to</span>
+        <input v-model="openedTo" type="date" class="control" />
+      </label>
+
       <label class="sd-check">
         <input v-model="unassignedOnly" type="checkbox" />
         <span>Unassigned only</span>
       </label>
       <label class="sd-check">
+        <input v-model="assignedToMeOnly" type="checkbox" />
+        <span>Assigned to me</span>
+      </label>
+      <label class="sd-check">
+        <input v-model="noFirstResponseOnly" type="checkbox" />
+        <span>No first response yet</span>
+      </label>
+      <label class="sd-check">
+        <input v-model="slaBreachedOnly" type="checkbox" />
+        <span>SLA breached</span>
+      </label>
+      <label class="sd-check">
         <input v-model="showAll" type="checkbox" />
         <span>Include closed</span>
       </label>
-      <button class="btn btn-secondary btn-sm" :disabled="listBusy" @click="loadList">
+      <button class="btn btn-secondary btn-sm" :disabled="listBusy" @click="loadList()">
         {{ listBusy ? "Loading…" : "Search" }}
       </button>
     </div>
@@ -2051,9 +2125,9 @@ watch(tab, (t) => {
             <th class="sd-tick">
               <input type="checkbox" :checked="allSelected" @change="toggleAll" />
             </th>
-            <th>Ref</th><th>Subject</th><th>Requester</th>
-            <th>Status</th><th>Priority</th><th>SLA</th><th>Assignee</th>
-            <th class="text-right">Replies</th>
+            <th>Ref</th><th>Client</th><th>Subject</th><th>Requester</th><th>Opened</th>
+            <th>Status</th><th>Priority</th><th>SLA</th><th>Assignee</th><th>Team</th>
+            <th>First Contact</th><th class="text-right">Replies</th><th class="text-right">Open For</th>
           </tr>
         </thead>
         <tbody>
@@ -2062,14 +2136,13 @@ watch(tab, (t) => {
               <input type="checkbox" :checked="selected.has(t.id)" @change="toggleRow(t.id)" />
             </td>
             <td class="sd-mono">{{ t.reference }}</td>
-            <td>
-              <span class="sd-subject">{{ t.subject }}</span>
-              <span v-if="t.account" class="sd-meta">{{ t.account.name }}</span>
-            </td>
+            <td>{{ t.account?.name ?? "—" }}</td>
+            <td><span class="sd-subject">{{ t.subject }}</span></td>
             <td>
               <span>{{ t.requester_name ?? "—" }}</span>
               <span v-if="t.requester_email" class="sd-meta">{{ t.requester_email }}</span>
             </td>
+            <td class="sd-date">{{ when(t.opened_at) }}</td>
             <td>
               <span class="sd-pill" :style="{ background: (t.status?.colour ?? '#64748b') + '22',
                                               color: t.status?.colour ?? '#64748b' }">
@@ -2093,20 +2166,30 @@ watch(tab, (t) => {
             <td>
               <span class="sd-pill" :class="'sd-clock-' + clockState(t).tone">{{ clockState(t).label }}</span>
             </td>
-            <td>
-              <span>{{ t.assignee?.name ?? "Unassigned" }}</span>
-              <span v-if="t.team" class="sd-meta">{{ t.team.name }}</span>
-            </td>
+            <td>{{ t.assignee?.name ?? "Unassigned" }}</td>
+            <td>{{ t.team?.name ?? "—" }}</td>
+            <td class="sd-date">{{ when(t.first_response_at) }}</td>
             <td class="text-right sd-mono">{{ t.messages_count }}</td>
+            <td class="text-right sd-mono">{{ hoursOpen(t.opened_at) }}</td>
           </tr>
           <tr v-if="!rows.length && !listBusy">
-            <td colspan="7" class="sd-empty">
+            <td colspan="14" class="sd-empty">
               Nothing open. Tickets raised here — and, from the next release, arriving by email —
               will appear in this queue.
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <div v-if="rows.length" class="sd-pager">
+      <span class="sd-pager-count">
+        Page {{ listPage }} of {{ listLastPage }} · {{ listTotal }} ticket{{ listTotal === 1 ? "" : "s" }}
+      </span>
+      <div class="sd-pager-btns">
+        <button class="btn btn-ghost btn-sm" :disabled="listPage <= 1 || listBusy" @click="loadList(listPage - 1)">‹ Newer</button>
+        <button class="btn btn-ghost btn-sm" :disabled="listPage >= listLastPage || listBusy" @click="loadList(listPage + 1)">Older ›</button>
+      </div>
     </div>
 
     </template>
@@ -2159,7 +2242,7 @@ watch(tab, (t) => {
     </template>
 
     <!-- ── Mail settings ───────────────────────────────────────────────────── -->
-    <template v-else>
+    <template v-else-if="tab === 'settings'">
       <p v-if="cfgError" class="error">{{ cfgError }}</p>
       <p v-if="cfgNote" class="sd-ok">{{ cfgNote }}</p>
 
@@ -2214,6 +2297,18 @@ watch(tab, (t) => {
               <option value="">Choose a connection…</option>
               <option v-for="c in connections" :key="c.id" :value="String(c.id)">{{ c.name }}</option>
             </select>
+            <!--
+              This is the same tenant list Integrations manages — a mailbox
+              is just one more thing a connection's Graph credentials are
+              trusted for. No second place to register an app, and no reason
+              this dropdown should ever be empty for lack of a way to fill it.
+            -->
+            <span class="sd-note">
+              <router-link :to="{ name: 'integration-connections' }" class="link">
+                {{ connections.length ? "Manage tenant connections" : "Add a tenant connection" }}
+              </router-link>
+              <template v-if="!connections.length"> — none configured yet.</template>
+            </span>
           </label>
         </div>
         <label class="sd-check">
@@ -2804,9 +2899,38 @@ watch(tab, (t) => {
         can chase a ticket all the way to resolution without ever being its engineer.
       </p>
 
+      <!-- ── Headline counts ──────────────────────────────────────────────
+           Three of the four (open, in progress, closed) partition every
+           ticket exhaustively; SLA violations is a condition layered over
+           the first two, not a fourth bucket in the same partition. -->
+      <div v-if="desk" class="sd-figs" style="margin-bottom: 16px;">
+        <div class="sd-fig sd-fig-open">
+          <span class="sd-fig-n info">{{ desk.counts.open }}</span>
+          <span class="sd-fig-l">Open</span>
+          <span class="sd-fig-s">With us, clock running</span>
+        </div>
+        <div class="sd-fig sd-fig-active">
+          <span class="sd-fig-n indigo">{{ desk.counts.in_progress }}</span>
+          <span class="sd-fig-l">In Progress</span>
+          <span class="sd-fig-s">With the customer or a third party</span>
+        </div>
+        <div class="sd-fig" :class="{ 'sd-fig-bad': desk.counts.sla_violations > 0, 'sd-fig-good': !desk.counts.sla_violations }">
+          <span class="sd-fig-n" :class="{ bad: desk.counts.sla_violations > 0 }">{{ desk.counts.sla_violations }}</span>
+          <span class="sd-fig-l">SLA Violations</span>
+          <span class="sd-fig-s" :class="{ bad: desk.counts.sla_violations > 0 }">Response or resolution breached</span>
+        </div>
+        <div class="sd-fig sd-fig-good">
+          <span class="sd-fig-n good">{{ desk.counts.closed }}</span>
+          <span class="sd-fig-l">Closed</span>
+          <span class="sd-fig-s">Resolved or closed</span>
+        </div>
+      </div>
+
       <div v-if="desk" class="sd-board">
-        <section class="sd-card sd-board-col">
-          <h4 class="sd-h4">Not placed yet <span class="sd-badge">{{ desk.unassigned.length }}</span></h4>
+        <section class="sd-card sd-board-col sd-accent-blue">
+          <h4 class="sd-h4">Not placed yet
+            <span class="sd-badge" :class="desk.unassigned.length ? '' : 'sd-badge-ok'">{{ desk.unassigned.length }}</span>
+          </h4>
           <ul class="sd-board-list">
             <li v-for="t in desk.unassigned" :key="t.id" @click="openTicket(t)">
               <span class="sd-mono">{{ t.reference }}</span>
@@ -2817,8 +2941,10 @@ watch(tab, (t) => {
           </ul>
         </section>
 
-        <section class="sd-card sd-board-col">
-          <h4 class="sd-h4">About to breach <span class="sd-badge">{{ desk.at_risk.length }}</span></h4>
+        <section class="sd-card sd-board-col sd-accent-amber">
+          <h4 class="sd-h4">About to breach
+            <span class="sd-badge" :class="desk.at_risk.length ? 'sd-badge-bad' : 'sd-badge-ok'">{{ desk.at_risk.length }}</span>
+          </h4>
           <ul class="sd-board-list">
             <li v-for="t in desk.at_risk" :key="t.id" @click="openTicket(t)">
               <span class="sd-mono">{{ t.reference }}</span>
@@ -2829,13 +2955,15 @@ watch(tab, (t) => {
           </ul>
         </section>
 
-        <section class="sd-card sd-board-col">
+        <section class="sd-card sd-board-col sd-accent-purple">
           <!--
             The desk's real job. A ticket parked with a customer or a supplier
             stops its own clock and stops being anybody's problem, which is how
             it sits for three weeks.
           -->
-          <h4 class="sd-h4">Waiting on somebody <span class="sd-badge">{{ desk.waiting.length }}</span></h4>
+          <h4 class="sd-h4">Waiting on somebody
+            <span class="sd-badge" :class="desk.waiting.length ? '' : 'sd-badge-ok'">{{ desk.waiting.length }}</span>
+          </h4>
           <ul class="sd-board-list">
             <li v-for="t in desk.waiting" :key="t.id" @click="openTicket(t)">
               <span class="sd-mono">{{ t.reference }}</span>
@@ -2846,8 +2974,10 @@ watch(tab, (t) => {
           </ul>
         </section>
 
-        <section class="sd-card sd-board-col">
-          <h4 class="sd-h4">Open escalations <span class="sd-badge">{{ desk.open_escalations.length }}</span></h4>
+        <section class="sd-card sd-board-col sd-accent-red">
+          <h4 class="sd-h4">Open escalations
+            <span class="sd-badge" :class="desk.open_escalations.length ? 'sd-badge-bad' : 'sd-badge-ok'">{{ desk.open_escalations.length }}</span>
+          </h4>
           <ul class="sd-board-list">
             <li v-for="e in desk.open_escalations" :key="e.id">
               <span class="sd-mono">{{ e.ticket?.reference }}</span>
@@ -2861,6 +2991,76 @@ watch(tab, (t) => {
           </ul>
         </section>
       </div>
+
+      <div v-if="desk" class="sd-board-row2">
+        <section class="sd-card">
+          <h4 class="sd-h4">Active tickets <span class="sd-badge">{{ desk.active_tickets.length }}</span></h4>
+          <div class="table-scroll">
+            <table class="sd-table">
+              <thead><tr><th>Ref</th><th>Subject</th><th>Category</th><th>Status</th><th>Priority</th><th>Assignee</th></tr></thead>
+              <tbody>
+                <tr v-for="t in desk.active_tickets" :key="t.id" class="sd-row" @click="openTicket(t)">
+                  <td class="sd-mono">{{ t.reference }}</td>
+                  <td>{{ t.subject }}</td>
+                  <td>
+                    <span v-if="t.type" class="sd-pill"
+                          :style="{ background: typeColor(t.type.name) + '22', color: typeColor(t.type.name) }">
+                      {{ t.type.name }}
+                    </span>
+                    <span v-else class="sd-meta">Unclassified</span>
+                  </td>
+                  <td>
+                    <span v-if="t.status" class="sd-pill"
+                          :style="{ background: (t.status.colour ?? '#64748b') + '22', color: t.status.colour ?? '#64748b' }">
+                      {{ t.status.name }}
+                    </span>
+                    <span v-else class="sd-meta">—</span>
+                  </td>
+                  <td>
+                    <span v-if="t.priority" class="sd-pill"
+                          :style="{ background: (t.priority.colour ?? '#64748b') + '22', color: t.priority.colour ?? '#64748b' }">
+                      {{ t.priority.name }}
+                    </span>
+                    <span v-else class="sd-meta">Untriaged</span>
+                  </td>
+                  <td>{{ t.assignee?.name ?? "Unassigned" }}</td>
+                </tr>
+                <tr v-if="!desk.active_tickets.length"><td colspan="6" class="sd-empty">Nothing open or pending.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="sd-board-side">
+          <section class="sd-card">
+            <h4 class="sd-h4">By category</h4>
+            <ul class="sd-cat-list">
+              <li v-for="c in desk.by_type" :key="c.type">
+                <span class="sd-cat-dot" :style="{ background: typeColor(c.type) }"></span>
+                <span class="sd-cat-name">{{ c.type }}</span>
+                <span class="sd-cat-bar">
+                  <span class="sd-cat-fill"
+                        :style="{ width: (openTotal ? (c.tickets_count / openTotal * 100) : 0) + '%', background: typeColor(c.type) }"></span>
+                </span>
+                <span class="sd-cat-n">{{ c.tickets_count }}</span>
+              </li>
+              <li v-if="!desk.by_type.length" class="sd-note">Nothing open.</li>
+            </ul>
+          </section>
+
+          <section class="sd-card">
+            <h4 class="sd-h4">Most tickets carried</h4>
+            <ul class="sd-board-list">
+              <li v-for="a in desk.top_assignees" :key="a.user_id">
+                <strong>{{ a.name }}</strong>
+                <span class="sd-badge">{{ a.tickets_count }}</span>
+              </li>
+              <li v-if="!desk.top_assignees.length" class="sd-note">Nothing assigned yet.</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+
       <p v-else-if="deskBusy" class="quiet">Loading…</p>
     </template>
 
@@ -4576,12 +4776,14 @@ watch(tab, (t) => {
 .sd-search { max-width: 22rem; }
 .sd-select { max-width: 14rem; }
 .sd-check { @apply flex items-center gap-2; font-size: .85rem; cursor: pointer; }
+.sd-field-inline { @apply flex items-center gap-2; font-size: .85rem; color: var(--color-text-light); }
+.sd-field-inline .control { width: auto; padding: 6px 8px; }
 
 .sd-card { background: var(--color-surface); border: 1px solid var(--color-border);
   border-radius: var(--radius-xl); overflow: hidden; }
 
 .sd-table { @apply w-full; border-collapse: collapse; font-size: .86rem; }
-.sd-table th, .sd-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--color-border); }
+.sd-table th, .sd-table td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--color-border); vertical-align: middle; }
 .sd-table th { font-size: .7rem; text-transform: uppercase; letter-spacing: .04em;
   color: var(--color-text-muted); background: var(--color-surface-sunken); }
 .sd-table tbody tr:last-child td { border-bottom: none; }
@@ -4589,6 +4791,19 @@ watch(tab, (t) => {
 .sd-row:hover { background: var(--color-surface-sunken); }
 .sd-subject { display: block; color: var(--color-text); }
 .sd-meta { display: block; font-size: .74rem; color: var(--color-text-light); }
+/* On a <td>, `display:block` (from .sd-meta) drops the cell out of the table's
+   column grid and staggers every row border. Restore proper cell behaviour so
+   the muted styling applies without breaking the layout — this straightens the
+   date columns on the Queue and the meta columns on every other tab's table. */
+td.sd-meta { display: table-cell; }
+/* Date cells: muted, kept on one line so the column edges stay straight.
+   Never `display:block` on a <td> — it drops the cell out of the column grid
+   and staggers the row borders (the "breakage where the dates are"). */
+.sd-date { font-size: .78rem; color: var(--color-text-light); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.sd-pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.sd-pager-count { font-size: .8rem; color: var(--color-text-light); }
+.sd-pager-btns { display: flex; gap: 8px; }
 .sd-mono { font-family: ui-monospace, monospace; font-size: .78rem; }
 .sd-empty { text-align: center; color: var(--color-text-light); padding: 26px 12px; }
 
@@ -4705,12 +4920,25 @@ watch(tab, (t) => {
   border-radius: 8px; padding: 9px 12px; margin: 0 20px; }
 .table-scroll { overflow-x: auto; }
 
-.sd-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--color-border); }
-.sd-tabbtn { background: none; border: none; cursor: pointer; padding: 8px 14px;
-  font-size: .88rem; color: var(--color-text-light); border-bottom: 2px solid transparent; }
-.sd-tabbtn.on { color: var(--color-text); font-weight: 600; border-bottom-color: var(--color-brand-base); }
-.sd-badge { display: inline-block; margin-left: 6px; font-size: .68rem; padding: 1px 6px;
+/* Colourful pill tab bar — wraps cleanly instead of a cramped underline row,
+   and the active tab is filled with the brand colour rather than a thin line. */
+.sd-tabs {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; padding: 6px;
+  background: var(--color-surface-sunken); border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+.sd-tabbtn {
+  display: inline-flex; align-items: center; background: transparent; border: none; cursor: pointer;
+  padding: 7px 14px; font-size: .84rem; font-weight: 600; color: var(--color-text-light);
+  border-radius: 999px; transition: background .12s, color .12s;
+}
+.sd-tabbtn:hover { background: var(--color-surface); color: var(--color-text); }
+.sd-tabbtn.on { background: var(--color-brand-base); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.sd-tabbtn.on .sd-badge { background: rgba(255,255,255,.28); color: #fff; }
+.sd-badge { display: inline-block; margin-left: 6px; font-size: .68rem; font-weight: 700; padding: 1px 7px;
   border-radius: 999px; background: var(--color-warning); color: #fff; }
+.sd-badge-bad { background: var(--color-error); }
+.sd-badge-ok  { background: var(--color-success); }
 
 .sd-lede { font-size: .85rem; color: var(--color-text-light); margin: 0 0 12px; max-width: 46rem; }
 .sd-h3 { @apply font-semibold; margin: 18px 0 4px; color: var(--color-text); }
@@ -4771,6 +4999,18 @@ watch(tab, (t) => {
 .sd-compose-actions { display: flex; gap: 6px; }
 
 .sd-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 12px; }
+.sd-board-row2 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; margin-top: 12px; align-items: start; }
+@media (max-width: 60rem) { .sd-board-row2 { grid-template-columns: 1fr; } }
+.sd-board-side { display: flex; flex-direction: column; gap: 12px; }
+
+/* Category breakdown: a coloured dot, a proportional bar and the count. */
+.sd-cat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.sd-cat-list li { display: grid; grid-template-columns: 10px minmax(5rem, auto) 1fr 1.6rem; align-items: center; gap: 8px; font-size: .82rem; }
+.sd-cat-dot { width: 10px; height: 10px; border-radius: 50%; }
+.sd-cat-name { color: var(--color-text); white-space: nowrap; }
+.sd-cat-bar { height: 8px; border-radius: 999px; background: var(--color-surface-sunken); overflow: hidden; }
+.sd-cat-fill { display: block; height: 100%; border-radius: 999px; min-width: 2px; }
+.sd-cat-n { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-text); }
 .sd-board-col { padding: 14px; display: flex; flex-direction: column; gap: 8px; }
 .sd-board-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
   max-height: 26rem; overflow-y: auto; font-size: .82rem; }
@@ -4808,13 +5048,30 @@ watch(tab, (t) => {
 /* ── The service review ─────────────────────────────────────────────────── */
 .sd-figs { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: 10px; }
 .sd-fig { display: flex; flex-direction: column; gap: 1px; padding: 12px 14px;
-  background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 10px; }
+  background: var(--color-surface); border: 1px solid var(--color-border); border-left: 3px solid var(--color-border); border-radius: 10px; }
 .sd-fig-n { font-size: 1.6rem; font-weight: 600; color: var(--color-text); line-height: 1.1; }
 .sd-fig-n.good { color: var(--color-success); }
 .sd-fig-n.bad  { color: var(--color-error); }
+.sd-fig-n.info { color: var(--color-brand-base); }
+.sd-fig-n.indigo { color: #6366f1; }
 .sd-fig-l { font-size: .78rem; color: var(--color-text); }
 .sd-fig-s { font-size: .72rem; color: var(--color-text-light); }
 .sd-fig-s.bad { color: var(--color-error); }
+
+/* A coloured left edge AND a wash of the same colour per card — the same read
+   as the number inside it, legible from across the room. */
+.sd-fig-open   { border-left-color: var(--color-brand-base); background: var(--color-brand-subtle); }
+.sd-fig-active { border-left-color: #6366f1; background: #eef0ff; }
+.sd-fig-bad    { border-left-color: var(--color-error); background: var(--color-error-light); }
+.sd-fig-good   { border-left-color: var(--color-success); background: var(--color-success-light); }
+
+/* Board widget cards get a coloured top accent so the four are distinguishable
+   at a glance, not four identical grey boxes. */
+.sd-board-col { border-top: 3px solid var(--color-border); }
+.sd-accent-blue   { border-top-color: var(--color-brand-base); }
+.sd-accent-amber  { border-top-color: var(--color-warning); }
+.sd-accent-purple { border-top-color: #6366f1; }
+.sd-accent-red    { border-top-color: var(--color-error); }
 
 .sd-compliance { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 12px; }
 .sd-comp { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }

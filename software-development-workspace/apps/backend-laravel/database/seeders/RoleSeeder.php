@@ -45,6 +45,18 @@ class RoleSeeder extends Seeder
                     'leave.*',
                     'reports.org',
                     'onboarding.*',
+                    // The roster moved off role-name checks; HR keeps the
+                    // schedule lifecycle it always had. Benefits gained checks
+                    // for the first time; HR administers them.
+                    'roster.*',
+                    'benefits.*',
+                    // Confidential documents are their own class, deliberately
+                    // outside employees.* — the flag exists to be subtractable
+                    // per person via clone-and-exclude in the role editor.
+                    'documents.view_confidential',
+                    // Was a hasRole('org_hr') check in OrganizationController;
+                    // moved onto the catalogue without changing who may.
+                    'organizations.manage',
                 ],
             ],
             [
@@ -57,6 +69,10 @@ class RoleSeeder extends Seeder
                     'leave.reject',
                     'leave.view',
                     'reports.team',
+                    // What isManagerIn granted before roster moved onto
+                    // permissions: read the rota, place people on it.
+                    'roster.view',
+                    'roster.manage',
                 ],
             ],
             [
@@ -116,7 +132,10 @@ class RoleSeeder extends Seeder
         ];
 
         foreach ($roles as $data) {
-            Role::updateOrCreate(['name' => $data['name']], $data);
+            // Everything this seeder writes is a built-in: an immutable
+            // template the role editor offers to clone, never to edit —
+            // otherwise a seeder upgrade would fight local customisations.
+            Role::updateOrCreate(['name' => $data['name']], [...$data, 'is_system' => true]);
         }
     }
 }

@@ -38,6 +38,13 @@ class TicketEvent extends Model
     public const RESOLVED = 'resolved';
     public const REOPENED = 'reopened';
 
+    /*
+     * Whose move it is. Set automatically by which side sent the last public
+     * message, or by hand when that guess is wrong — a reply that says
+     * "still looking into it" is not a handoff to the customer.
+     */
+    public const OWNER_CHANGED = 'owner_changed';
+
     protected $fillable = [
         'support_ticket_id', 'event', 'field', 'from_value', 'to_value',
         'reason', 'actor_id', 'automatic', 'occurred_at',

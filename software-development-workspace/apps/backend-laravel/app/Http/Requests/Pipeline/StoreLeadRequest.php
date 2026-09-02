@@ -38,7 +38,10 @@ class StoreLeadRequest extends FormRequest
                 Rule::exists('accounts', 'id')->where('organization_id', $orgId)->whereNull('deleted_at')],
 
             'source'   => ['nullable', 'string', 'max:120'],
-            'status'   => ['sometimes', Rule::in(Lead::STATUSES)],
+            // Board statuses only. `converted` is set by converting and
+            // `qualified` is no longer a state a lead comes to rest in — both
+            // would otherwise be reachable by editing a field.
+            'status'   => ['sometimes', Rule::in(Lead::BOARD_STATUSES)],
             'priority' => ['sometimes', Rule::in(Lead::PRIORITIES)],
             'deadline' => ['nullable', 'date'],
             'website'  => ['nullable', 'string', 'max:255'],

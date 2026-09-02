@@ -18,6 +18,11 @@ const notes = ref("");
 const saving = ref(false);
 const error = ref("");
 
+const issuesCertificate = props.record.training_item?.certificate_issued ?? false;
+const score = ref<number | null>(props.record.score ?? null);
+const certificateNumber = ref(props.record.certificate_number ?? "");
+const certificateExpiryDate = ref(props.record.certificate_expiry_date ?? "");
+
 // Ensure slider never goes below current value
 const minProgress = props.record.progress_percent ?? 0;
 
@@ -41,7 +46,13 @@ async function submit() {
     const res = await api<{ data: EmployeeTrainingRecord }>(
       "PATCH",
       `/api/v1/training/records/${props.record.id}/progress`,
-      { org: org(), body: { progress_percent: progress.value, notes: notes.value || null } }
+      { org: org(), body: {
+        progress_percent: progress.value,
+        notes: notes.value || null,
+        score: score.value,
+        certificate_number: certificateNumber.value || null,
+        certificate_expiry_date: certificateExpiryDate.value || null,
+      } }
     );
     emit("updated", res.data);
     emit("close");
@@ -97,6 +108,17 @@ async function submit() {
         <strong>
           {{ progress >= 100 ? "✅ Completed" : progress > 0 ? "🔵 In Progress" : "⚪ Enrolled" }}
         </strong>
+      </div>
+
+      <!-- Certification -->
+      <div v-if="issuesCertificate" class="cert-section">
+        <p class="cert-heading">Certification earned</p>
+        <label class="notes-label">Score Achieved (%)</label>
+        <input v-model.number="score" type="number" min="0" max="100" step="0.01" class="notes-input" />
+        <label class="notes-label">Certificate Number</label>
+        <input v-model="certificateNumber" type="text" class="notes-input" placeholder="As printed on the certificate" />
+        <label class="notes-label">Certificate Expiry Date</label>
+        <input v-model="certificateExpiryDate" type="date" class="notes-input" />
       </div>
 
       <!-- Notes -->
@@ -235,6 +257,26 @@ async function submit() {
   margin-bottom: 16px;
   text-align: center;
 }
+
+.cert-section {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.cert-heading {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #667085;
+  margin: 0 0 10px;
+}
+
+.cert-section .notes-label { margin-top: 8px; }
+.cert-section .notes-label:first-of-type { margin-top: 0; }
 
 .notes-section { margin-bottom: 20px; }
 

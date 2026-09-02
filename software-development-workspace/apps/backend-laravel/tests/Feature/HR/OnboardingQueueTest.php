@@ -41,7 +41,9 @@ class OnboardingQueueTest extends TestCase
         $role = Role::create([
             'name' => 'r' . fake()->unique()->numberBetween(1, 999999),
             'display_name' => 'HR', 'scope' => 'organization',
-            'permissions' => [Permission::EMPLOYEES_VIEW, Permission::EMPLOYEES_CREATE],
+            // onboarding.* since the preboarding endpoints stopped being
+            // open to any org member (the increment-6 coverage sweep).
+            'permissions' => [Permission::EMPLOYEES_VIEW, Permission::EMPLOYEES_CREATE, 'onboarding.*'],
         ]);
         $this->hr->roles()->attach($role->id, ['organization_id' => $this->org->id]);
         $this->hr->forgetCachedRoles();

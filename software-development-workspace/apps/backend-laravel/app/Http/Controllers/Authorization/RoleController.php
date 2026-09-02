@@ -184,6 +184,29 @@ class RoleController extends Controller
                     'label' => ucfirst($s),
                 ], Scope::all()),
                 'resources'     => array_keys(Permission::grouped()),
+                // The whole catalogue, for the role editor's matrix and the
+                // deny dialog — strings to offer, not an authorization list.
+                'permissions'   => Permission::all(),
+            ],
+        ]);
+    }
+
+    /**
+     * What the caller may do, in the organisation currently in context.
+     *
+     * The client's whole authorization model: a flat list of concrete
+     * permission strings, wildcards already expanded, exclusions and denies
+     * already applied. The client does a Set lookup and nothing else — the
+     * hiding of a nav item, a route and a tab are all this list, and the API
+     * remains the authority when the list is stale.
+     *
+     * No guard beyond being signed in: everyone may know their own rights.
+     */
+    public function myPermissions(Request $request): JsonResponse
+    {
+        return response()->json([
+            'data' => [
+                'permissions' => $request->user()->effectivePermissionsFor(),
             ],
         ]);
     }

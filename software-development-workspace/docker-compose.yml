@@ -63,7 +63,10 @@ services:
       MS_INVENTORY_CLIENT_ID: ${MS_INVENTORY_CLIENT_ID}
       MS_INVENTORY_CLIENT_SECRET: ${MS_INVENTORY_CLIENT_SECRET}
       MS_INVENTORY_SUBSCRIPTION_ID: ${MS_INVENTORY_SUBSCRIPTION_ID}
-      CORS_ALLOWED_ORIGINS: "https://hrms.bitwyse.co.ke,https://vacancy.bitwyse.co.ke,https://vacancy.bitwyse.com,http://localhost:3000,http://localhost:5173,http://localhost:8080"
+      # Production origins only — localhost entries do not belong in a
+      # production allowlist (a page served from a developer's machine should
+      # not be able to make credentialed calls to the live API).
+      CORS_ALLOWED_ORIGINS: "https://hrms.bitwyse.co.ke,https://vacancy.bitwyse.co.ke,https://vacancy.bitwyse.com"
       CORS_ALLOWED_HEADERS: "Content-Type,Authorization,X-Requested-With,X-HRMS-Version,X-Organization"
     volumes:
       - hrms-storage:/var/www/html/storage/app/public

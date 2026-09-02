@@ -30,6 +30,9 @@ class InterviewPanelist extends Model
         'scoring_token_expires_at'  => 'datetime',
     ];
 
+    // The stored value is a hash, but there is no reason to ever serialise it.
+    protected $hidden = ['scoring_token'];
+
     public function interview(): BelongsTo
     {
         return $this->belongsTo(Interview::class, 'interview_id');

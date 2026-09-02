@@ -157,80 +157,32 @@ class RbacAbacTest extends TestCase
         $this->assertSame([], $user->permissionsFor($org->id));
     }
 
-    // ── Ownership ─────────────────────────────────────────────────────────────
+    // ── Team (the one-level house convention) ─────────────────────────────────
 
-    public function test_user_owns_their_own_employee_record(): void
-    {
-        $org      = $this->makeOrg('alpha');
-        $user     = User::factory()->create();
-        $mine     = $this->makeEmployee($org, null, $user);
-        $someone  = $this->makeEmployee($org);
-
-        $this->assertTrue($user->owns($mine));
-        $this->assertFalse($user->owns($someone));
-    }
-
-    public function test_user_without_an_employee_record_owns_nothing(): void
-    {
-        $org  = $this->makeOrg('alpha');
-        $user = User::factory()->create();
-
-        $this->assertFalse($user->owns($this->makeEmployee($org)));
-    }
-
-    // ── Reporting line ────────────────────────────────────────────────────────
-
-    public function test_manager_manages_a_direct_report(): void
+    public function test_a_team_is_yourself_and_your_direct_reports_only(): void
     {
         $org      = $this->makeOrg('alpha');
         $user     = User::factory()->create();
         $manager  = $this->makeEmployee($org, null, $user);
-        $report   = $this->makeEmployee($org, $manager->id);
+        $direct   = $this->makeEmployee($org, $manager->id);
+        $grandkid = $this->makeEmployee($org, $direct->id);
+        $peer     = $this->makeEmployee($org);
 
-        $this->assertTrue($user->manages($report));
+        $team = ResourceAttributes::teamEmployeeIds($user);
+
+        $this->assertContains($manager->id, $team);
+        $this->assertContains($direct->id, $team);
+        // Deliberately NOT the whole subtree — "my team" is a narrower
+        // promise than "everyone under me transitively".
+        $this->assertNotContains($grandkid->id, $team);
+        $this->assertNotContains($peer->id, $team);
     }
 
-    public function test_manager_manages_further_down_the_line(): void
+    public function test_a_user_with_no_employee_record_has_no_team(): void
     {
-        $org       = $this->makeOrg('alpha');
-        $user      = User::factory()->create();
-        $manager   = $this->makeEmployee($org, null, $user);
-        $lead      = $this->makeEmployee($org, $manager->id);
-        $grandkid  = $this->makeEmployee($org, $lead->id);
+        $this->makeOrg('alpha');
 
-        $this->assertTrue($user->manages($grandkid));
-    }
-
-    public function test_manager_does_not_manage_a_peer(): void
-    {
-        $org     = $this->makeOrg('alpha');
-        $user    = User::factory()->create();
-        $manager = $this->makeEmployee($org, null, $user);
-        $peer    = $this->makeEmployee($org);
-
-        $this->assertFalse($user->manages($peer));
-    }
-
-    public function test_nobody_manages_themselves(): void
-    {
-        $org     = $this->makeOrg('alpha');
-        $user    = User::factory()->create();
-        $manager = $this->makeEmployee($org, null, $user);
-
-        $this->assertFalse($user->manages($manager));
-    }
-
-    public function test_a_cycle_in_the_reporting_line_terminates(): void
-    {
-        // Should not exist in the data, but authorization must not hang on it.
-        $org  = $this->makeOrg('alpha');
-        $user = User::factory()->create();
-        $me   = $this->makeEmployee($org, null, $user);
-        $a    = $this->makeEmployee($org);
-        $b    = $this->makeEmployee($org, $a->id);
-        $a->update(['reports_to' => $b->id]);
-
-        $this->assertFalse($user->manages($a->fresh()));
+        $this->assertSame([], ResourceAttributes::teamEmployeeIds(User::factory()->create()));
     }
 
     // ── Tenancy ───────────────────────────────────────────────────────────────

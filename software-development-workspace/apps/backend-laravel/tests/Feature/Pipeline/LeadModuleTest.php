@@ -94,8 +94,10 @@ class LeadModuleTest extends TestCase
 
         $columns = $this->getJson($this->url('/leads/board'))->assertOk()->json('data');
 
+        // No 'qualified': qualifying a lead converts it, so it leaves the
+        // board in the same gesture rather than resting in a column.
         $this->assertSame(
-            ['new', 'contacted', 'qualified', 'unqualified'],
+            ['new', 'contacted', 'unqualified'],
             array_column($columns, 'status'),
         );
     }
@@ -156,6 +158,85 @@ class LeadModuleTest extends TestCase
             ->assertStatus(422)->assertJsonValidationErrors('status');
     }
 
+    public function test_qualified_is_not_a_column_a_card_can_be_dropped_into_either(): void
+    {
+        // Qualifying is an act that opens a deal, not a place to park a lead.
+        // Dragging a card should never bring an opportunity into existence.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+
+        $this->postJson($this->url("/leads/{$this->lead()->id}/status"), ['status' => 'qualified'])
+            ->assertStatus(422)->assertJsonValidationErrors('status');
+    }
+
+    // ── Qualifying is becoming a deal ─────────────────────────────────────
+
+    public function test_qualifying_a_lead_opens_it_as_a_deal(): void
+    {
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_CREATE]);
+        $lead = $this->lead(['name' => 'FTTX domain servers']);
+
+        $res = $this->postJson($this->url("/leads/{$lead->id}/convert"), [])->assertStatus(201);
+
+        $this->assertSame('FTTX domain servers', $res->json('data.name'));
+        $this->assertSame($lead->id, $res->json('data.lead.id'));
+        $this->assertSame('converted', $lead->fresh()->status);
+    }
+
+    public function test_qualifying_needs_no_form_because_the_lead_already_said_it(): void
+    {
+        // The customer and the name are on the lead. Asking for them again,
+        // underneath themselves, is what a one-gesture act must not do.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_CREATE]);
+        $lead = $this->lead();
+
+        $res = $this->postJson($this->url("/leads/{$lead->id}/convert"), [])->assertStatus(201);
+
+        $this->assertSame($lead->account_id, $res->json('data.account.id'));
+    }
+
+    public function test_the_assessment_travels_onto_the_deal(): void
+    {
+        // Nobody should answer five questions twice about the same customer
+        // on the same day.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE, Permission::PIPELINE_CREATE]);
+        $lead = $this->lead();
+
+        $this->postJson($this->url("/leads/{$lead->id}/qualify"), [
+            'fit_company' => 'core', 'fit_budget' => 'indicated',
+        ])->assertOk();
+
+        $id = $this->postJson($this->url("/leads/{$lead->id}/convert"), [])
+            ->assertStatus(201)->json('data.id');
+
+        $deal = \App\Models\Pipeline\Opportunity::findOrFail($id);
+
+        $this->assertSame(100, $deal->fit_company);
+        $this->assertSame(60, $deal->fit_budget);
+        $this->assertNull($deal->fit_solution);
+    }
+
+    public function test_a_lead_with_no_customer_cannot_qualify(): void
+    {
+        // A deal has to be with somebody — and the refusal has to say so in
+        // words, not name a field the person never saw.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_CREATE]);
+        $lead = $this->lead(['account_id' => null]);
+
+        $res = $this->postJson($this->url("/leads/{$lead->id}/convert"), [])
+            ->assertStatus(422)->assertJsonValidationErrors('account_id');
+
+        $this->assertStringContainsString('Name the customer', $res->json('errors.account_id.0'));
+    }
+
+    public function test_a_lead_qualifies_only_once(): void
+    {
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_CREATE]);
+        $lead = $this->lead();
+
+        $this->postJson($this->url("/leads/{$lead->id}/convert"), [])->assertStatus(201);
+        $this->postJson($this->url("/leads/{$lead->id}/convert"), [])->assertStatus(422);
+    }
+
     // ── Qualification ─────────────────────────────────────────────────────
 
     public function test_an_unassessed_lead_has_no_score_rather_than_a_score_of_zero(): void
@@ -170,49 +251,143 @@ class LeadModuleTest extends TestCase
         $this->assertNull($res->json('data.qualification.band'));
     }
 
-    public function test_the_score_is_the_mean_of_the_dimensions_that_were_answered(): void
+    public function test_the_score_is_the_mean_of_the_questions_that_were_answered(): void
     {
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
         $lead = $this->lead();
 
         $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), [
-            'fit_company' => 90, 'fit_budget' => 70, 'fit_solution' => 60,
-            'fit_timeline' => 94, 'fit_stakeholder' => 84,
+            'fit_company'     => 'core',          // 100
+            'fit_budget'      => 'indicated',     //  60
+            'fit_solution'    => 'configured',    //  70
+            'fit_timeline'    => 'this_quarter',  // 100
+            'fit_stakeholder' => 'sponsored',     //  70
         ])->assertOk();
 
-        // (90 + 70 + 60 + 94 + 84) / 5 = 79.6 → 80
+        // 400 / 5 = 80
         $this->assertSame(80, $res->json('data.qualification.score'));
         $this->assertSame('high_fit', $res->json('data.qualification.band'));
     }
 
-    public function test_an_unanswered_dimension_is_skipped_rather_than_counted_as_zero(): void
+    public function test_an_answer_is_stored_as_what_it_is_worth(): void
     {
-        // Otherwise one good score reads as a bad lead because nobody has
-        // looked at the other four yet.
+        // The column stays an integer, so the arithmetic, the bands and the
+        // percentile all carry on working — only the way it is asked changed.
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
         $lead = $this->lead();
 
-        $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_timeline' => 90])->assertOk();
+        $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_budget' => 'allocated'])
+            ->assertOk();
 
-        $this->assertSame(90, $res->json('data.qualification.score'));
+        $this->assertSame(100, $lead->fresh()->fit_budget);
+    }
+
+    public function test_the_answer_reads_back_as_the_sentence_that_was_chosen(): void
+    {
+        // A stored 60 has to be legible as "Indicated, not allocated", or the
+        // screen is showing a number nobody typed.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $lead = $this->lead();
+
+        $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_budget' => 'indicated'])
+            ->assertOk();
+
+        $budget = collect($res->json('data.qualification.dimensions'))->firstWhere('key', 'fit_budget');
+
+        $this->assertSame('indicated', $budget['answer']['value']);
+        $this->assertSame('Indicated, not allocated', $budget['answer']['label']);
+        $this->assertSame(60, $budget['value']);
+    }
+
+    public function test_the_answers_on_offer_ship_with_the_lead(): void
+    {
+        // So the wording on screen is the wording the server validates.
+        $this->actor([Permission::PIPELINE_VIEW]);
+
+        $res = $this->getJson($this->url("/leads/{$this->lead()->id}"))->assertOk();
+
+        $company = collect($res->json('data.qualification.dimensions'))->firstWhere('key', 'fit_company');
+
+        $this->assertSame('How well does this customer fit the business we want?', $company['question']);
+        $this->assertSame(['core', 'adjacent', 'stretch', 'outside'], array_column($company['options'], 'value'));
+    }
+
+    public function test_an_unanswered_question_is_skipped_rather_than_counted_as_zero(): void
+    {
+        // Otherwise one good answer reads as a bad lead because nobody has
+        // put the other four questions yet.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $lead = $this->lead();
+
+        $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_timeline' => 'next_quarter'])
+            ->assertOk();
+
+        $this->assertSame(70, $res->json('data.qualification.score'));
     }
 
     public function test_the_score_is_reported_with_how_much_of_it_was_assessed(): void
     {
-        // 90 from one dimension and 90 from five are not the same claim.
+        // One answer and five answers are not the same claim.
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
         $lead = $this->lead();
 
-        $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_timeline' => 90])->assertOk();
+        $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_timeline' => 'next_quarter'])
+            ->assertOk();
 
         $this->assertSame(20, $res->json('data.qualification.completeness'));
+        $this->assertCount(4, $res->json('data.qualification.unanswered'));
     }
 
-    public function test_a_grade_outside_nought_to_a_hundred_is_refused(): void
+    public function test_answering_one_question_leaves_the_others_alone(): void
+    {
+        // The old form saved all five at once, so revisiting it to change one
+        // answer meant re-stating four. Each question stands on its own now.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $lead = $this->lead();
+
+        $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_company' => 'core'])->assertOk();
+        $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_budget' => 'none'])->assertOk();
+
+        $lead->refresh();
+
+        $this->assertSame(100, $lead->fit_company);
+        $this->assertSame(0, $lead->fit_budget);
+    }
+
+    public function test_an_answer_can_be_taken_back(): void
+    {
+        // Distinct from answering "none", which is itself a finding worth zero.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+        $lead = $this->lead(['fit_company' => 100]);
+
+        $this->postJson($this->url("/leads/{$lead->id}/qualify"), ['fit_company' => null])->assertOk();
+
+        $this->assertNull($lead->fresh()->fit_company);
+    }
+
+    public function test_an_answer_we_do_not_offer_is_refused(): void
     {
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
 
-        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['fit_company' => 140])
+        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['fit_company' => 'magnificent'])
+            ->assertStatus(422)->assertJsonValidationErrors('fit_company');
+    }
+
+    public function test_an_answer_belonging_to_another_question_is_refused(): void
+    {
+        // 'allocated' is a budget answer; it means nothing about the timeline.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+
+        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['fit_timeline' => 'allocated'])
+            ->assertStatus(422)->assertJsonValidationErrors('fit_timeline');
+    }
+
+    public function test_a_raw_number_is_no_longer_accepted(): void
+    {
+        // The whole point of the change: nobody can defend 70 over 75.
+        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
+
+        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['fit_company' => 90])
             ->assertStatus(422)->assertJsonValidationErrors('fit_company');
     }
 
@@ -220,7 +395,7 @@ class LeadModuleTest extends TestCase
     {
         // A percentile drawn from two leads is noise dressed as a statistic.
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
-        $lead = $this->lead(['fit_company' => 90]);
+        $lead = $this->lead(['fit_company' => 100]);
 
         $res = $this->getJson($this->url("/leads/{$lead->id}"))->assertOk();
 
@@ -233,14 +408,19 @@ class LeadModuleTest extends TestCase
         // of them.
         $this->actor([Permission::PIPELINE_VIEW]);
 
-        foreach ([10, 20, 30, 40, 50, 60] as $score) {
-            $this->lead(['fit_company' => $score]);
-        }
+        // Six assessed leads, each on a real answer, with six distinct means.
+        $this->lead(['fit_company'  => 0]);     // outside
+        $this->lead(['fit_company'  => 35]);    // a stretch
+        $this->lead(['fit_company'  => 70]);    // adjacent
+        $this->lead(['fit_budget'   => 30]);    // under discussion
+        $this->lead(['fit_budget'   => 60]);    // indicated
+        $this->lead(['fit_solution' => 40]);    // needs a partner
+
         foreach (range(1, 20) as $i) {
             $this->lead();   // never assessed
         }
 
-        $best = $this->lead(['fit_company' => 95]);
+        $best = $this->lead(['fit_company' => 100]);
 
         $res = $this->getJson($this->url("/leads/{$best->id}"))->assertOk();
 
@@ -249,34 +429,11 @@ class LeadModuleTest extends TestCase
         $this->assertSame(0, $res->json('data.qualification.percentile'));
     }
 
-    public function test_the_summary_judgements_are_recorded_beside_the_grades(): void
-    {
-        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
-        $lead = $this->lead();
-
-        $res = $this->postJson($this->url("/leads/{$lead->id}/qualify"), [
-            'budget_availability' => 'available', 'stakeholder_engagement' => 'high',
-            'timeline_estimate' => '3–4 Months', 'technical_readiness' => 'medium',
-            'decision_authority_access' => 'available',
-        ])->assertOk();
-
-        $this->assertSame('available', $res->json('data.qualification.summary.budget_availability'));
-        $this->assertSame('3–4 Months', $res->json('data.qualification.summary.timeline_estimate'));
-    }
-
-    public function test_an_unrecognised_summary_judgement_is_refused(): void
-    {
-        $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
-
-        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['stakeholder_engagement' => 'enormous'])
-            ->assertStatus(422)->assertJsonValidationErrors('stakeholder_engagement');
-    }
-
     public function test_qualifying_a_lead_needs_more_than_being_able_to_read_it(): void
     {
         $this->actor([Permission::PIPELINE_VIEW]);
 
-        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['fit_company' => 90])
+        $this->postJson($this->url("/leads/{$this->lead()->id}/qualify"), ['fit_company' => 'core'])
             ->assertForbidden();
     }
 

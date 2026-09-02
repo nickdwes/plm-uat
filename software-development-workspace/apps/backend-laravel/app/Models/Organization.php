@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Models\Integration\IntegrationConnection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -11,7 +13,7 @@ use Illuminate\Support\Facades\Storage;
 
 class Organization extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
         'name',
@@ -27,6 +29,8 @@ class Organization extends Model
         'address',
         'is_active',
         'settings',
+        'calendar_connection_id',
+        'identity_connection_id',
     ];
 
     protected $casts = [
@@ -50,6 +54,24 @@ class Organization extends Model
         return $this->logo_path
             ? Storage::disk('public')->url($this->logo_path)
             : null;
+    }
+
+    /** The Microsoft app registration that creates this org's Teams meetings. */
+    public function calendarConnection(): BelongsTo
+    {
+        return $this->belongsTo(IntegrationConnection::class, 'calendar_connection_id');
+    }
+
+    /**
+     * The registration allowed to read this tenant's directory.
+     *
+     * Deliberately not the calendar one: `User.Read.All` and the ability to
+     * change authentication methods do not belong on the app that also reads
+     * every mailbox.
+     */
+    public function identityConnection(): BelongsTo
+    {
+        return $this->belongsTo(IntegrationConnection::class, 'identity_connection_id');
     }
 
     // ── Relationships ─────────────────────────────────────────────────────────

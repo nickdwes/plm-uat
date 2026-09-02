@@ -47,7 +47,7 @@ class PayrollController extends Controller
     /** GET /api/v1/payroll/{payrollPeriod} */
     public function show(int $payrollPeriod): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
         $period = $this->service->getPeriod($payrollPeriod);
 
         /*
@@ -103,7 +103,7 @@ class PayrollController extends Controller
     /** GET /api/v1/payroll/{payrollPeriod}/slip/{employee} */
     public function slip(int $payrollPeriod, int $employee): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
         $run = $this->service->getSlip($payrollPeriod, $employee);
         return response()->json($run);
     }
@@ -117,7 +117,7 @@ class PayrollController extends Controller
      */
     public function slipPdf(int $payrollPeriod, int $employee, PayslipPdf $pdf): Response
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $run = $this->service->getSlip($payrollPeriod, $employee);
 
@@ -142,7 +142,7 @@ class PayrollController extends Controller
     /** Who could be sent a payslip for this period, and who could not. */
     public function deliveryRecipients(int $payrollPeriod, PayslipDeliveryService $delivery): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $period = $this->service->getPeriod($payrollPeriod);
 
@@ -200,7 +200,7 @@ class PayrollController extends Controller
     /** The years, as records with a state rather than a query somebody ran. */
     public function p9Reports(): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $orgId = app('current.organization_id');
 
@@ -258,7 +258,7 @@ class PayrollController extends Controller
      */
     public function p9Recipients(int $year, P9DeliveryService $delivery): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $orgId = app('current.organization_id');
 
@@ -313,7 +313,7 @@ class PayrollController extends Controller
     /** One employee's year, month by month — the shape of the actual P9A form. */
     public function p9Months(Request $request, int $employee): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $year  = $request->integer('year', now()->year);
         $orgId = app('current.organization_id');
@@ -348,6 +348,11 @@ class PayrollController extends Controller
     /** GET /api/v1/payroll/p9?year=2025 */
     public function p9(Request $request): JsonResponse
     {
+        // The whole organisation's annual pay and tax figures — the same
+        // gate its sibling listing endpoints already stand behind. This
+        // method predated them and shipped bare.
+        $this->authorize('viewAny', PayrollPeriod::class);
+
         $year  = $request->integer('year', now()->year);
         $orgId = app('current.organization_id');
         $data  = $this->service->getP9Report($orgId, $year);

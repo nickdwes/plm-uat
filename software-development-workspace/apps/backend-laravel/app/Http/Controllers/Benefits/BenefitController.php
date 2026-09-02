@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Benefits;
 
+use App\Support\Authorization\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\Benefits\BenefitApproval;
 use App\Models\Benefits\BenefitDefinition;
@@ -41,10 +42,19 @@ class BenefitController extends Controller
         'is_active'             => 'boolean',
     ];
 
+    /*
+     * Every method guards inline, per the house pattern for policy-less
+     * modules (Goals, OKR, Procurement). Three tiers: `view` reads the
+     * catalogue and the assignments; `manage` administers them; `approve`
+     * decides the approvals that put an employee onto a plan. This module
+     * previously had no checks at all.
+     */
+
     // ── Benefit Definitions ───────────────────────────────────────────────────
 
     public function indexDefinitions(): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_VIEW), 403);
         $orgId = app('current.organization_id');
         $defs  = BenefitDefinition::where('organization_id', $orgId)
             ->orderBy('benefit_type')->orderBy('name')->get();
@@ -53,6 +63,7 @@ class BenefitController extends Controller
 
     public function storeDefinition(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $rules        = self::DEF_RULES;
         $rules['benefit_type'] = 'required|string|in:' . implode(',', self::TYPES);
         $data         = $request->validate($rules);
@@ -63,6 +74,7 @@ class BenefitController extends Controller
 
     public function updateDefinition(Request $request, BenefitDefinition $benefit): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $rules = array_map(fn ($r) => str_replace('required|', 'sometimes|', $r), self::DEF_RULES);
         $rules['benefit_type'] = 'sometimes|string|in:' . implode(',', self::TYPES);
         $data = $request->validate($rules);
@@ -72,6 +84,7 @@ class BenefitController extends Controller
 
     public function destroyDefinition(BenefitDefinition $benefit): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $benefit->delete();
         return response()->json(null, 204);
     }
@@ -80,6 +93,7 @@ class BenefitController extends Controller
 
     public function indexPlans(): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_VIEW), 403);
         $orgId = app('current.organization_id');
         $plans = BenefitPlan::where('organization_id', $orgId)
             ->withCount('assignments')
@@ -90,6 +104,7 @@ class BenefitController extends Controller
 
     public function storePlan(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $data = $request->validate([
             'name'              => 'required|string|max:120',
             'description'       => 'nullable|string',
@@ -116,6 +131,7 @@ class BenefitController extends Controller
 
     public function updatePlan(Request $request, BenefitPlan $plan): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $data = $request->validate([
             'name'              => 'sometimes|string|max:120',
             'description'       => 'nullable|string',
@@ -145,6 +161,7 @@ class BenefitController extends Controller
 
     public function destroyPlan(BenefitPlan $plan): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $plan->delete();
         return response()->json(null, 204);
     }
@@ -153,6 +170,7 @@ class BenefitController extends Controller
 
     public function indexAssignments(): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_VIEW), 403);
         $orgId       = app('current.organization_id');
         $assignments = EmployeeBenefitPlan::whereHas('employee', fn ($q) => $q->where('primary_organization_id', $orgId))
             ->with(['employee', 'plan', 'assignedBy'])
@@ -162,6 +180,7 @@ class BenefitController extends Controller
 
     public function storeAssignment(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $data = $request->validate([
             'employee_id'    => 'required|integer|exists:employees,id',
             'plan_id'        => 'required|integer|exists:benefit_plans,id',
@@ -178,6 +197,7 @@ class BenefitController extends Controller
 
     public function destroyAssignment(EmployeeBenefitPlan $assignment): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $assignment->delete();
         return response()->json(null, 204);
     }
@@ -186,6 +206,7 @@ class BenefitController extends Controller
 
     public function indexDependents(): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_VIEW), 403);
         $orgId = app('current.organization_id');
         $deps  = BenefitDependent::whereHas('employee', fn ($q) => $q->where('primary_organization_id', $orgId))
             ->with('employee')
@@ -195,6 +216,7 @@ class BenefitController extends Controller
 
     public function storeDependent(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $data = $request->validate([
             'employee_id'   => 'required|integer|exists:employees,id',
             'full_name'     => 'required|string|max:120',
@@ -208,6 +230,7 @@ class BenefitController extends Controller
 
     public function destroyDependent(BenefitDependent $dependent): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $dependent->delete();
         return response()->json(null, 204);
     }
@@ -216,6 +239,7 @@ class BenefitController extends Controller
 
     public function indexApprovals(): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_VIEW), 403);
         $orgId     = app('current.organization_id');
         $approvals = BenefitApproval::whereHas('employee', fn ($q) => $q->where('primary_organization_id', $orgId))
             ->with(['employee', 'benefit', 'supervisor'])
@@ -225,6 +249,7 @@ class BenefitController extends Controller
 
     public function storeApproval(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_MANAGE), 403);
         $data = $request->validate([
             'employee_id'           => 'required|integer|exists:employees,id',
             'benefit_definition_id' => 'required|integer|exists:benefit_definitions,id',
@@ -242,6 +267,7 @@ class BenefitController extends Controller
 
     public function actionApproval(Request $request, BenefitApproval $approval): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::BENEFITS_APPROVE), 403);
         $data = $request->validate([
             'status'       => 'required|in:approved,rejected',
             'action_notes' => 'nullable|string',

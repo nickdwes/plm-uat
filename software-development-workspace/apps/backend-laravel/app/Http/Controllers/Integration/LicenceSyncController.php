@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Integration\IntegrationConnection;
 use App\Services\Integration\AzureResourceImport;
 use App\Services\Integration\LicenceAssetImport;
+use App\Services\Integration\LicenceOwnerMapper;
 use App\Services\Integration\LicenceSnapshot;
 use App\Services\Integration\LicenceStatistics;
 use Illuminate\Http\JsonResponse;
@@ -30,6 +31,7 @@ class LicenceSyncController extends Controller
         private readonly LicenceStatistics $statistics,
         private readonly AzureResourceImport $azure,
         private readonly LicenceAssetImport $licenceAssets,
+        private readonly LicenceOwnerMapper $owners,
     ) {}
 
     /** Read the tenant and write the snapshot. */
@@ -94,6 +96,35 @@ class LicenceSyncController extends Controller
 
         try {
             return response()->json(['result' => $this->licenceAssets->import($connection)]);
+        } catch (Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+    }
+
+    /**
+     * Put a name to every licence seat.
+     *
+     * Runs after the import: it matches the directory accounts the sync
+     * already writes to employees here, then allocates a seat on each licence
+     * asset for every SKU that person holds. Seats nobody here matches are
+     * counted and left unallocated, so the gap between Microsoft\'s consumed
+     * figure and ours stays visible rather than being papered over.
+     */
+    public function mapLicenceOwners(Request $request, IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('sync', $connection);
+
+        // A dry run first is the norm here: it says how many seats will land
+        // on whom before anything is written to the register.
+        $commit = ! $request->boolean('preview');
+
+        abort_unless(! $commit || $connection->is_active, 422, 'That connection is paused.');
+
+        try {
+            return response()->json([
+                'result'  => $this->owners->run($connection, $commit),
+                'preview' => ! $commit,
+            ]);
         } catch (Throwable $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

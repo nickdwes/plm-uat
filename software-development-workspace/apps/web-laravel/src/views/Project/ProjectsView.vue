@@ -95,6 +95,16 @@ const date = (v: string | null) =>
 
 const titleCase = (v: string) => v.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
 
+// Status, with a human label and a colour tone — the same five the model has.
+const STATUS_META: Record<string, { label: string; tone: string }> = {
+  kickoff:   { label: "Kickoff",   tone: "kickoff" },
+  in_flight: { label: "In flight", tone: "flight" },
+  on_hold:   { label: "On hold",   tone: "hold" },
+  delivered: { label: "Delivered", tone: "done" },
+  cancelled: { label: "Cancelled", tone: "cancelled" },
+};
+const statusMeta = (s: string) => STATUS_META[s] ?? { label: titleCase(s), tone: "kickoff" };
+
 const initials = (name: string | null | undefined) =>
   (name ?? "?").split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 
@@ -177,20 +187,27 @@ onMounted(load);
     <div v-else-if="view === 'grid'" class="pj-grid">
       <article v-for="p in rows" :key="p.id" class="pj-card"
                @click="router.push({ name: 'project', params: { id: p.id } })">
-        <span :class="['pj-priority', `prio-${p.priority}`]">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-            <path d="M5 3v14M5 4h9l-2 3 2 3H5" />
-          </svg>
-          {{ titleCase(p.priority) }} priority
-        </span>
+        <header class="pj-card-head">
+          <span :class="['pj-status', `st-${statusMeta(p.status).tone}`]">
+            <span class="pj-dot"></span>{{ statusMeta(p.status).label }}
+          </span>
+          <span :class="['pj-priority', `prio-${p.priority}`]">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+              <path d="M5 3v14M5 4h9l-2 3 2 3H5" />
+            </svg>
+            {{ titleCase(p.priority) }}
+          </span>
+        </header>
 
         <h3 class="pj-card-title">{{ p.name }}</h3>
+        <p v-if="p.account" class="pj-card-client">
+          <span class="pj-client-badge">{{ p.account.initials }}</span>{{ p.account.name }}
+        </p>
         <!-- A card is an excerpt, not a document. The description is HTML from the
              old system's editor, much of it pasted from Word — rendered here it
              showed its own tags, and one 3KB description stretched a card past a
              thousand pixels and broke the grid row it sat in. -->
         <p v-if="hasText(p.description)" class="pj-card-sub">{{ excerpt(p.description) }}</p>
-        <p v-else-if="p.account" class="pj-card-sub">For {{ p.account.name }}</p>
 
         <!-- Null progress is said, not drawn as an empty bar: a bar at zero
              claims work has started and stalled. -->
@@ -221,41 +238,59 @@ onMounted(load);
     <div v-else class="pj-panel">
       <table class="pj-table">
         <thead>
-          <tr><th>Project</th><th>Progress</th><th>Assignee</th><th>Due Date</th><th>Priority</th><th>Actions</th></tr>
+          <tr>
+            <th class="pj-col-project">Project</th>
+            <th class="pj-col-client">Client</th>
+            <th class="pj-col-status">Status</th>
+            <th class="pj-col-progress">Progress</th>
+            <th class="pj-col-prio">Priority</th>
+            <th class="pj-col-action"></th>
+          </tr>
         </thead>
         <tbody>
-          <tr v-for="p in rows" :key="p.id">
-            <td class="pj-name">{{ p.name }}</td>
+          <tr v-for="p in rows" :key="p.id" class="pj-row"
+              @click="router.push({ name: 'project', params: { id: p.id } })">
+            <!-- Project name, and its reference underneath for the eye that
+                 scans by code rather than title. -->
+            <td class="pj-name-cell">
+              <span class="pj-name">{{ p.name }}</span>
+              <span v-if="p.reference" class="pj-ref">{{ p.reference }}</span>
+            </td>
+
+            <!-- The client the work is for — the column the old list never had. -->
+            <td>
+              <span v-if="p.account" class="pj-client">
+                <span class="pj-client-badge">{{ p.account.initials }}</span>
+                <span class="pj-client-name">{{ p.account.name }}</span>
+              </span>
+              <span v-else class="pj-muted">Internal</span>
+            </td>
+
+            <td>
+              <span :class="['pj-status', `st-${statusMeta(p.status).tone}`]">
+                <span class="pj-dot"></span>{{ statusMeta(p.status).label }}
+              </span>
+            </td>
+
             <td>
               <span v-if="p.progress === null" class="pj-muted">Not planned</span>
-              <span v-else class="pj-ring">
-                <svg viewBox="0 0 36 36" aria-hidden="true">
-                  <circle class="pj-ring-track" cx="18" cy="18" r="15" />
-                  <circle :class="['pj-ring-fill', `tone-${progressTone(p)}`]" cx="18" cy="18" r="15"
-                          :stroke-dasharray="2 * Math.PI * 15"
-                          :stroke-dashoffset="2 * Math.PI * 15 * (1 - p.progress / 100)" />
-                </svg>
-                <span class="pj-ring-value">{{ p.progress }}%</span>
+              <span v-else class="pj-progress-cell">
+                <span class="pj-bar"><span :class="['pj-bar-fill', `tone-${progressTone(p)}`]"
+                                           :style="{ width: `${p.progress}%` }"></span></span>
+                <span class="pj-progress-value">{{ p.progress }}%</span>
               </span>
             </td>
-            <td>
-              <span v-if="!p.team?.length" class="pj-muted">—</span>
-              <span v-else class="pj-stack">
-                <span v-for="m in p.team.slice(0, 4)" :key="m.id" class="pj-avatar"
-                      :title="m.employee.name ?? ''">{{ initials(m.employee.name) }}</span>
-                <span v-if="p.team.length > 4" class="pj-avatar more">+{{ p.team.length - 4 }}</span>
-              </span>
-            </td>
-            <td :class="['pj-nowrap', { 'pj-late': p.is_overdue }]">{{ date(p.deadline) }}</td>
+
             <td>
               <span :class="['pj-priority', `prio-${p.priority}`]">
                 <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
                   <path d="M5 3v14M5 4h9l-2 3 2 3H5" />
                 </svg>
-                {{ titleCase(p.priority) }} priority
+                {{ titleCase(p.priority) }}
               </span>
             </td>
-            <td><button class="link-btn" @click="router.push({ name: 'project', params: { id: p.id } })">View</button></td>
+
+            <td class="pj-col-action"><span class="pj-view-link">View →</span></td>
           </tr>
         </tbody>
       </table>
@@ -410,6 +445,54 @@ onMounted(load);
   font-size: 0.6rem; font-weight: 600;
 }
 .pj-avatar.more { background: var(--color-brand-subtle); color: var(--color-brand-on-surface); }
+
+/* ── Status pill (list + grid) ─────────────────────────────────────────── */
+.pj-status {
+  @apply inline-flex items-center; gap: 6px; white-space: nowrap;
+  font-size: var(--text-xs-size); font-weight: 500;
+  padding: 3px 10px; border-radius: 999px;
+  background: var(--color-surface-sunken); color: var(--color-text);
+}
+.pj-dot { width: 6px; height: 6px; border-radius: 999px; background: var(--color-text-light); flex: 0 0 auto; }
+.st-kickoff   .pj-dot { background: var(--color-text-light); }
+.st-flight    .pj-dot { background: var(--color-brand-base); }
+.st-hold      .pj-dot { background: var(--color-warning-text); }
+.st-done      .pj-dot { background: var(--color-success-text); }
+.st-cancelled .pj-dot { background: var(--color-danger-text); }
+.st-flight { color: var(--color-brand-on-surface); }
+.st-done   { color: var(--color-success-text); }
+.st-cancelled { color: var(--color-text-muted); }
+
+/* ── Client (list + grid) ──────────────────────────────────────────────── */
+.pj-client { @apply inline-flex items-center; gap: var(--space-2); min-width: 0; }
+.pj-client-badge {
+  @apply inline-flex items-center justify-center flex-none;
+  width: 1.6rem; height: 1.6rem; border-radius: var(--radius-md);
+  background: var(--color-brand-subtle); color: var(--color-brand-on-surface);
+  font-size: 0.6rem; font-weight: 700; letter-spacing: .02em;
+}
+.pj-client-name { @apply truncate; }
+.pj-card-client {
+  @apply inline-flex items-center; gap: var(--space-2);
+  font-size: var(--text-xs-size); color: var(--color-text-muted); margin: 0;
+}
+
+/* ── List rows ─────────────────────────────────────────────────────────── */
+.pj-table td { vertical-align: middle; }
+.pj-row { @apply cursor-pointer; transition: background 120ms ease; }
+.pj-row:hover { background: var(--color-surface-sunken); }
+.pj-name-cell { @apply flex flex-col; gap: 2px; }
+.pj-ref { font-size: var(--text-xs-size); color: var(--color-text-light); font-variant-numeric: tabular-nums; }
+.pj-progress-cell { @apply flex items-center; gap: var(--space-2); min-width: 7rem; }
+.pj-progress-cell .pj-bar { width: 4.5rem; flex: 0 0 auto; }
+.pj-view-link { font-size: var(--text-sm-size); font-weight: 500; color: var(--color-brand-on-surface); white-space: nowrap; }
+.pj-col-project { width: 34%; }
+.pj-col-client  { width: 22%; }
+.pj-col-action  { text-align: right; }
+.pj-col-action, .pj-col-status, .pj-col-progress, .pj-col-prio { white-space: nowrap; }
+
+/* ── Grid card head ────────────────────────────────────────────────────── */
+.pj-card-head { @apply flex items-center justify-between; gap: var(--space-2); }
 
 /* ── Shared ────────────────────────────────────────────────────────────── */
 .pj-field { @apply flex flex-col; gap: var(--space-1); }

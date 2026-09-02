@@ -33,7 +33,23 @@ type Tab =
 
 const tab = ref<Tab>("profile-overview");
 
-const TABS: { key: Tab; label: string }[] = [
+/*
+ * Which tabs need the sensitive gate.
+ *
+ * `hasSensitive` is the server's own answer, probed from the response — the
+ * resource omits these fields unless the caller holds
+ * `employees.view_sensitive`, is HR, or is looking at themselves, and the
+ * compensation endpoint enforces the same rule plus a step-up. So the tabs
+ * follow the fields: no second rule to drift, and looking at your own record
+ * keeps every tab.
+ *
+ * The rest ask nothing further — their endpoints check the same employee
+ * `view` policy that let the caller open this page, and their contents are
+ * that module's rows scoped to one person.
+ */
+const SENSITIVE_TABS: Tab[] = ["payroll", "emergency-contacts", "dependents"];
+
+const ALL_TABS: { key: Tab; label: string }[] = [
   { key: "profile-overview",   label: "Profile Overview" },
   { key: "job-details",        label: "Job Details" },
   { key: "emergency-contacts", label: "Emergency Contacts" },
@@ -63,6 +79,9 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "vehicles",           label: "Vehicles" },
 ];
 
+const TABS = computed(() =>
+  ALL_TABS.filter((t) => !SENSITIVE_TABS.includes(t.key) || hasSensitive.value));
+
 // ── Documents ──────────────────────────────────────────────────────────────
 /*
  * Contracts, ID copies, certificates. The onboarding wizard could upload these
@@ -76,6 +95,7 @@ const TABS: { key: Tab; label: string }[] = [
 interface EmployeeDoc {
   id: number; category: string; original_name: string;
   mime_type: string; size_bytes: number; created_at: string;
+  is_confidential?: boolean;
 }
 
 const DOC_CATEGORIES = [
@@ -96,6 +116,10 @@ const docsLoading   = ref(false);
 const docError      = ref("");
 const docUploading  = ref(false);
 const docCategory   = ref("other");
+// Whether the caller may see (and therefore flag) confidential documents —
+// the server says so on the listing, the same signal that filtered it.
+const canFlagConfidential = ref(false);
+const docConfidential     = ref(false);
 const docFileInput  = ref<HTMLInputElement | null>(null);
 
 const docLabel = (v: string) =>
@@ -112,9 +136,10 @@ async function loadDocs(): Promise<void> {
   if (docsLoading.value) return;
   docsLoading.value = true; docError.value = "";
   try {
-    const res = await api<{ data: EmployeeDoc[] }>("GET",
+    const res = await api<{ data: EmployeeDoc[]; can_flag_confidential?: boolean }>("GET",
       `/api/v1/employees/${props.id}/documents`, { org: org() });
     docs.value = res.data ?? [];
+    canFlagConfidential.value = res.can_flag_confidential ?? false;
     docsLoaded.value = true;
   } catch (e) {
     docError.value = e instanceof Error ? e.message : "Could not load documents.";
@@ -440,6 +465,7 @@ async function uploadDoc(e: Event): Promise<void> {
     const form = new FormData();
     form.append("file", file);
     form.append("category", docCategory.value);
+    if (docConfidential.value) form.append("is_confidential", "1");
 
     await api("POST", `/api/v1/employees/${props.id}/documents`, { org: org(), formData: form });
     await loadDocs();
@@ -2458,6 +2484,11 @@ onMounted(() => {
           <div class="ed-section-hdr" style="margin-bottom:12px">
             <h3 class="ed-section-title" style="margin:0">Documents</h3>
             <div v-if="hasSensitive" class="ed-doc-upload">
+              <!-- Offered only to people the flag would not lock out. -->
+              <label v-if="canFlagConfidential" class="ed-doc-conf">
+                <input v-model="docConfidential" type="checkbox" />
+                Confidential
+              </label>
               <select v-model="docCategory" class="input ed-doc-cat">
                 <option v-for="c in DOC_CATEGORIES" :key="c.value" :value="c.value">{{ c.label }}</option>
               </select>
@@ -2489,7 +2520,10 @@ onMounted(() => {
           <div v-else-if="docs.length" class="ed-doc-list">
             <div v-for="d in docs" :key="d.id" class="ed-doc-row">
               <div class="ed-doc-main">
-                <span class="ed-doc-name">{{ d.original_name }}</span>
+                <span class="ed-doc-name">
+                  {{ d.original_name }}
+                  <span v-if="d.is_confidential" class="ed-doc-conf-badge">Confidential</span>
+                </span>
                 <span class="ed-doc-meta">
                   {{ docLabel(d.category) }} · {{ humanSize(d.size_bytes) }} · {{ fmtDate(d.created_at) }}
                 </span>
@@ -2565,6 +2599,17 @@ onMounted(() => {
 .ed-doc-cat { max-width: 14rem; }
 /* The real input is driven by the button beside it, so the browser's own
    "No file chosen" text never appears next to our own controls. */
+.ed-doc-conf {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: var(--text-xs-size); color: var(--color-text);
+  cursor: pointer; white-space: nowrap;
+}
+.ed-doc-conf-badge {
+  display: inline-flex; align-items: center;
+  margin-left: 8px; padding: 1px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  background: var(--color-warning-light); color: #7C2D12;
+}
 .ed-doc-file { display: none; }
 .ed-doc-list { display: flex; flex-direction: column; }
 .ed-doc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #e2e8f0; }

@@ -112,6 +112,9 @@ class EmployeeController extends Controller
         $employees = Employee::query()
             ->when($orgId, fn ($q) => $q->forOrganization($orgId))
             ->where('status', 'active')
+            // Narrowed to a department when the caller is picking from one — an
+            // "assign to" form that has already chosen where the work sits.
+            ->when($request->integer('department_id'), fn ($q, $d) => $q->where('department_id', $d))
             ->when($term !== '', function ($q) use ($term) {
                 $like = '%' . $term . '%';
                 $q->where(fn ($w) => $w

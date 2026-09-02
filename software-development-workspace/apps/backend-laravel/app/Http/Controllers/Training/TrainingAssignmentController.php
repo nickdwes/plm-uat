@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Training;
 
+use App\Support\Authorization\Permission;
 use App\Http\Requests\Training\ApproveAssignmentRequest;
 use App\Http\Requests\Training\BulkAssignTrainingRequest;
 use App\Http\Requests\Training\RejectAssignmentRequest;
@@ -25,6 +26,7 @@ class TrainingAssignmentController
      */
     public function bulkCreate(BulkAssignTrainingRequest $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::TRAINING_MANAGE), 403);
         $organizationId = app('current.organization_id');
         $validated = $request->validated();
 
@@ -71,6 +73,7 @@ class TrainingAssignmentController
      */
     public function index(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::TRAINING_VIEW), 403);
         $organizationId = app('current.organization_id');
         $perPage = $request->query('per_page', 20);
 
@@ -105,6 +108,7 @@ class TrainingAssignmentController
      */
     public function show(string $id): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::TRAINING_VIEW), 403);
         $organizationId = app('current.organization_id');
 
         $assignment = TrainingAssignment::byOrganization($organizationId)
@@ -121,6 +125,7 @@ class TrainingAssignmentController
      */
     public function approve(ApproveAssignmentRequest $request, string $id): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::TRAINING_APPROVE), 403);
         $organizationId = app('current.organization_id');
 
         $result = $this->service->approve($id, $organizationId, $request->validated('notes'));
@@ -133,6 +138,7 @@ class TrainingAssignmentController
      */
     public function reject(RejectAssignmentRequest $request, string $id): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::TRAINING_APPROVE), 403);
         $organizationId = app('current.organization_id');
 
         $result = $this->service->reject($id, $organizationId, $request->validated('reason'));
@@ -145,6 +151,7 @@ class TrainingAssignmentController
      */
     public function stats(Request $request): JsonResponse
     {
+        abort_unless(request()->user()->hasPermission(Permission::TRAINING_VIEW), 403);
         $organizationId = app('current.organization_id');
         $managerId = $request->query('manager_id');
 

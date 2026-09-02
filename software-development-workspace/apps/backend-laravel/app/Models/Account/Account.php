@@ -6,9 +6,12 @@ use App\Models\Concerns\BelongsToOrganization;
 use App\Models\Employee;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * A customer.
@@ -19,10 +22,10 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  */
 class Account extends Model
 {
-    use BelongsToOrganization, SoftDeletes;
+    use BelongsToOrganization, SoftDeletes, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
-        'organization_id', 'name', 'reference', 'status', 'enrolled_on', 'last_contact_at',
+        'organization_id', 'name', 'logo_path', 'reference', 'status', 'enrolled_on', 'last_contact_at',
         'account_manager_id', 'account_type_id', 'account_sector_id', 'account_subsector_id',
         'country', 'city', 'physical_location', 'number_of_branches', 'number_of_employees',
         'fund_source', 'existing_products', 'budget_range', 'lead_source', 'pipeline_stage',
@@ -143,6 +146,30 @@ class Account extends Model
     }
 
     /**
+     * Work delivered for this customer, and problems raised about it.
+     *
+     * Both links have existed on their own tables since those modules were
+     * built (71 projects already name an account); the customer record simply
+     * never looked back down them, which is why its Projects and Support tabs
+     * still said "not built yet".
+     */
+    public function projects(): HasMany
+    {
+        return $this->hasMany(\App\Models\Project\Project::class);
+    }
+
+    public function supportTickets(): HasMany
+    {
+        return $this->hasMany(\App\Models\Support\Ticket::class);
+    }
+
+    /** Who is watching this customer. */
+    public function followers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'account_followers')->withTimestamps();
+    }
+
+    /**
      * Headcount as the band the screens show.
      *
      * Derived rather than stored beside the number: two columns would let a
@@ -165,6 +192,15 @@ class Account extends Model
      * Initials for the avatar the screens show, so every surface derives the
      * same two or three letters rather than each inventing its own.
      */
+    /**
+     * The client's logo as a servable URL, or null when none is set — the
+     * same public-disk pattern the organisation's own logo uses.
+     */
+    public function logoUrl(): ?string
+    {
+        return $this->logo_path ? Storage::disk('public')->url($this->logo_path) : null;
+    }
+
     public function getInitialsAttribute(): string
     {
         $words = preg_split('/[\s\-]+/', trim((string) $this->name), -1, PREG_SPLIT_NO_EMPTY) ?: [];

@@ -1,4 +1,21 @@
 <script setup lang="ts">
+import { can } from "../stores/permissions";
+import { routeAllowed } from "../lib/navPermissions";
+
+/*
+ * One map decides the sidebar and the router alike (lib/navPermissions.ts):
+ * an item hidden here is a route the guard refuses and an API that 403s.
+ * Client-side only in the UX sense — the server remains the authority.
+ */
+const show = (routeName: string) => routeAllowed(routeName, can);
+
+/*
+ * A collapsible group follows its children: when the role opens none of them,
+ * the header is a door to an empty room. Groups holding an always-open child
+ * (My Info, My Leave) never hide, which is correct — everyone has a self.
+ */
+const showGroup = (...routeNames: string[]) => routeNames.some(show);
+
 import { computed, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { authStore, clearAuth } from "../stores/auth";
@@ -55,7 +72,7 @@ watch(() => route.name, () => {
 
     <nav class="sidebar-nav">
       <!-- Dashboard -->
-      <router-link :to="{ name: 'hr-dashboard' }" :class="['nav-item', { active: isActive('hr-dashboard') }]">
+      <router-link v-if="show('hr-dashboard')" :to="{ name: 'hr-dashboard' }" :class="['nav-item', { active: isActive('hr-dashboard') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M3 4a1 1 0 011-1h5a1 1 0 011 1v5a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 8a1 1 0 011-1h5a1 1 0 011 1v4a1 1 0 01-1 1H4a1 1 0 01-1-1v-4zm8-8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V4zm0 8a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
         </svg>
@@ -96,13 +113,13 @@ watch(() => route.name, () => {
           </svg>
           My Info
         </router-link>
-        <router-link :to="{ name: 'employees' }" :class="['nav-item', 'nav-child', { active: isActive('employee') }]">
+        <router-link v-if="show('employees')" :to="{ name: 'employees' }" :class="['nav-item', 'nav-child', { active: isActive('employee') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path d="M9 6a3 3 0 11-6 0 3 3 0 016 0zm8 0a3 3 0 11-6 0 3 3 0 016 0zM.458 18C1.64 14.435 5.08 12 9 12s7.36 2.435 8.542 6H.458z" />
           </svg>
           All Employees
         </router-link>
-        <router-link :to="{ name: 'people-report' }" :class="['nav-item', 'nav-child', { active: isActive('people-report') }]">
+        <router-link v-if="show('people-report')" :to="{ name: 'people-report' }" :class="['nav-item', 'nav-child', { active: isActive('people-report') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm2 4h8v1.5H6V7zm0 3.5h8V12H6v-1.5zm0 3.5h5v1.5H6V14z" clip-rule="evenodd" />
           </svg>
@@ -115,13 +132,13 @@ watch(() => route.name, () => {
           itself. Starting somebody from scratch is still a button on All
           Employees.
         -->
-        <router-link :to="{ name: 'roster' }" :class="['nav-item', 'nav-child', { active: isActive('roster') }]">
+        <router-link v-if="show('roster')" :to="{ name: 'roster' }" :class="['nav-item', 'nav-child', { active: isActive('roster') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zM4 8h12v8H4V8zm5 2a1 1 0 000 2h2a1 1 0 100-2H9zm-1 4a1 1 0 011-1h4a1 1 0 110 2H9a1 1 0 01-1-1z" clip-rule="evenodd" />
           </svg>
           Roster
         </router-link>
-        <router-link :to="{ name: 'payroll' }" :class="['nav-item', 'nav-child', { active: isActive('payroll') }]">
+        <router-link v-if="show('payroll')" :to="{ name: 'payroll' }" :class="['nav-item', 'nav-child', { active: isActive('payroll') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-13a1 1 0 10-2 0v.092a4.535 4.535 0 00-1.676.662C6.602 6.234 6 7.009 6 8c0 .99.602 1.765 1.324 2.246.48.32 1.054.545 1.676.662v1.941c-.391-.127-.68-.317-.843-.504a1 1 0 10-1.51 1.31c.562.649 1.413 1.077 2.353 1.253V15a1 1 0 102 0v-.092a4.535 4.535 0 001.676-.662C13.398 13.766 14 12.991 14 12c0-.99-.602-1.765-1.324-2.246A4.535 4.535 0 0011 9.092V7.151c.391.127.68.317.843.504a1 1 0 101.511-1.31c-.563-.649-1.413-1.077-2.354-1.253V5z" clip-rule="evenodd" />
           </svg>
@@ -166,7 +183,7 @@ watch(() => route.name, () => {
 
       <!-- ── Performance ────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('performance') || isActive('goals') || route.name === 'okr-cycles' }]"
+        v-if="showGroup('performance', 'goals', 'okr-cycles')" :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('performance') || isActive('goals') || route.name === 'okr-cycles' }]"
         @click="performanceOpen = !performanceOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -178,21 +195,21 @@ watch(() => route.name, () => {
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       </button>
-      <div class="nav-group-children" :class="{ open: performanceOpen }">
-        <router-link :to="{ name: 'performance' }" :class="['nav-item', 'nav-child', { active: isActive('performance') && !isActive('goals') }]">
+      <div v-if="showGroup('performance', 'goals', 'okr-cycles')" class="nav-group-children" :class="{ open: performanceOpen }">
+        <router-link v-if="show('performance')" :to="{ name: 'performance' }" :class="['nav-item', 'nav-child', { active: isActive('performance') && !isActive('goals') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z" />
             <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z" />
           </svg>
           Overview
         </router-link>
-        <router-link :to="{ name: 'goals' }" :class="['nav-item', 'nav-child', { active: isActive('goals') }]">
+        <router-link v-if="show('goals')" :to="{ name: 'goals' }" :class="['nav-item', 'nav-child', { active: isActive('goals') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm0-2a6 6 0 100-12 6 6 0 000 12zm0-2a4 4 0 100-8 4 4 0 000 8zm0-2a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
           </svg>
           Goals
         </router-link>
-        <router-link :to="{ name: 'okr-cycles' }" :class="['nav-item', 'nav-child', { active: route.name === 'okr-cycles' }]">
+        <router-link v-if="show('okr-cycles')" :to="{ name: 'okr-cycles' }" :class="['nav-item', 'nav-child', { active: route.name === 'okr-cycles' }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
           </svg>
@@ -201,7 +218,7 @@ watch(() => route.name, () => {
       </div>
 
       <!-- ── Recruitment ─────────────────────────────────────────────────────── -->
-      <router-link :to="{ name: 'requisitions' }" :class="['nav-item', { active: isActive('requisition') }]">
+      <router-link v-if="show('requisitions')" :to="{ name: 'requisitions' }" :class="['nav-item', { active: isActive('requisition') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path fill-rule="evenodd" d="M6 6V5a3 3 0 013-3h2a3 3 0 013 3v1h2a2 2 0 012 2v3.57A22.952 22.952 0 0110 13a22.95 22.95 0 01-8-1.43V8a2 2 0 012-2h2zm2-1a1 1 0 011-1h2a1 1 0 011 1v1H8V5zm1 5a1 1 0 011-1h.01a1 1 0 110 2H10a1 1 0 01-1-1z" clip-rule="evenodd" />
           <path d="M2 13.692V16a2 2 0 002 2h12a2 2 0 002-2v-2.308A24.974 24.974 0 0110 15c-2.796 0-5.487-.46-8-1.308z" />
@@ -213,7 +230,7 @@ watch(() => route.name, () => {
            pipeline, the application form and the screening rules all hang off
            it. Reaching it through a landing grid made it look like somebody
            else's sub-feature. -->
-      <router-link :to="{ name: 'vacancies' }" :class="['nav-item', { active: isActive('vacanc') }]">
+      <router-link v-if="show('vacancies')" :to="{ name: 'vacancies' }" :class="['nav-item', { active: isActive('vacanc') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="6" width="14" height="10" rx="2" /><path d="M7 6V4.5h6V6" />
@@ -224,7 +241,7 @@ watch(() => route.name, () => {
       <!-- Everybody between an accepted offer and a first day. Beside the
            hiring rather than buried in HR admin, because that is the journey
            it continues. -->
-      <router-link :to="{ name: 'onboarding-queue' }"
+      <router-link v-if="show('onboarding-queue')" :to="{ name: 'onboarding-queue' }"
                    :class="['nav-item', { active: isActive('onboarding') || isActive('preboarding') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -235,7 +252,7 @@ watch(() => route.name, () => {
 
       <!-- ── Training & Competency ───────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('training') }]"
+        v-if="showGroup('training', 'training-approvals')" :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('training') }]"
         @click="trainingOpen = !trainingOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -247,15 +264,15 @@ watch(() => route.name, () => {
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       </button>
-      <div class="nav-group-children" :class="{ open: trainingOpen }">
-        <router-link :to="{ name: 'training' }" :class="['nav-item', 'nav-child', { active: route.name === 'training' }]">
+      <div v-if="showGroup('training', 'training-approvals')" class="nav-group-children" :class="{ open: trainingOpen }">
+        <router-link v-if="show('training')" :to="{ name: 'training' }" :class="['nav-item', 'nav-child', { active: route.name === 'training' }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path d="M6 4a2 2 0 012-2h6a2 2 0 012 2v14a2 2 0 01-2 2H8a2 2 0 01-2-2V4zm2 0h6v14H8V4z" />
             <path d="M5 13a1 1 0 10-2 0v4a1 1 0 102 0v-4z" />
           </svg>
           Catalog
         </router-link>
-        <router-link :to="{ name: 'training-approvals' }" :class="['nav-item', 'nav-child', { active: isActive('training-approvals') }]">
+        <router-link v-if="show('training-approvals')" :to="{ name: 'training-approvals' }" :class="['nav-item', 'nav-child', { active: isActive('training-approvals') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414L8.414 15l-5.121-5.121a1 1 0 011.414-1.414L8.414 12.172l6.879-6.879a1 1 0 011.414 0z" clip-rule="evenodd" />
           </svg>
@@ -266,19 +283,23 @@ watch(() => route.name, () => {
       <!-- ── Section: Operations ─────────────────────────────────────────────── -->
       <!-- Modules ported from Plmv2. Travel, then Projects and Tasks, follow
            here as they land — see docs/plm-modules-implementation-plan.md. -->
-      <div class="sidebar-divider"></div>
-      <div class="sidebar-section">Operations</div>
+      <template v-if="showGroup('leads', 'opportunities', 'research', 'accounts', 'projects',
+                                'tasks', 'support', 'assets', 'procurement',
+                                'travel-requests', 'deliveries', 'licence-statistics')">
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">Operations</div>
+      </template>
 
       <!-- ── Pipeline ───────────────────────────────────────────────────────── -->
       <!-- Leads then Opportunities, in the order work moves through them. -->
-      <router-link :to="{ name: 'leads' }" :class="['nav-item', { active: isActive('lead') }]">
+      <router-link v-if="show('leads')" :to="{ name: 'leads' }" :class="['nav-item', { active: isActive('lead') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M10 3l7 13H3l7-13z" />
         </svg>
         Leads
       </router-link>
-      <router-link :to="{ name: 'opportunities' }" :class="['nav-item', { active: isActive('opportunit') }]">
+      <router-link v-if="show('opportunities')" :to="{ name: 'opportunities' }" :class="['nav-item', { active: isActive('opportunit') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="10" cy="10" r="7" /><path d="M13.5 6.5L9 11 7 9" />
@@ -286,7 +307,7 @@ watch(() => route.name, () => {
         Opportunities
       </router-link>
 
-      <router-link :to="{ name: 'research' }" :class="['nav-item', { active: isActive('research') }]">
+      <router-link v-if="show('research')" :to="{ name: 'research' }" :class="['nav-item', { active: isActive('research') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="14" height="14" rx="2" />
@@ -295,18 +316,30 @@ watch(() => route.name, () => {
         Research
       </router-link>
 
-      <router-link :to="{ name: 'projects' }" :class="['nav-item', { active: isActive('project') }]">
+      <router-link v-if="show('projects')" :to="{ name: 'projects' }" :class="['nav-item', { active: isActive('project') && route.name !== 'projects-dashboard' && route.name !== 'projects-pm-definitions' }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M2.5 6a1.5 1.5 0 011.5-1.5h3l1.5 2h6A1.5 1.5 0 0116 8v6.5a1.5 1.5 0 01-1.5 1.5h-10A1.5 1.5 0 013 14.5V6z" />
         </svg>
         Projects
       </router-link>
+      <router-link v-if="show('projects-dashboard')" :to="{ name: 'projects-dashboard' }" :class="['nav-item', 'nav-child', { active: route.name === 'projects-dashboard' }]">
+        <svg viewBox="0 0 20 20" fill="currentColor">
+          <path d="M3 3h6v8H3V3zm8 0h6v4h-6V3zM3 13h6v4H3v-4zm8-4h6v8h-6V9z" />
+        </svg>
+        Projects Dashboard
+      </router-link>
+      <router-link v-if="show('projects-pm-definitions')" :to="{ name: 'projects-pm-definitions' }" :class="['nav-item', 'nav-child', { active: route.name === 'projects-pm-definitions' }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 4h9M4 8h9M4 12h6" /><path d="M15.5 11.5l1.5 1.5-3.5 3.5H12v-1.5l3.5-3.5z" />
+        </svg>
+        PM Task Definitions
+      </router-link>
 
       <!-- Tasks sits with the modules rather than under Projects, because most
            work has no project — support, meetings, training and internal jobs
            made up three quarters of the legacy's. -->
-      <router-link :to="{ name: 'tasks' }" :class="['nav-item', { active: isActive('task') }]">
+      <router-link v-if="show('tasks')" :to="{ name: 'tasks' }" :class="['nav-item', { active: isActive('task') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M7 4h9M7 10h9M7 16h9" /><path d="M3 4.5l1 1 1.5-2M3 10.5l1 1 1.5-2M3 16.5l1 1 1.5-2" />
@@ -317,7 +350,7 @@ watch(() => route.name, () => {
       <!-- ── Customers ──────────────────────────────────────────────────────── -->
       <!-- Before Travel, because a travel request names the customer it is
            for — you reach for this to file one, not after. -->
-      <router-link :to="{ name: 'accounts' }" :class="['nav-item', { active: isActive('account') }]">
+      <router-link v-if="show('accounts')" :to="{ name: 'accounts' }" :class="['nav-item', { active: isActive('account') }]">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
              stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
           <path d="M3 16.5v-9l4-2.5 4 2.5v9M11 16.5v-6l3-2 3 2v6M2 16.5h16" />
@@ -328,7 +361,7 @@ watch(() => route.name, () => {
 
       <!-- ── Travel ─────────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('travel') }]"
+        v-if="showGroup('travel-requests', 'deliveries')" :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('travel') }]"
         @click="travelOpen = !travelOpen"
       >
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
@@ -340,15 +373,15 @@ watch(() => route.name, () => {
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       </button>
-      <div class="nav-group-children" :class="{ open: travelOpen }">
-        <router-link :to="{ name: 'travel-requests' }" :class="['nav-item', 'nav-child', { active: route.name === 'travel-requests' || route.name === 'travel-request' || route.name === 'travel-request-new' }]">
+      <div v-if="showGroup('travel-requests', 'deliveries')" class="nav-group-children" :class="{ open: travelOpen }">
+        <router-link v-if="show('travel-requests')" :to="{ name: 'travel-requests' }" :class="['nav-item', 'nav-child', { active: route.name === 'travel-requests' || route.name === 'travel-request' || route.name === 'travel-request-new' }]">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M2.5 11.5l15-5-5 15-2.5-6.5-7.5-3.5z" />
           </svg>
           Travel Requests
         </router-link>
-        <router-link :to="{ name: 'deliveries' }" :class="['nav-item', 'nav-child', { active: route.name === 'deliveries' || route.name === 'delivery' }]">
+        <router-link v-if="show('deliveries')" :to="{ name: 'deliveries' }" :class="['nav-item', 'nav-child', { active: route.name === 'deliveries' || route.name === 'delivery' }]">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
                stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M2.5 6.5l7.5-3.5 7.5 3.5v7l-7.5 3.5-7.5-3.5v-7z" />
@@ -358,23 +391,31 @@ watch(() => route.name, () => {
         </router-link>
 
       </div>
-      <router-link :to="{ name: 'support' }" :class="['nav-item', { active: isActive('support') }]">
+      <router-link v-if="show('support')" :to="{ name: 'support' }" :class="['nav-item', { active: isActive('support') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M18 10a8 8 0 10-16 0 8 8 0 0016 0zM8.5 8.5a1.5 1.5 0 113 0c0 .8-.4 1.2-1 1.6-.5.4-.75.7-.75 1.4h-1.5c0-1.2.5-1.8 1.1-2.2.4-.3.65-.5.65-.8a.5.5 0 00-1 0h-.5zM10 13a1 1 0 100 2 1 1 0 000-2z" />
         </svg>
         Service Desk
       </router-link>
 
-      <router-link :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
+      <router-link v-if="show('assets')" :to="{ name: 'assets' }" :class="['nav-item', { active: isActive('asset') }]">
         <svg viewBox="0 0 20 20" fill="currentColor">
           <path d="M3 5a2 2 0 012-2h10a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5zm2 10a1 1 0 00-1 1 1 1 0 001 1h10a1 1 0 001-1 1 1 0 00-1-1H5z" />
         </svg>
         Assets
       </router-link>
 
+      <router-link v-if="show('procurement')" :to="{ name: 'procurement' }" :class="['nav-item', { active: route.name === 'procurement' }]">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 4h2l1.5 9h8L16 6H6" /><circle cx="8" cy="16.5" r="1" /><circle cx="14" cy="16.5" r="1" />
+        </svg>
+        Procurement
+      </router-link>
+
 
 
       <router-link
+        v-if="show('licence-statistics')"
         :to="{ name: 'licence-statistics' }"
         :class="['nav-item', { active: isActive('licence') }]"
       >
@@ -385,11 +426,13 @@ watch(() => route.name, () => {
       </router-link>
 
       <!-- ── Section: Vendor Management ─────────────────────────────────────── -->
-      <div class="sidebar-divider"></div>
-      <div class="sidebar-section">Vendor Management</div>
+      <template v-if="showGroup('vendors', 'vendor-compliance')">
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-section">Vendor Management</div>
+      </template>
 
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('vendor') }]"
+        v-if="showGroup('vendors', 'vendor-compliance')" :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('vendor') }]"
         @click="vendorOpen = !vendorOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -400,14 +443,14 @@ watch(() => route.name, () => {
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       </button>
-      <div class="nav-group-children" :class="{ open: vendorOpen }">
-        <router-link :to="{ name: 'vendors' }" :class="['nav-item', 'nav-child', { active: isActive('vendor') && !isActive('vendor-compliance') }]">
+      <div v-if="showGroup('vendors', 'vendor-compliance')" class="nav-group-children" :class="{ open: vendorOpen }">
+        <router-link v-if="show('vendors')" :to="{ name: 'vendors' }" :class="['nav-item', 'nav-child', { active: isActive('vendor') && !isActive('vendor-compliance') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd"/>
           </svg>
           All Vendors
         </router-link>
-        <router-link :to="{ name: 'vendor-compliance' }" :class="['nav-item', 'nav-child', { active: isActive('vendor-compliance') }]">
+        <router-link v-if="show('vendor-compliance')" :to="{ name: 'vendor-compliance' }" :class="['nav-item', 'nav-child', { active: isActive('vendor-compliance') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
             <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm9.707 5.707a1 1 0 00-1.414-1.414L9 12.586l-1.293-1.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
@@ -421,7 +464,7 @@ watch(() => route.name, () => {
 
       <!-- ── Organisation ──────────────────────────────────────────────────────── -->
       <button
-        :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('org') }]"
+        v-if="showGroup('org', 'benefit-plans', 'public-holidays', 'role-assignments', 'user-directory', 'audit-log')" :class="['nav-item', 'nav-group-toggle', { 'group-active': isActive('org') }]"
         @click="orgOpen = !orgOpen"
       >
         <svg viewBox="0 0 20 20" fill="currentColor">
@@ -432,30 +475,45 @@ watch(() => route.name, () => {
           <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
         </svg>
       </button>
-      <div class="nav-group-children" :class="{ open: orgOpen }">
-        <router-link :to="{ name: 'org' }" :class="['nav-item', 'nav-child', { active: route.name === 'org' || isActive('org-profile') }]">
+      <div v-if="showGroup('org', 'benefit-plans', 'public-holidays', 'role-assignments', 'user-directory', 'audit-log')" class="nav-group-children" :class="{ open: orgOpen }">
+        <router-link v-if="show('org')" :to="{ name: 'org' }" :class="['nav-item', 'nav-child', { active: route.name === 'org' || isActive('org-profile') }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z" clip-rule="evenodd" />
           </svg>
           Organisation
         </router-link>
-        <router-link :to="{ name: 'benefit-plans' }" :class="['nav-item', 'nav-child', { active: route.name === 'benefit-plans' }]">
+        <router-link v-if="show('benefit-plans')" :to="{ name: 'benefit-plans' }" :class="['nav-item', 'nav-child', { active: route.name === 'benefit-plans' }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd" />
           </svg>
           Benefit Plans
         </router-link>
-        <router-link :to="{ name: 'public-holidays' }" :class="['nav-item', 'nav-child', { active: route.name === 'public-holidays' }]">
+        <router-link v-if="show('public-holidays')" :to="{ name: 'public-holidays' }" :class="['nav-item', 'nav-child', { active: route.name === 'public-holidays' }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd" />
           </svg>
           Public Holidays
         </router-link>
-        <router-link :to="{ name: 'role-assignments' }" :class="['nav-item', 'nav-child', { active: route.name === 'role-assignments' }]">
+        <!-- Both halves of the same administration: what a login may do, and
+             which employee it belongs to. Either entry lights the other's
+             sibling tab, so they read as one area. -->
+        <router-link v-if="show('role-assignments')" :to="{ name: 'role-assignments' }" :class="['nav-item', 'nav-child', { active: route.name === 'role-assignments' }]">
           <svg viewBox="0 0 20 20" fill="currentColor">
             <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd" />
           </svg>
           Role Assignments
+        </router-link>
+        <router-link v-if="show('user-directory')" :to="{ name: 'user-directory' }" :class="['nav-item', 'nav-child', { active: route.name === 'user-directory' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.97 5.97 0 00-.75-2.906A3 3 0 0119 15v3h-3zM4.75 12.094A5.97 5.97 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+          </svg>
+          Users
+        </router-link>
+        <router-link v-if="show('audit-log')" :to="{ name: 'audit-log' }" :class="['nav-item', 'nav-child', { active: route.name === 'audit-log' }]">
+          <svg viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd" />
+          </svg>
+          Audit Log
         </router-link>
       </div>
     </nav>

@@ -150,21 +150,45 @@ class WorkspaceController extends Controller
 
         $orgId = app('current.organization_id');
 
-        $userIds = $request->filled('team')
-            ? (Team::find($request->integer('team'))?->assignableUserIds() ?? [])
-            : Engineer::where('is_active', true)->pluck('user_id')->all();
+        if ($request->filled('department')) {
+            // A named picker for "everyone in Technical", not just the
+            // people the routing algorithm already knows about. "Technical"
+            // is as likely to name a Functional Unit as a Department now
+            // that the org tree has grown a level — match either, and pull
+            // in every department that Functional Unit owns.
+            $term = $request->string('department');
 
-        /*
-         * Anybody currently holding work is included even if they are not set
-         * up as an engineer. A load report that omits the person carrying
-         * fifteen tickets because nobody filled in their profile is worse than
-         * no report.
-         */
-        $holding = Ticket::whereNotNull('assigned_to')
-            ->whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']))
-            ->distinct()->pluck('assigned_to')->all();
+            $functionalUnitIds = \App\Models\OrgFunctionalUnit::where('organization_id', $orgId)
+                ->where('name', 'ilike', "%{$term}%")
+                ->pluck('id');
 
-        $userIds = array_values(array_unique(array_merge($userIds, $holding)));
+            $deptIds = \App\Models\Department::where('organization_id', $orgId)
+                ->where(fn ($q) => $q->where('name', 'ilike', "%{$term}%")
+                    ->orWhereIn('functional_unit_id', $functionalUnitIds))
+                ->pluck('id');
+
+            $userIds = \App\Models\Employee::where('primary_organization_id', $orgId)
+                ->whereIn('department_id', $deptIds)
+                ->whereNotNull('user_id')
+                ->pluck('user_id')->unique()->values()->all();
+        } else {
+            $userIds = $request->filled('team')
+                ? (Team::find($request->integer('team'))?->assignableUserIds() ?? [])
+                : Engineer::where('is_active', true)->pluck('user_id')->all();
+
+            /*
+             * Anybody currently holding work is included even if they are not
+             * set up as an engineer. A load report that omits the person
+             * carrying fifteen tickets because nobody filled in their profile
+             * is worse than no report.
+             */
+            $holding = Ticket::whereNotNull('assigned_to')
+                ->whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']))
+                ->distinct()->pluck('assigned_to')->all();
+
+            $userIds = array_values(array_unique(array_merge($userIds, $holding)));
+        }
+
         $load    = $routing->workload($orgId, $userIds);
 
         $names = \App\Models\User::whereIn('id', $userIds)->pluck('name', 'id');

@@ -22,17 +22,19 @@ class EmployeeTrainingRecord extends Model
         'uuid', 'organization_id', 'employee_id', 'training_item_id',
         'assignment_type', 'status', 'progress_percent',
         'started_at', 'completed_at', 'due_date',
-        'score', 'is_priority', 'priority_reason',
+        'score', 'certificate_number', 'certificate_expiry_date',
+        'is_priority', 'priority_reason',
         'approval_request_id', 'assigned_by', 'created_by',
     ];
 
     protected $casts = [
-        'progress_percent'    => 'integer',
-        'score'               => 'decimal:2',
-        'is_priority'         => 'boolean',
-        'started_at'          => 'datetime',
-        'completed_at'        => 'datetime',
-        'due_date'            => 'date',
+        'progress_percent'         => 'integer',
+        'score'                    => 'decimal:2',
+        'is_priority'              => 'boolean',
+        'started_at'               => 'datetime',
+        'completed_at'             => 'datetime',
+        'due_date'                 => 'date',
+        'certificate_expiry_date'  => 'date',
     ];
 
     protected static function boot(): void

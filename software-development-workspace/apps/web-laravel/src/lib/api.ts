@@ -20,9 +20,30 @@ export class ApiError extends Error {
      * than pattern-matching the message text.
      */
     public readonly code?: string,
+    /**
+     * The whole error body, for the handful of refusals that carry data the
+     * caller must act on rather than merely display — the vendor duplicate
+     * guard hands back the candidate records it found. Kept separate from
+     * `errors`, which is Laravel's field→messages map and nothing else.
+     */
+    public readonly payload?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
+  }
+
+  /**
+   * The single way to ask "was this a permission refusal?".
+   *
+   * Views used to match `status === 403` in four different phrasings; this
+   * names the question once. The global handler has already refetched the
+   * caller's permission list by the time anybody reads this, so the nav and
+   * tabs are reconciling themselves — a catcher usually only needs to decide
+   * between a quiet degrade (a narrower scope, a "not shown to you" state)
+   * and surfacing the refusal.
+   */
+  get forbidden(): boolean {
+    return this.status === 403;
   }
 
   /** Returns the first individual validation error message, if any. */
@@ -115,6 +136,15 @@ export async function api<T>(
      * needs one. The two have to stay distinguishable here, in the one place
      * every request passes through, rather than in each caller.
      */
+    if (res.status === 403) {
+      // The server refused something the UI offered: the client's permission
+      // copy is stale (a role changed mid-session). Reconcile it so the nav
+      // and tabs stop advertising the door. Deferred import — api.ts is
+      // imported by the store, and a top-level cycle would evaluate half a
+      // module.
+      void import("../stores/permissions").then((m) => m.fetchPermissions(true));
+    }
+
     if (res.status === 401 && d.code !== "step_up_required") {
       clearAuth();
 
@@ -123,7 +153,7 @@ export async function api<T>(
       }
     }
 
-    throw new ApiError(res.status, d.message ?? res.statusText, d.errors, d.code);
+    throw new ApiError(res.status, d.message ?? res.statusText, d.errors, d.code, d);
   }
 
   return data as T;

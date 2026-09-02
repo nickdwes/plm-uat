@@ -22,15 +22,21 @@ class Ticket extends Model
 
     public const SOURCES = ['email', 'portal', 'phone', 'agent'];
 
+    public const OWNER_SUPPORT = 'support';
+    public const OWNER_CLIENT  = 'client';
+    public const OWNER_VENDOR  = 'vendor';
+    public const OWNERS = [self::OWNER_SUPPORT, self::OWNER_CLIENT, self::OWNER_VENDOR];
+
     protected $fillable = [
         'organization_id', 'reference', 'account_id', 'account_contract_id',
-        'subject', 'body',
+        'subject', 'body', 'issue_summary',
         'requester_name', 'requester_email', 'requester_user_id', 'account_contact_id',
         'ticket_type_id', 'service_category_id', 'ticket_status_id',
         'urgency_id', 'impact_id', 'priority_id',
         'service_desk_user_id', 'escalation_owner_id', 'account_contract_engineer_id',
         'assigned_to', 'support_team_id', 'parent_ticket_id', 'merged_at',
         'split_from_ticket_id', 'support_service_id', 'source',
+        'current_owner', 'owner_set_at',
         'opened_at', 'first_response_at', 'resolved_at', 'closed_at', 'created_by',
     ];
 
@@ -40,6 +46,7 @@ class Ticket extends Model
         'resolved_at'       => 'datetime',
         'closed_at'         => 'datetime',
         'merged_at'         => 'datetime',
+        'owner_set_at'      => 'datetime',
     ];
 
     /** Same reason as Change: polymorphic approvals cannot be cascaded by the database. */
@@ -160,6 +167,21 @@ class Ticket extends Model
     public function children(): HasMany
     {
         return $this->hasMany(self::class, 'parent_ticket_id');
+    }
+
+    public function emails(): HasMany
+    {
+        return $this->hasMany(TicketEmail::class, 'support_ticket_id');
+    }
+
+    public function meetings(): HasMany
+    {
+        return $this->hasMany(TicketMeeting::class, 'support_ticket_id');
+    }
+
+    public function rca(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(TicketRca::class, 'support_ticket_id');
     }
 
     // ── Derived ───────────────────────────────────────────────────────────────

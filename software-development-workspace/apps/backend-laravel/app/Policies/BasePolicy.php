@@ -77,57 +77,6 @@ abstract class BasePolicy
             && ResourceAttributes::inCurrentOrganization($resource);
     }
 
-    /**
-     * Broad permission on any record, or a narrower one limited to the
-     * user's own.
-     *
-     * Expresses the common shape directly: HR may view any employee, while
-     * an employee may view only themselves. Tenancy applies to both.
-     */
-    protected function canTouchOwn(
-        User $user,
-        string $broadPermission,
-        string $ownPermission,
-        ?Model $resource
-    ): bool {
-        if (! ResourceAttributes::inCurrentOrganization($resource)) {
-            return false;
-        }
-
-        if ($this->can($user, $broadPermission)) {
-            return true;
-        }
-
-        return $this->can($user, $ownPermission) && $user->owns($resource);
-    }
-
-    /**
-     * Broad permission, or a narrower one limited to the user's reporting
-     * line.
-     *
-     * $subject is the employee the record concerns — for a leave request
-     * that is its employee, not the request itself, since the reporting
-     * line is a property of people.
-     */
-    protected function canTouchTeam(
-        User $user,
-        string $broadPermission,
-        string $teamPermission,
-        ?Model $resource,
-        ?Model $subject = null
-    ): bool {
-        if (! ResourceAttributes::inCurrentOrganization($resource)) {
-            return false;
-        }
-
-        if ($this->can($user, $broadPermission)) {
-            return true;
-        }
-
-        return $this->can($user, $teamPermission)
-            && $user->manages($subject ?? $resource);
-    }
-
     /** Convenience passthrough so policies need not import the class. */
     protected function inCurrentOrg(?Model $resource): bool
     {

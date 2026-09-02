@@ -37,7 +37,7 @@ class PaymentFileController extends Controller
      */
     public function p10(int $payrollPeriod): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $period = $this->service->getPeriod($payrollPeriod);
         $report = $this->p10->forPeriod($period);
@@ -63,7 +63,7 @@ class PaymentFileController extends Controller
     /** The same figures as a file, ready to paste into KRA's sheet. */
     public function p10Csv(int $payrollPeriod): StreamedResponse|JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $period = $this->service->getPeriod($payrollPeriod);
 
@@ -94,7 +94,7 @@ class PaymentFileController extends Controller
      */
     public function preview(int $payrollPeriod): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $period  = $this->service->getPeriod($payrollPeriod);
         $preview = $this->builder->preview($period);

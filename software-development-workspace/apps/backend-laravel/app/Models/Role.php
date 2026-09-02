@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Role extends Model
 {
-    use HasFactory;
+    use HasFactory, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
         'name',

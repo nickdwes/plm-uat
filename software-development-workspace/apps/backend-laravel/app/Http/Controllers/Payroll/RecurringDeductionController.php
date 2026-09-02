@@ -26,7 +26,7 @@ class RecurringDeductionController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $query = EmployeeRecurringDeduction::with(['code', 'employee']);
 
@@ -95,7 +95,7 @@ class RecurringDeductionController extends Controller
 
     public function codes(): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         return response()->json([
             'data' => PayrollDeductionCode::where('is_active', true)

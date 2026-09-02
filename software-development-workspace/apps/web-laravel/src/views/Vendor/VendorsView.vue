@@ -48,14 +48,9 @@
         style="flex:1;max-width:280px;"
         @input="onSearch"
       />
-      <select v-model="filterType" @change="load(1)">
-        <option value="">All types</option>
-        <option value="supplier">Supplier</option>
-        <option value="service_provider">Service Provider</option>
-        <option value="contractor">Contractor</option>
-        <option value="consultant">Consultant</option>
-        <option value="distributor">Distributor</option>
-        <option value="partner">Partner</option>
+      <select v-model="filterRole" @change="load(1)">
+        <option value="">All roles</option>
+        <option v-for="r in STAKEHOLDER_ROLES" :key="r.value" :value="r.value">{{ r.label }}</option>
       </select>
       <select v-model="filterStatus" @change="load(1)">
         <option value="">All statuses</option>
@@ -109,7 +104,13 @@
               </div>
             </td>
             <td>
-              <span class="badge badge-gray">{{ typeLabel(v.vendor_type) }}</span>
+              <!-- Every role in force, not one type: a distributor that is
+                   also an OEM shows as both, which is what it is. -->
+              <span v-for="r in rolesOf(v)" :key="r" class="badge" :class="r === 'oem' ? 'badge-indigo' : 'badge-gray'"
+                    style="margin-right:var(--space-1);">{{ roleLabel(r) }}</span>
+              <span v-if="!rolesOf(v).length" class="badge badge-gray">{{ typeLabel(v.vendor_type) }}</span>
+              <div v-if="v.party_class === 'individual'"
+                   style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:2px;">Individual</div>
             </td>
             <td>{{ v.category ?? '—' }}</td>
             <td>
@@ -151,7 +152,7 @@
               </button>
               <!-- Approve -->
               <button
-                v-if="v.onboarding_status === 'pending_review'"
+                v-if="canApprove && v.onboarding_status === 'pending_review'"
                 class="btn btn-ghost btn-sm"
                 title="Approve"
                 style="color:var(--color-success)"
@@ -163,7 +164,7 @@
               </button>
               <!-- Reject -->
               <button
-                v-if="v.onboarding_status === 'pending_review'"
+                v-if="canApprove && v.onboarding_status === 'pending_review'"
                 class="btn btn-ghost btn-sm"
                 title="Reject"
                 style="color:var(--color-error)"
@@ -175,7 +176,7 @@
               </button>
               <!-- Suspend -->
               <button
-                v-if="v.onboarding_status === 'approved'"
+                v-if="canApprove && v.onboarding_status === 'approved'"
                 class="btn btn-ghost btn-sm"
                 title="Suspend"
                 style="color:var(--color-error)"
@@ -187,7 +188,7 @@
               </button>
               <!-- Reactivate -->
               <button
-                v-if="v.onboarding_status === 'suspended' || v.onboarding_status === 'rejected'"
+                v-if="canApprove && v.onboarding_status === 'suspended'"
                 class="btn btn-ghost btn-sm"
                 title="Reactivate"
                 style="color:var(--color-success)"
@@ -230,15 +231,20 @@
         <div class="drawer-body">
 
           <!-- Section: Company Information -->
-          <div class="form-section-title">Company Information</div>
+          <div class="form-section-title">{{ isIndividual ? 'Personal Information' : 'Company Information' }}</div>
 
           <div class="form-group">
-            <label>Company Name <span style="color:var(--color-error)">*</span></label>
-            <input v-model="form.name" type="text" placeholder="e.g. Acme Solutions Ltd" />
+            <label>{{ isIndividual ? 'Full Name' : 'Company Name' }} <span style="color:var(--color-error)">*</span></label>
+            <input v-model="form.name" type="text"
+                   :placeholder="isIndividual ? 'e.g. Jane Wanjiru' : 'e.g. Acme Solutions Ltd'" />
           </div>
 
+          <!-- A person has no company registry entry; asking for one is how a
+               national ID ends up in a field labelled Registration Number.
+               The ID itself is asked below, with the rest of the identity
+               questions the role brings. -->
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);">
-            <div class="form-group">
+            <div v-if="!isIndividual" class="form-group">
               <label>Registration Number</label>
               <input v-model="form.registration_number" type="text" placeholder="e.g. CPR/2020/12345" />
             </div>
@@ -250,14 +256,10 @@
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4);">
             <div class="form-group">
-              <label>Vendor Type <span style="color:var(--color-error)">*</span></label>
-              <select v-model="form.vendor_type">
-                <option value="supplier">Supplier</option>
-                <option value="service_provider">Service Provider</option>
-                <option value="contractor">Contractor</option>
-                <option value="consultant">Consultant</option>
-                <option value="distributor">Distributor</option>
-                <option value="partner">Partner</option>
+              <label>This party is <span style="color:var(--color-error)">*</span></label>
+              <select v-model="form.party_class">
+                <option value="organization">An organisation</option>
+                <option value="individual">An individual</option>
               </select>
             </div>
             <div class="form-group">
@@ -265,6 +267,67 @@
               <input v-model="form.category" type="text" placeholder="e.g. IT & Technology" />
             </div>
           </div>
+
+          <div class="form-group">
+            <label>Roles <span style="color:var(--color-error)">*</span></label>
+            <p style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin:0 0 var(--space-2);">
+              Tick everything this party does for us — a distributor that also
+              makes its own products is both. Roles can be added or ended later
+              without losing the history.
+            </p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));gap:var(--space-1) var(--space-3);">
+              <label v-for="r in availableRoles" :key="r.value"
+                     style="display:flex;align-items:center;gap:var(--space-2);font-weight:normal;">
+                <input type="checkbox" style="width:auto;"
+                       :checked="form.roles.includes(r.value)" @change="toggleRole(r.value)" />
+                {{ r.label }}
+                <span v-if="r.value === 'oem'" style="font-size:var(--font-size-xs);color:var(--color-text-muted)">
+                  (selectable as a training provider)
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <!-- What the chosen roles actually need to know.
+               Served by the API rather than hard-coded, so adding a question
+               is configuration and not a release. -->
+          <template v-for="section in roleFieldSections" :key="section.name">
+            <div style="border-top:1px solid var(--color-border);margin:var(--space-4) 0 var(--space-3);padding-top:var(--space-3)">
+              <div style="font-size:var(--font-size-xs);font-weight:var(--font-weight-semibold);
+                          letter-spacing:.06em;text-transform:uppercase;color:var(--color-text-muted)">
+                {{ section.name }}
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)">
+              <div v-for="f in section.fields" :key="f.key" class="form-group"
+                   :style="f.type === 'textarea' ? 'grid-column:1 / -1' : ''">
+                <label>
+                  {{ f.label }}
+                  <span v-if="f.is_required" style="color:var(--color-error)">*</span>
+                </label>
+
+                <textarea v-if="f.type === 'textarea'" v-model="form.role_details[f.key]" rows="3" />
+
+                <select v-else-if="f.type === 'select'" v-model="form.role_details[f.key]">
+                  <option value="">— Not specified —</option>
+                  <option v-for="o in (f.options ?? [])" :key="o" :value="o">{{ o }}</option>
+                </select>
+
+                <label v-else-if="f.type === 'boolean'"
+                       style="display:flex;align-items:center;gap:var(--space-2);font-weight:normal">
+                  <input v-model="form.role_details[f.key]" type="checkbox" style="width:auto" />
+                  Yes
+                </label>
+
+                <input v-else v-model="form.role_details[f.key]"
+                       :type="f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'" />
+
+                <p v-if="f.help" style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin:var(--space-1) 0 0">
+                  {{ f.help }}
+                </p>
+              </div>
+            </div>
+          </template>
 
           <div class="form-group">
             <label>Services / Description</label>
@@ -392,6 +455,37 @@
             </div>
           </div>
 
+          <!-- The register already knows a party like this one. -->
+          <div v-if="duplicates.length" class="card"
+               style="border-left:3px solid var(--color-warning);margin-bottom:var(--space-3);padding:var(--space-3)">
+            <strong>This party may already be registered</strong>
+            <p style="font-size:var(--font-size-sm);color:var(--color-text-muted);margin:var(--space-1) 0 var(--space-2)">
+              Registering the same supplier twice splits its orders, invoices and
+              delivery history across two records — and its performance scorecard
+              is built from exactly those.
+            </p>
+            <div v-for="c in duplicates" :key="c.id"
+                 style="display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-2) 0;border-top:1px solid var(--color-border)">
+              <div>
+                <strong>{{ c.name }}</strong>
+                <span v-if="c.vendor_number" style="color:var(--color-text-muted)"> · {{ c.vendor_number }}</span>
+                <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">
+                  Same {{ c.matched_on }}: {{ c.detail }} · {{ c.onboarding_status }}
+                </div>
+              </div>
+              <button class="btn btn-secondary btn-sm" @click="openExisting(c)">Open this one</button>
+            </div>
+            <div class="form-group" style="margin:var(--space-3) 0 0">
+              <label>If they really are different, say why</label>
+              <input v-model="duplicateReason" type="text"
+                     placeholder="e.g. Separate legal entity, own registration" />
+            </div>
+            <button class="btn btn-primary btn-sm" style="margin-top:var(--space-2)"
+                    :disabled="!duplicateReason.trim() || isSaving" @click="saveAnyway">
+              {{ isSaving ? 'Registering…' : 'Register anyway' }}
+            </button>
+          </div>
+
           <p v-if="formError" class="error" style="margin-top:var(--space-3);">{{ formError }}</p>
         </div>
 
@@ -436,11 +530,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue';
+import { ref, reactive, computed, watch, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { currentOrgSlug } from '@/stores/auth';
-import type { Vendor, VendorMetrics, VendorType, VendorOnboardingStatus } from '@/lib/types';
+import { can } from '@/stores/permissions';
+import type { Vendor, VendorMetrics, VendorType, VendorOnboardingStatus, StakeholderRoleName, RoleField } from '@/lib/types';
+import { STAKEHOLDER_ROLES } from '@/lib/types';
 
 const router = useRouter();
 
@@ -455,7 +551,13 @@ const error       = ref<string | null>(null);
 const page        = ref(1);
 const totalPages  = ref(1);
 const search      = ref('');
-const filterType  = ref('');
+// Roles replace the single-valued type filter; the API still accepts
+// vendor_type for anything that has not moved over.
+// Deciding a vendor is its own permission now — the buttons follow it, and
+// the API refuses regardless.
+const canApprove  = computed(() => can('vendors.approve'));
+
+const filterRole  = ref('');
 const filterStatus = ref('');
 
 // Search debounce
@@ -473,7 +575,7 @@ async function load(p = 1) {
   try {
     const params: Record<string, string | number> = { per_page: 25, page: p };
     if (search.value)       params.search           = search.value;
-    if (filterType.value)   params.vendor_type       = filterType.value;
+    if (filterRole.value)   params.role              = filterRole.value;
     if (filterStatus.value) params.onboarding_status = filterStatus.value;
 
     const res = await api<{ data: Vendor[]; meta: { last_page: number; current_page: number } }>(
@@ -510,9 +612,15 @@ const formError = ref<string | null>(null);
 
 const form = reactive({
   name: '',
+  party_class: 'organization' as 'organization' | 'individual',
+  roles: [] as StakeholderRoleName[],
+  // Free-form by design — the questions are configuration, so their
+  // answers cannot be typed ahead of time. Same as assets' custom_fields.
+  role_details: {} as Record<string, any>,
   registration_number: '',
   tax_id: '',
   vendor_type: 'supplier' as VendorType,
+  is_oem_vendor: false,
   category: '',
   description: '',
   primary_contact_name: '',
@@ -536,9 +644,14 @@ const form = reactive({
 
 function resetForm() {
   form.name = '';
+  form.party_class = 'organization';
+  form.roles = [];
+  form.role_details = {};
+  roleFields.value = [];
   form.registration_number = '';
   form.tax_id = '';
   form.vendor_type = 'supplier';
+  form.is_oem_vendor = false;
   form.category = '';
   form.description = '';
   form.primary_contact_name = '';
@@ -572,6 +685,10 @@ function openEdit(v: Vendor) {
   form.registration_number = v.registration_number ?? '';
   form.tax_id = v.tax_id ?? '';
   form.vendor_type = v.vendor_type;
+  form.party_class = v.party_class ?? 'organization';
+  form.roles = [...(v.active_roles ?? [])];
+  form.role_details = { ...(v.role_details ?? {}) };
+  void loadRoleFields();
   form.category = v.category ?? '';
   form.description = v.description ?? '';
   form.primary_contact_name = v.primary_contact_name ?? '';
@@ -601,7 +718,9 @@ function buildBody(): Record<string, unknown> {
     name:                        form.name.trim(),
     registration_number:         form.registration_number.trim() || null,
     tax_id:                      form.tax_id.trim() || null,
-    vendor_type:                 form.vendor_type,
+    party_class:                 form.party_class,
+    roles:                       form.roles,
+    role_details:                form.role_details,
     category:                    form.category.trim() || null,
     description:                 form.description.trim() || null,
     primary_contact_name:        form.primary_contact_name.trim() || null,
@@ -625,6 +744,46 @@ function buildBody(): Record<string, unknown> {
   return body;
 }
 
+/**
+ * Candidates the register already holds that may be this same party.
+ *
+ * A duplicate supplier splits orders, invoices and delivery history across
+ * two rows — and the performance scorecard is computed from exactly those.
+ * The server hands back what it found; a person decides.
+ */
+interface DuplicateCandidate {
+  id: number; name: string; vendor_number: string | null;
+  onboarding_status: string; matched_on: string; detail: string;
+}
+
+const duplicates      = ref<DuplicateCandidate[]>([]);
+const duplicateReason = ref('');
+const pendingSubmit   = ref(false);
+
+function clearDuplicates(): void {
+  duplicates.value = [];
+  duplicateReason.value = '';
+  pendingSubmit.value = false;
+}
+
+/**
+ * True when the failure was the duplicate guard, in which case the caller
+ * shows the candidates instead of an error.
+ */
+function caughtDuplicates(e: unknown): boolean {
+  if (e instanceof ApiError && e.status === 409) {
+    duplicates.value = (e.payload?.candidates as DuplicateCandidate[] | undefined) ?? [];
+    return true;
+  }
+  return false;
+}
+
+function openExisting(c: DuplicateCandidate): void {
+  clearDuplicates();
+  closeForm();
+  router.push({ name: 'vendor-profile', params: { id: String(c.id) } });
+}
+
 async function save() {
   if (!form.name.trim()) { formError.value = 'Company name is required.'; return; }
   isSaving.value = true;
@@ -640,6 +799,32 @@ async function save() {
       metrics.value.total++;
       metrics.value.draft++;
     }
+    clearDuplicates();
+    closeForm();
+    loadMetrics();
+  } catch (e: any) {
+    if (caughtDuplicates(e)) { pendingSubmit.value = false; return; }
+    formError.value = e?.message ?? 'Failed to save vendor.';
+  } finally {
+    isSaving.value = false;
+  }
+}
+
+/** Register despite the candidates, with the reason recorded against it. */
+async function saveAnyway(): Promise<void> {
+  if (!duplicateReason.value.trim()) return;
+  isSaving.value = true; formError.value = null;
+  const submitAfter = pendingSubmit.value;
+  try {
+    const created = await api<{ data: Vendor }>('POST', '/api/v1/vendors', {
+      org: org(),
+      body: { ...buildBody(), create_anyway: true, duplicate_reason: duplicateReason.value.trim() },
+    });
+    const row = submitAfter
+      ? (await api<{ data: Vendor }>('POST', `/api/v1/vendors/${created.data.id}/submit`, { org: org() })).data
+      : created.data;
+    vendors.value.unshift(row);
+    clearDuplicates();
     closeForm();
     loadMetrics();
   } catch (e: any) {
@@ -653,14 +838,18 @@ async function saveAndSubmit() {
   if (!form.name.trim()) { formError.value = 'Company name is required.'; return; }
   isSaving.value = true;
   formError.value = null;
+  // Remembered so an override picks up where the guard interrupted.
+  pendingSubmit.value = true;
   try {
     const created = await api<{ data: Vendor }>('POST', '/api/v1/vendors', { org: org(), body: buildBody() });
     // Then submit for review
     const res = await api<{ data: Vendor }>('POST', `/api/v1/vendors/${created.data.id}/submit`, { org: org() });
     vendors.value.unshift(res.data);
+    clearDuplicates();
     closeForm();
     loadMetrics();
   } catch (e: any) {
+    if (caughtDuplicates(e)) return;
     formError.value = e?.message ?? 'Failed to save vendor.';
   } finally {
     isSaving.value = false;
@@ -682,7 +871,11 @@ async function doApprove(v: Vendor) {
     const res = await api<{ data: Vendor }>('POST', `/api/v1/vendors/${v.id}/approve`, { org: org() });
     replaceInList(res.data);
     loadMetrics();
-  } catch (e: any) { alert(e?.message ?? 'Failed to approve.'); }
+  } catch (e: any) {
+    // The API refuses with the reason (out-of-order transition, expired
+    // paperwork, signing your own submission) — showing it beats "Failed".
+    error.value = e?.message ?? 'Failed to approve.';
+  }
 }
 
 async function doReactivate(v: Vendor) {
@@ -757,6 +950,91 @@ async function submitReason() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** Roles in force, falling back to nothing when the API did not load them. */
+function rolesOf(v: Vendor): StakeholderRoleName[] {
+  return v.active_roles ?? [];
+}
+
+function roleLabel(role: string): string {
+  return STAKEHOLDER_ROLES.find(r => r.value === role)?.label
+    ?? role.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+/**
+ * A person cannot be a distributor and a company cannot be an individual
+ * contractor — the server refuses either, so the form does not offer them.
+ */
+const availableRoles = computed(() => STAKEHOLDER_ROLES.filter(r =>
+  form.party_class === 'individual' ? !r.companyOnly : !r.individualOnly));
+
+function toggleRole(role: StakeholderRoleName): void {
+  const at = form.roles.indexOf(role);
+  if (at === -1) form.roles.push(role);
+  else form.roles.splice(at, 1);
+}
+
+// ── Questions the chosen roles bring ─────────────────────────────────────────
+//
+// Asked of the server rather than hard-coded, exactly as the asset form asks
+// what a category wants to know. A consultant is asked about their practice, a
+// distributor about its territories, and neither is asked the other's questions.
+
+const roleFields = ref<RoleField[]>([]);
+const isIndividual = computed(() => form.party_class === 'individual');
+
+/** Grouped for rendering, in the order the server returned them. */
+const roleFieldSections = computed(() => {
+  const sections: { name: string; fields: RoleField[] }[] = [];
+
+  for (const field of roleFields.value) {
+    const name = field.section || 'Role details';
+    const last = sections.find(s => s.name === name);
+    if (last) last.fields.push(field);
+    else sections.push({ name, fields: [field] });
+  }
+
+  return sections;
+});
+
+async function loadRoleFields(): Promise<void> {
+  try {
+    const res = await api<{ data: RoleField[] }>('GET', '/api/v1/vendors/role-fields', {
+      org: org(),
+      // Comma separated: an empty array would vanish from the query string,
+      // and "no roles picked yet" has to be distinguishable from "not asked".
+      params: { roles: form.roles.join(','), party_class: form.party_class },
+    });
+    roleFields.value = res.data;
+
+    // Seed anything new so v-model has somewhere to write, and drop answers
+    // to questions the current roles no longer ask — they would otherwise be
+    // posted back invisibly.
+    const asked = new Set(res.data.map(f => f.key));
+    for (const f of res.data) {
+      if (!(f.key in form.role_details)) {
+        form.role_details[f.key] = f.type === 'boolean' ? false : '';
+      }
+    }
+    for (const key of Object.keys(form.role_details)) {
+      if (!asked.has(key)) delete form.role_details[key];
+    }
+  } catch {
+    // A form that cannot reach the definitions still saves everything else.
+    roleFields.value = [];
+  }
+}
+
+// Ticking a role, or switching between a company and a person, changes what
+// the form asks — which is the whole point.
+watch(() => [form.roles.slice(), form.party_class], () => { void loadRoleFields(); }, { deep: true });
+
+// Switching class drops roles the other class cannot hold, rather than
+// letting a stale tick fail server-side with a puzzling 422.
+watch(() => form.party_class, () => {
+  const allowed = new Set(availableRoles.value.map(r => r.value));
+  form.roles = form.roles.filter(r => allowed.has(r));
+});
 
 function typeLabel(t: VendorType | string): string {
   const map: Record<string, string> = {

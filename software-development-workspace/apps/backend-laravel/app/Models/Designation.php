@@ -10,7 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Designation extends Model
 {
-    use HasFactory, BelongsToOrganization;
+    use HasFactory, BelongsToOrganization, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
         'organization_id',

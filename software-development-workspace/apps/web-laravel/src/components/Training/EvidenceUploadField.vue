@@ -4,10 +4,13 @@ import { api } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 import type { TrainingEvidenceFile } from "../../lib/types";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   recordId: number;
   existingFiles?: TrainingEvidenceFile[];
-}>();
+  category?: "certificate" | "transcript" | "screenshot" | "other";
+}>(), {
+  category: "certificate",
+});
 
 const emit = defineEmits<{
   (e: "uploaded", file: TrainingEvidenceFile): void;
@@ -16,7 +19,9 @@ const emit = defineEmits<{
 const dragging = ref(false);
 const uploading = ref(false);
 const error = ref("");
-const uploadedFiles = ref<TrainingEvidenceFile[]>(props.existingFiles ?? []);
+const uploadedFiles = ref<TrainingEvidenceFile[]>(
+  (props.existingFiles ?? []).filter(f => (f.category ?? "certificate") === props.category)
+);
 
 const ALLOWED_TYPES = [
   "application/pdf",
@@ -83,7 +88,7 @@ async function uploadFile(file: File) {
   uploading.value = true;
   const formData = new FormData();
   formData.append("file", file);
-  formData.append("category", "certificate"); // default; can be enhanced
+  formData.append("category", props.category);
 
   try {
     const res = await api<{ data: TrainingEvidenceFile }>(

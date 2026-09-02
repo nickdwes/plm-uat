@@ -102,6 +102,13 @@ class OrganizationController extends Controller
         // out that the lists are per-tenant and arrive empty.
         DefaultReferenceData::seedFor($org->id);
 
+        // And the supplier rulebook, for the same reason: a new tenant should
+        // not discover on its first purchase order that nothing was ever
+        // required of anybody.
+        \App\Models\Vendor\StakeholderRoleRequirement::materialiseFor($org->id);
+        \App\Models\Vendor\VendorApprovalStage::materialiseFor($org->id);
+        \App\Models\Vendor\StakeholderRoleField::materialiseFor($org->id);
+
         // Assign user as Org HR Admin on this new organisation
         $role = Role::where('name', 'org_hr')->first();
         if ($role) {
@@ -121,12 +128,16 @@ class OrganizationController extends Controller
      */
     public function update(Request $request, Organization $organization): JsonResponse
     {
-        $user = $request->user();
-
-        // Only group admins or org-level HR may update this org
-        if (! $user->isGroupAdmin() && ! $user->hasRole('org_hr', $organization->id)) {
-            return response()->json(['message' => 'Forbidden.'], 403);
-        }
+        /*
+         * On the catalogue, not on role names — a role-name check made this
+         * unreachable by any custom role, the increment-1 disease. The
+         * organizations.manage permission was back-filled to org_hr so
+         * nothing regressed.
+         */
+        abort_unless(
+            $request->user()->hasPermission(\App\Support\Authorization\Permission::ORGANIZATIONS_MANAGE, $organization->id),
+            403,
+        );
 
         $data = $request->validate([
             'name'          => 'sometimes|string|max:150',
@@ -158,11 +169,10 @@ class OrganizationController extends Controller
      */
     public function uploadLogo(Request $request, Organization $organization): JsonResponse
     {
-        $user = $request->user();
-
-        if (! $user->isGroupAdmin() && ! $user->hasRole('org_hr', $organization->id)) {
-            return response()->json(['message' => 'Forbidden.'], 403);
-        }
+        abort_unless(
+            $request->user()->hasPermission(\App\Support\Authorization\Permission::ORGANIZATIONS_MANAGE, $organization->id),
+            403,
+        );
 
         $request->validate([
             'logo' => 'required|image|mimes:png,jpg,jpeg,svg,webp|max:2048',

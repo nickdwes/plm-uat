@@ -31,22 +31,38 @@ class Project extends Model
 
     protected $fillable = [
         'organization_id', 'account_id', 'opportunity_id', 'reference', 'name',
-        'description', 'status', 'priority', 'deadline', 'started_on', 'delivered_on',
+        'description', 'status', 'rag', 'priority', 'deadline', 'started_on', 'delivered_on',
+        'financially_closed_at', 'financially_closed_by',
+        'order_release_gate', 'contract_ready_override',
+        'customer_lpo_number', 'customer_lpo_date', 'customer_lpo_value', 'customer_lpo_currency',
         'contract_value', 'project_lead_id', 'created_by',
 
         // The delivered split, kept apart from the estimate's planned one —
         // the gap between them is the point.
         'vendor_partner_id', 'delivery_days_own', 'delivery_days_oem', 'oem_ps_cost',
+
+        // Charter — the governing facts the project is set up against.
+        'scope', 'charter', 'pip', 'product', 'project_email',
+        'execution_start', 'execution_end', 'charter_completion_date', 'contract_completion_date',
+        'client_contact_id', 'client_sponsor_contact_id',
     ];
 
     protected $casts = [
         'deadline'       => 'date',
         'started_on'     => 'date',
         'delivered_on'   => 'date',
+        'financially_closed_at' => 'datetime',
+        'contract_ready_override' => 'boolean',
+        'customer_lpo_date'  => 'date',
+        'customer_lpo_value' => 'decimal:2',
         'contract_value' => 'decimal:2',
         'delivery_days_own' => 'decimal:1',
         'delivery_days_oem' => 'decimal:1',
         'oem_ps_cost'       => 'decimal:2',
+        'execution_start'   => 'date',
+        'execution_end'     => 'date',
+        'charter_completion_date'  => 'date',
+        'contract_completion_date' => 'date',
     ];
 
     protected $attributes = ['status' => 'kickoff', 'priority' => 'medium'];
@@ -69,6 +85,18 @@ class Project extends Model
         return $this->belongsTo(Employee::class, 'project_lead_id');
     }
 
+    /** The day-to-day client contact for the project. */
+    public function clientContact(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Account\AccountContact::class, 'client_contact_id');
+    }
+
+    /** The client's project sponsor. */
+    public function clientSponsor(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Account\AccountContact::class, 'client_sponsor_contact_id');
+    }
+
     public function team(): HasMany
     {
         return $this->hasMany(ProjectTeamMember::class);
@@ -83,6 +111,136 @@ class Project extends Model
     public function rootTasks(): HasMany
     {
         return $this->tasks()->whereNull('parent_task_id');
+    }
+
+    public function issues(): HasMany
+    {
+        return $this->hasMany(ProjectIssue::class)->latest('id');
+    }
+
+    public function phases(): HasMany
+    {
+        return $this->hasMany(ProjectPhase::class)->whereNull('parent_id')->orderBy('position');
+    }
+
+    public function allPhases(): HasMany
+    {
+        return $this->hasMany(ProjectPhase::class)->orderBy('position');
+    }
+
+    public function roles(): HasMany
+    {
+        return $this->hasMany(ProjectRole::class)->orderBy('position');
+    }
+
+    public function people(): HasMany
+    {
+        return $this->hasMany(ProjectPerson::class);
+    }
+
+    public function governanceRoles(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ProjectGovernanceRole::class);
+    }
+
+    public function customerRoles(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ProjectCustomerRole::class);
+    }
+
+    public function stakeholders(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ProjectStakeholder::class);
+    }
+
+    public function professionalServices(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ProjectProfessionalService::class);
+    }
+
+    public function subcontractors(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ProjectSubcontractor::class);
+    }
+
+    public function travelRequests(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ProjectTravelRequest::class);
+    }
+
+    public function vendorEngagements(): HasMany
+    {
+        return $this->hasMany(ProjectVendorEngagement::class)->latest('id');
+    }
+
+    public function boms(): HasMany
+    {
+        return $this->hasMany(ProjectBom::class)->latest('id');
+    }
+
+    public function financiallyClosedBy(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\User::class, 'financially_closed_by');
+    }
+
+    public function orders(): HasMany
+    {
+        return $this->hasMany(ProjectOrder::class)->latest('id');
+    }
+
+    public function trainingFulfillments(): HasMany
+    {
+        return $this->hasMany(ProjectTrainingFulfillment::class)->latest('id');
+    }
+
+    public function dependencies(): HasMany
+    {
+        return $this->hasMany(ProjectDependency::class)->latest('id');
+    }
+
+    public function risks(): HasMany
+    {
+        return $this->hasMany(ProjectRisk::class)->latest('id');
+    }
+
+    public function budgetLines(): HasMany
+    {
+        return $this->hasMany(ProjectBudgetLine::class)->orderBy('id');
+    }
+
+    public function expenses(): HasMany
+    {
+        return $this->hasMany(ProjectExpense::class)->orderByDesc('spent_on')->orderByDesc('id');
+    }
+
+    public function vendors(): HasMany
+    {
+        return $this->hasMany(ProjectVendor::class)->orderBy('name');
+    }
+
+    public function weeklySnapshots(): HasMany
+    {
+        return $this->hasMany(ProjectWeeklySnapshot::class)->orderByDesc('week_start');
+    }
+
+    public function deliveryMilestones(): HasMany
+    {
+        return $this->hasMany(ProjectDeliveryMilestone::class)->orderBy('position')->orderBy('target_date');
+    }
+
+    public function meetings(): HasMany
+    {
+        return $this->hasMany(ProjectMeeting::class)->orderByDesc('scheduled_at');
+    }
+
+    public function materialOrders(): HasMany
+    {
+        return $this->hasMany(ProjectMaterialOrder::class)->latest('id');
+    }
+
+    public function emails(): HasMany
+    {
+        return $this->hasMany(ProjectEmail::class)->orderByDesc('received_at');
     }
 
     public function comments(): HasMany

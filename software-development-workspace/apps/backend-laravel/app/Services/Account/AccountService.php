@@ -17,6 +17,36 @@ class AccountService
         // a customer list gets slow once the book is real.
         $q = Account::query()->with(['accountManager', 'type', 'sector', 'subsector', 'primaryContact']);
 
+        /*
+         * What each customer is worth and what is happening on it.
+         *
+         * The list used to carry six columns of which four were empty on most
+         * rows — contact person, email, type and last contact — so a book of
+         * 68 customers looked identical top to bottom. These are the figures
+         * that actually differ between them.
+         *
+         * Subqueries on a page of twenty, not eager-loaded collections: this
+         * needs five numbers per row, not five relations per row.
+         *
+         * `openDeal` repeats the rule `Opportunity::is_open` uses — a deal with
+         * no phase has no outcome, so it is open. Written out here because a
+         * query cannot call the accessor, and the two disagreeing is exactly
+         * the bug that made the deals list show none of 130.
+         */
+        $openDeal = fn ($w) => $w
+            ->where(fn ($d) => $d
+                ->whereHas('phase', fn ($p) => $p->whereNull('outcome'))
+                ->orWhereNull('opportunity_phase_id'));
+
+        $q->withCount([
+            'opportunities as open_deals_count' => $openDeal,
+            'projects as projects_count',
+            'supportTickets as open_tickets_count' => fn ($w) => $w
+                ->whereHas('status', fn ($st) => $st->where('state', 'open')),
+            'contracts as active_contracts_count' => fn ($w) => $w
+                ->where('status', 'active')->whereNull('completed_at'),
+        ])->withSum(['opportunities as open_pipeline_value' => $openDeal], 'amount');
+
         // Applied before any filter so a caller restricted to their own book
         // cannot widen it with a query string.
         if ($limitToManager !== null) {

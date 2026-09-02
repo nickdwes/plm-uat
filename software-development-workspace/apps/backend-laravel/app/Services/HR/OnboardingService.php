@@ -162,7 +162,8 @@ class OnboardingService
         int $orgId,
         int $uploadedBy,
         string $category,
-        UploadedFile $file
+        UploadedFile $file,
+        bool $confidential = false,
     ): EmployeeDocument {
         $ext      = $file->getClientOriginalExtension();
         $uuid     = (string) \Illuminate\Support\Str::uuid();
@@ -175,9 +176,10 @@ class OnboardingService
         );
 
         return EmployeeDocument::create([
-            'employee_id'   => $employeeId,
-            'uploaded_by'   => $uploadedBy,
-            'category'      => $category,
+            'employee_id'     => $employeeId,
+            'uploaded_by'     => $uploadedBy,
+            'category'        => $category,
+            'is_confidential' => $confidential,
             'original_name' => $file->getClientOriginalName(),
             'storage_path'  => $path,
             'mime_type'     => $file->getMimeType() ?? $file->getClientMimeType(),

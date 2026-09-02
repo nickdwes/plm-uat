@@ -28,6 +28,7 @@ class PreboardingController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $this->guardPermission($request);
         $records = $this->service->list($this->orgId($request), $request->only(['search', 'status', 'per_page', 'page']));
         return response()->json([
             'data' => $records->items(),
@@ -50,6 +51,7 @@ class PreboardingController extends Controller
      */
     public function summary(Request $request): JsonResponse
     {
+        $this->guardPermission($request);
         $orgId = $this->orgId($request);
         $scope = fn () => PreboardingRecord::where('organization_id', $orgId);
 
@@ -80,6 +82,7 @@ class PreboardingController extends Controller
 
     public function store(Request $request): JsonResponse
     {
+        $this->guardPermission($request);
         $data = $request->validate([
             'first_name'             => 'required|string|max:100',
             'last_name'              => 'required|string|max:100',
@@ -350,5 +353,26 @@ class PreboardingController extends Controller
     private function authorizeOrg(PreboardingRecord $record, Request $request): void
     {
         abort_unless($record->organization_id === $this->orgId($request), 403, 'Forbidden.');
+        $this->guardPermission($request);
+    }
+
+    /**
+     * Tenancy was the only gate here — any signed-in member of the org could
+     * read (and edit) pre-hire records: names, references, attachments.
+     * Reads answer to onboarding.view, everything that mutates to
+     * onboarding.manage, inferred from the HTTP verb so all twenty-odd
+     * methods stand behind one rule.
+     */
+    private function guardPermission(Request $request): void
+    {
+        $permission = $request->isMethodSafe()
+            ? \App\Support\Authorization\Permission::ONBOARDING_VIEW
+            : \App\Support\Authorization\Permission::ONBOARDING_MANAGE;
+
+        abort_unless(
+            $request->user()->hasPermission(\App\Support\Authorization\Permission::ONBOARDING_MANAGE)
+                || ($request->isMethodSafe() && $request->user()->hasPermission($permission)),
+            403,
+        );
     }
 }

@@ -51,7 +51,11 @@ interface Contract {
   start_date: string | null; end_date: string | null;
 }
 interface ProjectRow { id: number; reference: string | null; name: string; priority: string; status: string; deadline: string | null }
-interface Dimension { key: string; label: string; value: number | null }
+interface Answer { value: string; points: number; label: string; help: string }
+interface Dimension {
+  key: string; label: string; question: string;
+  options: Answer[]; value: number | null; answer: Answer | null;
+}
 interface Pipeline {
   commercials_visible: boolean;
   stages: Stage[];
@@ -62,7 +66,7 @@ interface Pipeline {
   qualification: {
     dimensions: Dimension[]; score: number | null; band: string | null;
     completeness: number; percentile: number | null;
-    summary: Record<string, string | null>; qualified_at: string | null;
+    unanswered: string[]; qualified_at: string | null;
   };
   budget: { amount: string | null; is_confirmed: boolean; confirmed_at: string | null };
   estimates: Estimate[];
@@ -140,20 +144,23 @@ const toggleIndicator = (i: Indicator) =>
 
 // ── Qualification ───────────────────────────────────────────────────────────
 
-const qualifying = ref(false);
-const quality = ref<Record<string, string | number | null>>({});
+/*
+ * Same five questions as the lead this came from, answered the same way: one
+ * at a time, in place, with named answers rather than invented numbers. See
+ * LeadQualification on the server for why the numbers went away.
+ */
+const answering = ref<string | null>(null);
+const answeringKey = ref<string | null>(null);
 
-function openQualify() {
-  const q = pipeline.value!.qualification;
-  quality.value = {
-    ...Object.fromEntries(q.dimensions.map((d) => [d.key, d.value])),
-    ...q.summary,
-  };
-  qualifying.value = true;
-}
+async function answer(dimension: Dimension, option: Answer | null) {
+  if (answeringKey.value) return;
 
-async function saveQualification() {
-  if (await act("POST", "/qualify", quality.value, "Assessment saved.")) qualifying.value = false;
+  const chosen = option && option.value === dimension.answer?.value ? null : option?.value ?? null;
+
+  answeringKey.value = dimension.key;
+  try {
+    if (await act("POST", "/qualify", { [dimension.key]: chosen })) answering.value = null;
+  } finally { answeringKey.value = null; }
 }
 
 const markQualified = () => act("POST", "/mark-qualified", undefined, "Marked as qualified.");
@@ -463,9 +470,6 @@ void loadPartners();
         <div class="pl-qual-head">
           <span v-if="pipeline.qualification.qualified_at" class="pill pill-ok">Qualified</span>
           <div class="pl-qual-actions">
-            <button class="btn-ghost" @click="qualifying ? (qualifying = false) : openQualify()">
-              {{ qualifying ? "Cancel" : "Assess" }}
-            </button>
             <button v-if="!pipeline.qualification.qualified_at" class="btn-primary"
                     :disabled="saving || pipeline.qualification.score === null" @click="markQualified">
               Mark qualified
@@ -473,96 +477,80 @@ void loadPartners();
           </div>
         </div>
 
-        <template v-if="!qualifying">
-          <p v-if="pipeline.qualification.score === null" class="pl-empty">
-            Not assessed yet. Grading the five dimensions is what "all criteria are met"
-            refers to — an unassessed deal has no score, rather than a score of zero.
-          </p>
-
-          <div v-else class="pl-qual-grid">
-            <div class="pl-card">
-              <h3 class="pl-h3">Qualification Score</h3>
-              <div class="pl-gauge-row">
-                <svg class="pl-gauge" viewBox="0 0 160 160" role="img"
-                     :aria-label="`${pipeline.qualification.score} out of 100`">
-                  <circle class="pl-gauge-track" cx="80" cy="80" :r="GAUGE.r"
-                          :stroke-dasharray="`${GAUGE.c} ${GAUGE.c * 2}`" />
-                  <circle :class="['pl-gauge-fill', `fit-${pipeline.qualification.band}`]"
-                          cx="80" cy="80" :r="GAUGE.r"
-                          :stroke-dasharray="`${GAUGE.c} ${GAUGE.c * 2}`"
-                          :stroke-dashoffset="gaugeOffset" />
-                  <text x="80" y="76" class="pl-gauge-label">
-                    {{ BAND_LABELS[pipeline.qualification.band ?? ""] ?? "" }}
-                  </text>
-                  <text x="80" y="104" class="pl-gauge-value">{{ pipeline.qualification.score }}%</text>
-                </svg>
-                <div class="pl-gauge-note">
+        <div class="pl-qual-grid">
+          <div class="pl-card">
+            <h3 class="pl-h3">Qualification Score</h3>
+            <div class="pl-gauge-row">
+              <svg class="pl-gauge" viewBox="0 0 160 160" role="img"
+                   :aria-label="pipeline.qualification.score === null
+                     ? 'Not assessed yet'
+                     : `${pipeline.qualification.score} out of 100`">
+                <circle class="pl-gauge-track" cx="80" cy="80" :r="GAUGE.r"
+                        :stroke-dasharray="`${GAUGE.c} ${GAUGE.c * 2}`" />
+                <circle v-if="pipeline.qualification.score !== null"
+                        :class="['pl-gauge-fill', `band-${pipeline.qualification.band}`]" cx="80" cy="80" :r="GAUGE.r"
+                        :stroke-dasharray="`${GAUGE.c} ${GAUGE.c * 2}`"
+                        :stroke-dashoffset="gaugeOffset" />
+                <text x="80" y="72" class="pl-gauge-label">
+                  {{ BAND_LABELS[pipeline.qualification.band ?? ""] ?? "Unanswered" }}
+                </text>
+                <text x="80" y="104" class="pl-gauge-value">
+                  {{ pipeline.qualification.score === null ? "—" : `${pipeline.qualification.score}%` }}
+                </text>
+              </svg>
+              <div class="pl-gauge-note">
+                <p v-if="pipeline.qualification.score === null" class="pl-hint">
+                  Not assessed yet. Answering these is what "all criteria are met"
+                  refers to — an unassessed deal has no score, rather than zero.
+                </p>
+                <template v-else>
                   <p class="pl-hint">
                     Based on {{ pipeline.qualification.completeness }}% of the assessment.
+                  </p>
+                  <p v-if="pipeline.qualification.unanswered.length" class="pl-hint">
+                    Still open: {{ pipeline.qualification.unanswered.join(", ") }}.
                   </p>
                   <span v-if="pipeline.qualification.percentile !== null" class="pill pill-ok">
                     Top {{ Math.max(pipeline.qualification.percentile, 1) }}% of all deals
                   </span>
-                </div>
+                </template>
               </div>
             </div>
-
-            <div class="pl-card">
-              <h3 class="pl-h3">Qualification Summary</h3>
-              <dl class="pl-mini">
-                <div><dt>Budget Availability</dt><dd>{{ titleCase(pipeline.qualification.summary.budget_availability) }}</dd></div>
-                <div><dt>Stakeholder Engagement</dt><dd>{{ titleCase(pipeline.qualification.summary.stakeholder_engagement) }}</dd></div>
-                <div><dt>Timeline</dt><dd>{{ pipeline.qualification.summary.timeline_estimate ?? "—" }}</dd></div>
-                <div><dt>Technical Readiness</dt><dd>{{ titleCase(pipeline.qualification.summary.technical_readiness) }}</dd></div>
-                <div><dt>Decision Authority Access</dt><dd>{{ titleCase(pipeline.qualification.summary.decision_authority_access) }}</dd></div>
-              </dl>
-            </div>
-
-            <div class="pl-card pl-span">
-              <h3 class="pl-h3">Qualification Breakdown</h3>
-              <ul class="pl-bars">
-                <li v-for="d in pipeline.qualification.dimensions" :key="d.key">
-                  <span class="pl-bar-label">{{ d.label }}</span>
-                  <span class="pl-bar-track"><span class="pl-bar-fill" :style="{ width: `${d.value ?? 0}%` }"></span></span>
-                  <span class="pl-bar-value">{{ d.value === null ? "—" : `${d.value}%` }}</span>
-                </li>
-              </ul>
-            </div>
           </div>
-        </template>
 
-        <div v-else class="pl-card">
-          <div class="pl-grid">
-            <label v-for="d in pipeline.qualification.dimensions" :key="d.key" class="pl-field">
-              <span>{{ d.label }}</span>
-              <input v-model.number="quality[d.key]" class="control" type="number" min="0" max="100" />
-            </label>
+          <!-- The same five questions as the lead this came from, answered the
+               same way: one at a time, in place. -->
+          <div class="pl-card pl-span">
+            <h3 class="pl-h3">Assessment</h3>
+            <ul class="pl-questions">
+              <li v-for="d in pipeline.qualification.dimensions" :key="d.key" class="pl-question">
+                <button class="pl-question-head" :aria-expanded="answering === d.key"
+                        @click="answering = answering === d.key ? null : d.key">
+                  <span class="pl-question-text">
+                    <span class="pl-question-label">{{ d.label }}</span>
+                    <span class="pl-question-ask">{{ d.question }}</span>
+                  </span>
+                  <span class="pl-question-state">
+                    <span v-if="d.answer" class="pill pill-info">{{ d.answer.label }}</span>
+                    <span v-else class="pl-unanswered">Not answered</span>
+                    <span class="pl-question-points">{{ d.value === null ? "—" : `${d.value}%` }}</span>
+                  </span>
+                </button>
 
-            <label class="pl-field"><span>Budget availability</span>
-              <select v-model="quality.budget_availability" class="control">
-                <option :value="null">—</option><option value="available">Available</option>
-                <option value="limited">Limited</option><option value="none">None</option>
-              </select></label>
-            <label class="pl-field"><span>Stakeholder engagement</span>
-              <select v-model="quality.stakeholder_engagement" class="control">
-                <option :value="null">—</option><option value="high">High</option>
-                <option value="medium">Medium</option><option value="low">Low</option>
-              </select></label>
-            <label class="pl-field"><span>Timeline</span>
-              <input v-model="quality.timeline_estimate" class="control" placeholder="3–4 Months" /></label>
-            <label class="pl-field"><span>Technical readiness</span>
-              <select v-model="quality.technical_readiness" class="control">
-                <option :value="null">—</option><option value="high">High</option>
-                <option value="medium">Medium</option><option value="low">Low</option>
-              </select></label>
-            <label class="pl-field"><span>Decision authority access</span>
-              <select v-model="quality.decision_authority_access" class="control">
-                <option :value="null">—</option><option value="available">Available</option>
-                <option value="limited">Limited</option><option value="none">None</option>
-              </select></label>
-          </div>
-          <div class="pl-actions">
-            <button class="btn-primary" :disabled="saving" @click="saveQualification">Save assessment</button>
+                <span class="pl-bar-track"><span class="pl-bar-fill" :style="{ width: `${d.value ?? 0}%` }"></span></span>
+
+                <div v-if="answering === d.key" class="pl-options">
+                  <button v-for="o in d.options" :key="o.value"
+                          :class="['pl-option', { chosen: d.answer?.value === o.value }]"
+                          :disabled="answeringKey === d.key"
+                          @click="answer(d, o)">
+                    <span class="pl-option-label">{{ o.label }}</span>
+                    <span class="pl-option-help">{{ o.help }}</span>
+                    <span class="pl-option-points">{{ o.points }}</span>
+                  </button>
+                </div>
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -1193,12 +1181,56 @@ void loadPartners();
 .pl-gauge-value { font-size: 26px; font-weight: 700; }
 .pl-gauge-note { @apply flex flex-col items-start; gap: var(--space-2); }
 
-.pl-bars { @apply list-none; margin: 0; padding: 0; }
-.pl-bars li { @apply flex items-center; gap: var(--space-3); padding: var(--space-1) 0; }
-.pl-bar-label { font-size: var(--text-sm-size); color: var(--color-text-muted); width: 9rem; flex-shrink: 0; }
 .pl-bar-track { @apply block; flex: 1; height: 8px; border-radius: 999px; background: var(--color-surface-sunken); overflow: hidden; }
-.pl-bar-fill  { @apply block; height: 100%; border-radius: 999px; background: var(--color-brand-base); }
-.pl-bar-value { font-size: var(--text-xs-size); color: var(--color-brand-on-surface); width: 3rem; text-align: right; font-variant-numeric: tabular-nums; }
+.pl-bar-fill  { @apply block; height: 100%; border-radius: 999px; background: var(--color-brand-base); transition: width 240ms ease; }
+
+/* ── The five questions ─────────────────────────────────────────────────── */
+.pl-questions { @apply list-none flex flex-col; margin: 0; padding: 0; }
+.pl-question  { @apply flex flex-col; gap: var(--space-2); padding: var(--space-3) 0; }
+.pl-question + .pl-question { border-top: 1px solid var(--color-border); }
+
+.pl-question-head {
+  @apply flex items-start justify-between w-full text-left cursor-pointer border-none;
+  gap: var(--space-3); padding: 0; background: none;
+}
+.pl-question-text  { @apply flex flex-col; gap: 2px; min-width: 0; }
+.pl-question-label { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); }
+.pl-question-ask   { font-size: var(--text-xs-size); color: var(--color-text-light); }
+
+.pl-question-state { @apply flex items-center; gap: var(--space-2); flex-shrink: 0; }
+.pl-question-points {
+  font-size: var(--text-xs-size); font-family: var(--font-family-mono);
+  color: var(--color-text-muted); width: 2.75rem; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.pl-unanswered {
+  font-size: var(--text-xs-size); color: var(--color-text-light);
+  padding: 2px var(--space-2); border-radius: var(--radius-full);
+  border: 1px dashed var(--color-border-strong);
+}
+/* The list is a column, so the shared bar rule's flex:1 would stretch it. */
+.pl-question .pl-bar-track { flex: none; }
+
+.pl-options {
+  @apply grid; gap: var(--space-2); margin-top: var(--space-1);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+.pl-option {
+  @apply flex flex-col cursor-pointer text-left; gap: 2px;
+  padding: var(--space-3); border-radius: var(--radius-md);
+  border: 1px solid var(--color-border); background: var(--color-surface-raised);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.pl-option:hover:not(:disabled) { background: var(--color-neutral-100); }
+.pl-option:disabled { @apply cursor-wait opacity-60; }
+.pl-option.chosen { border-color: var(--color-brand-base); background: var(--color-brand-light); }
+.pl-option-label  { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); }
+.pl-option-help   { font-size: var(--text-xs-size); color: var(--color-text-muted); line-height: 1.5; }
+.pl-option-points {
+  font-size: var(--text-xs-size); font-family: var(--font-family-mono);
+  color: var(--color-text-light); margin-top: var(--space-1);
+}
+.pl-option.chosen .pl-option-points { color: var(--color-brand-on-surface); }
 
 /* ── Budget ────────────────────────────────────────────────────────────── */
 .pl-budget-head { @apply flex items-start justify-between; gap: var(--space-4); }
@@ -1237,7 +1269,6 @@ void loadPartners();
 .pl-field { @apply flex flex-col; gap: var(--space-1); }
 .pl-field > span { font-size: var(--text-xs-size); color: var(--color-text-muted); }
 .pl-req { font-style: normal; color: var(--color-danger-text); }
-.pl-actions { @apply flex justify-end; }
 
 .control {
   font-family: inherit; font-size: var(--text-sm-size);

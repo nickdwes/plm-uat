@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\Organization;
 use App\Models\Pipeline\Opportunity;
 use App\Models\Project\Project;
+use App\Models\Project\ProjectAttachment;
 use App\Models\Project\ProjectContractMilestone;
 use App\Models\Task\Task;
 use App\Models\Role;
@@ -84,6 +85,17 @@ class ContractMilestoneTest extends TestCase
         ]);
     }
 
+    /** Finance now needs proof of delivery before it can invoice. */
+    private function withProof(int $milestoneId): void
+    {
+        ProjectAttachment::create([
+            'organization_id' => $this->org->id, 'project_id' => $this->project->id,
+            'milestone_id' => $milestoneId, 'document_type' => 'proof',
+            'label' => 'acceptance.pdf', 'original_name' => 'acceptance.pdf',
+            'storage_path' => 'proof/x', 'mime_type' => 'application/pdf', 'size_bytes' => 1,
+        ]);
+    }
+
     // ── Recording ─────────────────────────────────────────────────────────
 
     public function test_a_milestone_is_paid_against_a_task(): void
@@ -141,6 +153,7 @@ class ContractMilestoneTest extends TestCase
     {
         $this->editor();
         $m = $this->milestone();
+        $this->withProof($m->id);
 
         $res = $this->postJson($this->url("/milestones/{$m->id}/transition"), [
             'status' => 'invoiced', 'invoice_reference' => 'INV-1042',
@@ -157,6 +170,7 @@ class ContractMilestoneTest extends TestCase
         // gap between them is the only thing anybody wants to measure.
         $this->editor();
         $m = $this->milestone();
+        $this->withProof($m->id);
 
         $this->postJson($this->url("/milestones/{$m->id}/transition"), ['status' => 'invoiced'])->assertOk();
         $invoicedAt = $m->fresh()->invoiced_at;
@@ -196,6 +210,8 @@ class ContractMilestoneTest extends TestCase
 
         $soon = $this->milestone(['due_on' => now()->addMonth()->toDateString()]);
         $late = $this->milestone(['due_on' => now()->subMonth()->toDateString()]);
+        $this->withProof($soon->id);
+        $this->withProof($late->id);
 
         $this->postJson($this->url("/milestones/{$soon->id}/transition"), ['status' => 'invoiced'])->assertOk();
         $this->postJson($this->url("/milestones/{$late->id}/transition"), ['status' => 'invoiced'])->assertOk();
@@ -263,6 +279,8 @@ class ContractMilestoneTest extends TestCase
 
         $a = $this->milestone(['value' => 100000, 'currency' => 'KES']);
         $b = $this->milestone(['value' => 5000, 'currency' => 'USD']);
+        $this->withProof($a->id);
+        $this->withProof($b->id);
         $this->postJson($this->url("/milestones/{$a->id}/transition"), ['status' => 'invoiced'])->assertOk();
         $this->postJson($this->url("/milestones/{$b->id}/transition"), ['status' => 'paid'])->assertOk();
 

@@ -15,6 +15,9 @@ use App\Models\Vendor\VendorCustomer;
 use App\Models\Vendor\VendorCustomerProject;
 use App\Models\Vendor\VendorIncentive;
 use App\Models\Vendor\VendorPartnershipTier;
+use App\Models\Vendor\VendorTierRequirement;
+use App\Services\Vendor\TierCompliance;
+use Illuminate\Support\Facades\DB;
 use App\Models\Vendor\VendorPortalUser;
 use App\Models\Vendor\VendorProduct;
 use App\Models\Vendor\VendorProfessionalCertification;
@@ -228,52 +231,125 @@ class VendorProfileController extends Controller
     {
         $this->authorize('view', $vendor);
         return VendorPartnershipTierResource::collection(
-            $vendor->partnershipTiers()->orderBy('tier_order')->orderBy('tier_name')->get()
+            $vendor->partnershipTiers()
+                ->with(['tierRequirements.trainingItem', 'tierRequirements.professionalCertification', 'product'])
+                ->orderBy('tier_order')->orderBy('tier_name')->get()
         );
     }
 
-    public function storeTier(Request $request, VendorPartner $vendor): VendorPartnershipTierResource
+    /**
+     * The shared shape of a tier.
+     *
+     * `scope` is what changed the model: a tier is either held on the
+     * partnership generally or on one product line, which is how OEM
+     * programmes actually work — Gold on firewalls and Silver on switches at
+     * the same time, each with its own obligations.
+     */
+    private function tierRules(bool $partial = false): array
     {
-        $this->authorize('update', $vendor);
-        $data = $request->validate([
-            'tier_name'          => 'required|string|max:100',
+        $required = $partial ? 'sometimes' : 'required';
+
+        return [
+            'tier_name'          => $required . '|string|max:100',
             'tier_order'         => 'nullable|integer|min:0',
+            'scope'              => 'sometimes|in:' . implode(',', VendorPartnershipTier::SCOPES),
+            'vendor_product_id'  => 'nullable|integer|exists:vendor_products,id',
             'revenue_target'     => 'nullable|numeric|min:0',
             'revenue_currency'   => 'nullable|string|max:10',
+            // Seats ride with the money: a target with no seat count behind
+            // it cannot be checked against anything.
+            'seats_required'     => 'nullable|integer|min:0',
+            'seats_activated'    => 'nullable|integer|min:0',
             'min_certifications' => 'nullable|integer|min:0',
             'min_headcount'      => 'nullable|integer|min:0',
             'requirements'       => 'nullable|string|max:5000',
             'benefits'           => 'nullable|string|max:5000',
             'is_current'         => 'boolean',
-        ]);
+            'valid_from'         => 'nullable|date',
+            'valid_until'        => 'nullable|date|after_or_equal:valid_from',
+
+            // The named obligations. Each points at a training item or a
+            // vendor certification — the same things our people's records are
+            // keyed on, which is what makes the count a query.
+            'tier_requirements'                                       => 'sometimes|array',
+            'tier_requirements.*.requirement_type'                    => 'required|in:' . implode(',', VendorTierRequirement::TYPES),
+            /*
+             * Retired items are not requirable. `exists` alone accepts a
+             * soft-deleted row, which would put an obligation on the tier
+             * that nobody can ever satisfy — it would report "not measurable"
+             * for ever and nothing on screen would say why.
+             */
+            'tier_requirements.*.training_item_id'                    => [
+                'nullable', 'integer',
+                \Illuminate\Validation\Rule::exists('training_items', 'id')->whereNull('deleted_at'),
+            ],
+            'tier_requirements.*.vendor_professional_certification_id' => 'nullable|integer|exists:vendor_professional_certifications,id',
+            'tier_requirements.*.required_headcount'                  => 'nullable|integer|min:1|max:999',
+            'tier_requirements.*.notes'                               => 'nullable|string|max:300',
+        ];
+    }
+
+    public function storeTier(Request $request, VendorPartner $vendor): JsonResponse
+    {
+        $this->authorize('update', $vendor);
+
+        $data = $request->validate($this->tierRules());
+        $this->assertTierIsCoherent($data, $vendor);
+
+        $requirements = $data['tier_requirements'] ?? [];
+        unset($data['tier_requirements']);
+
         $data['vendor_partner_id'] = $vendor->id;
-        // If marking as current, unset others
-        if (!empty($data['is_current'])) {
-            $vendor->partnershipTiers()->update(['is_current' => false]);
-        }
-        return new VendorPartnershipTierResource(VendorPartnershipTier::create($data));
+        $data['organization_id']   = $vendor->organization_id;
+
+        $tier = DB::transaction(function () use ($vendor, $data, $requirements) {
+            if (! empty($data['is_current'])) {
+                $this->standDownCurrentTier($vendor, $data['scope'] ?? 'general', $data['vendor_product_id'] ?? null);
+            }
+
+            $tier = VendorPartnershipTier::create($data);
+            $this->syncTierRequirements($tier, $requirements);
+
+            return $tier;
+        });
+
+        // 201, not the 200 this answered before: a caller cannot tell
+        // "created" from "already there" otherwise.
+        return (new VendorPartnershipTierResource($tier->fresh(['tierRequirements', 'product'])))
+            ->response()->setStatusCode(201);
     }
 
     public function updateTier(Request $request, VendorPartner $vendor, VendorPartnershipTier $tier): VendorPartnershipTierResource
     {
         $this->authorize('update', $vendor);
         abort_if($tier->vendor_partner_id !== $vendor->id, 404);
-        $data = $request->validate([
-            'tier_name'          => 'sometimes|string|max:100',
-            'tier_order'         => 'nullable|integer|min:0',
-            'revenue_target'     => 'nullable|numeric|min:0',
-            'revenue_currency'   => 'nullable|string|max:10',
-            'min_certifications' => 'nullable|integer|min:0',
-            'min_headcount'      => 'nullable|integer|min:0',
-            'requirements'       => 'nullable|string|max:5000',
-            'benefits'           => 'nullable|string|max:5000',
-            'is_current'         => 'boolean',
-        ]);
-        if (!empty($data['is_current'])) {
-            $vendor->partnershipTiers()->where('id', '!=', $tier->id)->update(['is_current' => false]);
-        }
-        $tier->update($data);
-        return new VendorPartnershipTierResource($tier->fresh());
+
+        $data = $request->validate($this->tierRules(partial: true));
+        $this->assertTierIsCoherent($data, $vendor, $tier);
+
+        $requirements = $data['tier_requirements'] ?? null;
+        unset($data['tier_requirements']);
+
+        DB::transaction(function () use ($vendor, $tier, $data, $requirements) {
+            if (! empty($data['is_current'])) {
+                $this->standDownCurrentTier(
+                    $vendor,
+                    $data['scope'] ?? $tier->scope ?? 'general',
+                    $data['vendor_product_id'] ?? $tier->vendor_product_id,
+                    $tier->id,
+                );
+            }
+
+            $tier->update($data);
+
+            // Absent means "not editing them"; an empty array means "there are
+            // none" — a difference that matters when a form posts one section.
+            if ($requirements !== null) {
+                $this->syncTierRequirements($tier, $requirements);
+            }
+        });
+
+        return new VendorPartnershipTierResource($tier->fresh(['tierRequirements', 'product']));
     }
 
     public function destroyTier(VendorPartner $vendor, VendorPartnershipTier $tier): JsonResponse
@@ -288,9 +364,93 @@ class VendorProfileController extends Controller
     {
         $this->authorize('update', $vendor);
         abort_if($tier->vendor_partner_id !== $vendor->id, 404);
-        $vendor->partnershipTiers()->update(['is_current' => false]);
-        $tier->update(['is_current' => true]);
-        return new VendorPartnershipTierResource($tier->fresh());
+
+        $this->standDownCurrentTier($vendor, $tier->scope ?? 'general', $tier->vendor_product_id, $tier->id);
+
+        $tier->update([
+            'is_current' => true,
+            // Effective dating, so tier history has real dates rather than a
+            // boolean that only ever describes today.
+            'valid_from' => $tier->valid_from ?? now()->toDateString(),
+        ]);
+
+        return new VendorPartnershipTierResource($tier->fresh(['tierRequirements', 'product']));
+    }
+
+    /**
+     * Whether we still hold what this tier demands.
+     *
+     * The point of naming requirements instead of counting them: this is a
+     * query, not a phone call to the OEM.
+     */
+    public function tierCompliance(VendorPartner $vendor, TierCompliance $compliance): JsonResponse
+    {
+        $this->authorize('view', $vendor);
+
+        return response()->json(['data' => $compliance->forVendor($vendor)]);
+    }
+
+    /**
+     * Only one tier is current per thing it is held on.
+     *
+     * Per PRODUCT, not per vendor: holding Gold on firewalls says nothing
+     * about switches, and standing down every other tier when one is marked
+     * current is how a partner manager loses half their programme with one
+     * click.
+     */
+    private function standDownCurrentTier(
+        VendorPartner $vendor, string $scope, ?int $productId, ?int $exceptId = null,
+    ): void {
+        $vendor->partnershipTiers()
+            ->where('scope', $scope)
+            ->when($scope === 'product', fn ($q) => $q->where('vendor_product_id', $productId))
+            ->when($exceptId, fn ($q) => $q->where('id', '!=', $exceptId))
+            ->update(['is_current' => false, 'valid_until' => now()->toDateString()]);
+    }
+
+    /** A product tier without a product is a tier held on nothing. */
+    private function assertTierIsCoherent(array $data, VendorPartner $vendor, ?VendorPartnershipTier $tier = null): void
+    {
+        $scope     = $data['scope'] ?? $tier?->scope ?? 'general';
+        $productId = array_key_exists('vendor_product_id', $data)
+            ? $data['vendor_product_id']
+            : $tier?->vendor_product_id;
+
+        if ($scope === 'product' && $productId === null) {
+            abort(422, 'Say which product this tier is held on, or make it a general partnership tier.');
+        }
+
+        if ($productId !== null && ! $vendor->products()->whereKey($productId)->exists()) {
+            abort(422, 'That product belongs to a different vendor.');
+        }
+    }
+
+    /**
+     * Replace the tier's obligations with what was sent.
+     *
+     * Replaced rather than merged: the form edits them as one list, and a
+     * merge would leave a requirement somebody deleted quietly in force.
+     */
+    private function syncTierRequirements(VendorPartnershipTier $tier, array $requirements): void
+    {
+        $tier->tierRequirements()->delete();
+
+        foreach ($requirements as $requirement) {
+            if (empty($requirement['training_item_id']) && empty($requirement['vendor_professional_certification_id'])) {
+                // A requirement pointing at nothing cannot be counted, and
+                // storing it would put an unmeasurable row on every report.
+                abort(422, 'Each tier requirement has to name a training item or a certification.');
+            }
+
+            $tier->tierRequirements()->create([
+                'organization_id'    => $tier->organization_id ?? $tier->vendor->organization_id,
+                'requirement_type'   => $requirement['requirement_type'],
+                'training_item_id'   => $requirement['training_item_id'] ?? null,
+                'vendor_professional_certification_id' => $requirement['vendor_professional_certification_id'] ?? null,
+                'required_headcount' => $requirement['required_headcount'] ?? 1,
+                'notes'              => $requirement['notes'] ?? null,
+            ]);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

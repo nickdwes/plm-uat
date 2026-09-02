@@ -65,6 +65,19 @@ return [
             'replace_placeholders' => true,
         ],
 
+        /*
+         * Security audit trail — failed logins, lockouts, and cross-tenant
+         * access denials, kept in their own file so they are not lost in the
+         * application log and can be shipped to a SIEM independently.
+         */
+        'security' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/security.log'),
+            'level' => 'info',
+            'days' => env('LOG_SECURITY_DAYS', 90),
+            'replace_placeholders' => true,
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),

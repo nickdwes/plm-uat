@@ -38,10 +38,24 @@ class OpportunityController extends Controller
             $q->where('account_id', $accountId);
         }
 
-        // Open, won or lost — always asked of the phase, so the answer cannot
-        // contradict which phase the deal is in.
+        /*
+         * Open, won or lost — asked of the phase, so the answer cannot
+         * contradict which phase the deal is in.
+         *
+         * A deal with **no** phase counts as open, which is the same answer
+         * `Opportunity::is_open` gives (`outcome === null`, and a missing phase
+         * has no outcome). It did not: `whereHas` needs the phase to exist, so
+         * a phaseless deal was open to the model and invisible to this list.
+         * Every one of the 130 imported deals was in that state — the customer
+         * page reported "17 active deals" while this page reported none.
+         *
+         * Won and lost stay strict: claiming an outcome requires a phase that
+         * says so.
+         */
         match ($request->string('state')->toString()) {
-            'open' => $q->whereHas('phase', fn ($p) => $p->whereNull('outcome')),
+            'open' => $q->where(fn ($w) => $w
+                ->whereHas('phase', fn ($p) => $p->whereNull('outcome'))
+                ->orWhereNull('opportunity_phase_id')),
             'won'  => $q->whereHas('phase', fn ($p) => $p->where('outcome', 'won')),
             'lost' => $q->whereHas('phase', fn ($p) => $p->where('outcome', 'lost')),
             default => null,

@@ -39,7 +39,8 @@ class TravelRequest extends Model
 
     protected $fillable = [
         'organization_id', 'reference', 'employee_id', 'department_id', 'functional_unit_id',
-        'account_id', 'linked_task_ref', 'delivery_reference', 'delivery_note_attachment_id',
+        'account_id', 'project_id', 'source_project_travel_request_id',
+        'linked_task_ref', 'delivery_reference', 'delivery_note_attachment_id',
         'travel_destination_id', 'travel_mode', 'travel_type',
         'priority', 'accommodation_needed', 'flexible_days',
         'advance_justification', 'departure_date', 'return_date',
@@ -111,6 +112,11 @@ class TravelRequest extends Model
     public function destination(): BelongsTo
     {
         return $this->belongsTo(TravelDestination::class, 'travel_destination_id');
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Project\Project::class, 'project_id');
     }
 
     public function items(): HasMany

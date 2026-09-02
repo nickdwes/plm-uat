@@ -42,3 +42,9 @@ plm v2/
 
 # Local credential material — never commit
 security/
+
+# Browser certificate/key store — key4.db is a private key database
+.pki/
+
+# Large local archives that have no business in source control
+archive*.zip

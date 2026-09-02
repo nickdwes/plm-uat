@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Roster;
 
+use App\Support\Authorization\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\Roster\HandoverReport;
@@ -32,7 +33,7 @@ class HandoverController extends Controller
 
         // Non-managers see only their own reports
         $user = $request->user();
-        if (! $user->isManagerIn($orgId) && ! $user->isOrgHR($orgId)) {
+        if (! $user->hasPermission(Permission::ROSTER_VIEW)) {
             $employee = Employee::where('user_id', $user->id)
                 ->where('primary_organization_id', $orgId)
                 ->first();
@@ -76,6 +77,13 @@ class HandoverController extends Controller
             'general_notes'        => ['nullable', 'string', 'max:2000'],
         ]);
 
+        /*
+         * You file your own handover. The outgoing employee named on the
+         * report must be the caller — anything else needs roster.manage,
+         * because filing a report AS somebody else is a supervisory action.
+         */
+        $this->guardActsFor($request, (int) $data['outgoing_employee_id'], $orgId);
+
         $report = HandoverReport::create(array_merge($data, ['organization_id' => $orgId]));
         $report->load(['shiftType', 'outgoingEmployee', 'incomingEmployee']);
 
@@ -91,6 +99,10 @@ class HandoverController extends Controller
         if ($report->acknowledged_at) {
             return response()->json(['message' => 'Acknowledged reports cannot be edited.'], 422);
         }
+
+        // Editable by the person who filed it, pre-acknowledgment; a
+        // supervisor correcting somebody's report needs roster.manage.
+        $this->guardActsFor($request, (int) $report->outgoing_employee_id, $orgId);
 
         $data = $request->validate([
             'incoming_employee_id' => ['nullable', 'integer', 'exists:employees,id'],
@@ -119,6 +131,12 @@ class HandoverController extends Controller
             return response()->json(['message' => 'Already acknowledged.'], 422);
         }
 
+        // A report addressed to a named incoming employee is theirs to sign;
+        // an unaddressed one may be signed by whoever picked up the shift.
+        if ($report->incoming_employee_id !== null) {
+            $this->guardActsFor($request, (int) $report->incoming_employee_id, $orgId);
+        }
+
         $user     = $request->user();
         $employee = Employee::where('user_id', $user->id)
             ->where('primary_organization_id', $orgId)
@@ -132,6 +150,20 @@ class HandoverController extends Controller
         $report->load(['shiftType', 'outgoingEmployee', 'incomingEmployee', 'acknowledgedBy']);
 
         return response()->json(['data' => $this->formatReport($report)]);
+    }
+
+    /** The caller must BE this employee, or hold roster.manage. */
+    private function guardActsFor(Request $request, int $employeeId, int $orgId): void
+    {
+        if ($request->user()->hasPermission(\App\Support\Authorization\Permission::ROSTER_MANAGE)) {
+            return;
+        }
+
+        $own = Employee::where('user_id', $request->user()->id)
+            ->where('primary_organization_id', $orgId)
+            ->value('id');
+
+        abort_unless($own !== null && (int) $own === $employeeId, 403);
     }
 
     private function formatReport(HandoverReport $r): array

@@ -8,20 +8,27 @@ use App\Models\Recruitment\Vacancy;
 use App\Models\Training\CompetencyItem;
 use App\Models\Training\EmployeeTrainingRecord;
 use App\Models\Training\RoleCompetencyProfile;
+use App\Models\Training\TrainingBudgetRequest;
 use App\Models\Training\TrainingItem;
 use App\Models\Training\VendorPartner;
 use App\Policies\Recruitment\ApplicationPolicy;
 use App\Policies\Recruitment\CandidatePolicy;
 use App\Policies\Recruitment\VacancyPolicy;
 use App\Policies\Training\CompetencyPolicy;
+use App\Policies\Training\TrainingBudgetRequestPolicy;
 use App\Policies\Training\TrainingItemPolicy;
 use App\Policies\Training\TrainingRecordPolicy;
 use App\Policies\Training\VendorPartnerPolicy;
 use App\Mail\Transports\MicrosoftGraphTransport;
+use Illuminate\Auth\Events\Failed;
+use Illuminate\Auth\Events\Lockout;
 use Illuminate\Auth\Notifications\ResetPassword;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -54,6 +61,58 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        /*
+         * A stronger default password everywhere the reset/creation flow uses
+         * Password::defaults(): at least 12 characters and not one that has
+         * appeared in a known breach (checked against HaveIBeenPwned's k-anon
+         * range API — only a hash prefix leaves the server).
+         */
+        Password::defaults(fn () => $this->app->isProduction()
+            ? Password::min(12)->uncompromised()
+            : Password::min(12));
+
+        /*
+         * The security audit trail. Failed logins and lockouts were fired as
+         * events but listened to by nothing, so brute-force and credential
+         * stuffing left no record. Written to the dedicated `security` channel.
+         */
+        Event::listen(Failed::class, function (Failed $event) {
+            $email = $event->credentials['email'] ?? null;
+            Log::channel('security')->warning('Failed login', ['email' => $email, 'ip' => request()->ip()]);
+            // No authenticated user — actorName carries the attempted identity.
+            \App\Services\Audit\AuditLogger::record(
+                action: 'login_failed',
+                description: 'Failed login for ' . ($email ?? 'unknown'),
+                actorName: $email,
+            );
+        });
+
+        Event::listen(Lockout::class, function () {
+            Log::channel('security')->warning('Login lockout (rate limit hit)', ['ip' => request()->ip()]);
+            \App\Services\Audit\AuditLogger::record(
+                action: 'login_locked',
+                description: 'Login lockout — rate limit reached',
+            );
+        });
+
+        Event::listen(\Illuminate\Auth\Events\Login::class, function ($event) {
+            \App\Services\Audit\AuditLogger::record(
+                action: 'login',
+                description: $event->user->name . ' signed in',
+                userId: $event->user->id, actorName: $event->user->name,
+            );
+        });
+
+        Event::listen(\Illuminate\Auth\Events\Logout::class, function ($event) {
+            if ($event->user) {
+                \App\Services\Audit\AuditLogger::record(
+                    action: 'logout',
+                    description: $event->user->name . ' signed out',
+                    userId: $event->user->id, actorName: $event->user->name,
+                );
+            }
+        });
+
         /*
          * Where the link in the email points.
          *
@@ -96,6 +155,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(CompetencyItem::class,        CompetencyPolicy::class);
         Gate::policy(RoleCompetencyProfile::class, CompetencyPolicy::class);
         Gate::policy(EmployeeTrainingRecord::class, TrainingRecordPolicy::class);
+        Gate::policy(TrainingBudgetRequest::class, TrainingBudgetRequestPolicy::class);
         Gate::policy(VendorPartner::class,         VendorPartnerPolicy::class);
 
         // Asset register. Registered explicitly because auto-discovery only

@@ -32,7 +32,7 @@ class PublicScoringController extends Controller
 
     private function resolveToken(string $token): ?InterviewPanelist
     {
-        return InterviewPanelist::where('scoring_token', $token)
+        return InterviewPanelist::where('scoring_token', hash('sha256', $token))
             ->where(function ($q) {
                 $q->whereNull('scoring_token_expires_at')
                   ->orWhere('scoring_token_expires_at', '>', now());

@@ -24,7 +24,8 @@ use Illuminate\Validation\Rule;
 class ProjectController extends Controller
 {
     private const DETAIL = [
-        'account', 'opportunity.estimates', 'projectLead', 'team.employee', 'vendorPartner',
+        'account', 'account.contacts', 'opportunity.estimates', 'projectLead', 'team.employee',
+        'vendorPartner', 'clientContact', 'clientSponsor',
     ];
 
     /** Someone holding only `view_own` sees what they lead or deliver. */
@@ -101,6 +102,26 @@ class ProjectController extends Controller
         $this->authorize('update', $project);
 
         $data = $this->rules($request, $project->organization_id);
+
+        /*
+         * Initiation gate: a project cannot leave kickoff into flight until its
+         * mandatory governance seats are filled. This is the one hard gate —
+         * initiating a delivery with no sponsor, PM or finance owner is the
+         * failure the governance committee exists to prevent.
+         */
+        if (($data['status'] ?? null) === 'in_flight' && $project->status === 'kickoff') {
+            $vacant = \App\Models\Project\ProjectGovernanceRole::MANDATORY;
+            $filled = $project->governanceRoles()
+                ->whereIn('role_key', $vacant)->whereNotNull('assignee_employee_id')
+                ->pluck('role_key')->all();
+            $missing = array_values(array_diff($vacant, $filled));
+            if ($missing) {
+                $labels = array_map(fn ($k) => \App\Models\Project\ProjectGovernanceRole::CATALOG[$k] ?? $k, $missing);
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'status' => 'Assign the mandatory governance roles before initiating: ' . implode(', ', $labels) . '.',
+                ]);
+            }
+        }
 
         /*
          * Delivering a project stamps the date if nobody gave one, and clearing
@@ -191,6 +212,37 @@ class ProjectController extends Controller
             'delivery_days_own' => ['nullable', 'numeric', 'min:0', 'max:99999.9'],
             'delivery_days_oem' => ['nullable', 'numeric', 'min:0', 'max:99999.9'],
             'oem_ps_cost'       => ['nullable', 'numeric', 'min:0', 'max:9999999999999.99'],
+
+            // ── Charter ─────────────────────────────────────────────────────
+            'scope'   => ['nullable', 'string', 'max:20000'],
+            'charter' => ['nullable', 'string', 'max:20000'],
+            'pip'     => ['nullable', 'string', 'max:20000'],
+            'product' => ['nullable', 'string', 'max:255'],
+            'project_email' => ['nullable', 'string', 'max:255'],
+
+            'execution_start' => ['nullable', 'date'],
+            'execution_end'   => ['nullable', 'date', 'after_or_equal:execution_start'],
+            'charter_completion_date'  => ['nullable', 'date'],
+            'contract_completion_date' => ['nullable', 'date'],
+
+            // Client-side people must be contacts of this project's own client.
+            'client_contact_id'         => ['nullable', 'integer', $this->accountContactRule($request, $orgId)],
+            'client_sponsor_contact_id' => ['nullable', 'integer', $this->accountContactRule($request, $orgId)],
         ]);
+    }
+
+    /**
+     * A client contact must belong both to this organisation and to the
+     * account the project is for — you cannot name another client's people.
+     */
+    private function accountContactRule(Request $request, int $orgId): \Illuminate\Validation\Rules\Exists
+    {
+        $rule = Rule::exists('account_contacts', 'id')->where('organization_id', $orgId);
+
+        if ($accountId = $request->input('account_id')) {
+            $rule->where('account_id', $accountId);
+        }
+
+        return $rule;
     }
 }

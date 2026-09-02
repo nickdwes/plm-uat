@@ -66,10 +66,17 @@ class SupportDefaults
         ['Service Request', 'Somebody needs something', false],
         ['Problem',         'The cause behind repeated incidents', false],
         ['Change Request',  'A deliberate change to a service', false],
+        ['Feature Request', 'A new capability being asked for', false],
         ['Network Request', 'Connectivity, links and circuits', false],
-        ['Request',         'General request', false],
-        ['Negative Feedback', 'A complaint about service', false],
     ];
+
+    /*
+     * "Request" duplicated Service/Network/Change Request with nothing to
+     * distinguish it, and "Negative Feedback" isn't a kind of ticket — it's a
+     * judgement about one. Retired rather than deleted: existing tickets keep
+     * pointing at a real row, they just stop being offered on new ones.
+     */
+    private const RETIRED_TYPE_SLUGS = ['request', 'negative-feedback'];
 
     private const URGENCIES = [['High', 1], ['Medium', 2, true], ['Low', 3]];
     private const IMPACTS   = [['High', 1], ['Medium', 2, true], ['Low', 3]];
@@ -100,11 +107,12 @@ class SupportDefaults
         if (TicketStatus::withoutGlobalScope('organization')
             ->where('organization_id', $organizationId)->exists()) {
             /*
-             * Already set up — but queues were added after the first
-             * organisations were, so the standard ones are topped up here
-             * rather than left missing for anybody who started earlier.
+             * Already set up — but queues, and now types, were added after the
+             * first organisations were, so the standard ones are topped up
+             * here rather than left missing for anybody who started earlier.
              */
             $this->seedQueues($organizationId);
+            $this->seedTypes($organizationId);
 
             return;
         }
@@ -325,6 +333,36 @@ class SupportDefaults
                     ->update(['default_team_id' => $team->id]);
             }
         }
+    }
+
+    /**
+     * Same top-up idea as seedQueues() — a type added to the standard set
+     * after an organisation was already provisioned (Feature Request,
+     * alongside the existing Incident/Service Request/Change Request/etc.)
+     * is appended rather than left missing, and existing types keep the
+     * position they already have rather than being renumbered.
+     */
+    private function seedTypes(int $organizationId): void
+    {
+        $nextPosition = (TicketType::withoutGlobalScope('organization')
+            ->where('organization_id', $organizationId)->max('position') ?? -1) + 1;
+
+        foreach (self::TYPES as [$name, $description, $default]) {
+            $type = TicketType::withoutGlobalScope('organization')->firstOrCreate(
+                ['organization_id' => $organizationId, 'slug' => \Str::slug($name)],
+                ['name' => $name, 'description' => $description, 'is_default' => $default, 'position' => $nextPosition],
+            );
+
+            if ($type->wasRecentlyCreated) {
+                $nextPosition++;
+            }
+        }
+
+        TicketType::withoutGlobalScope('organization')
+            ->where('organization_id', $organizationId)
+            ->whereIn('slug', self::RETIRED_TYPE_SLUGS)
+            ->where('is_active', true)
+            ->update(['is_active' => false]);
     }
 
     /** Every impact/urgency pair gets an answer, so triage can never fall through. */

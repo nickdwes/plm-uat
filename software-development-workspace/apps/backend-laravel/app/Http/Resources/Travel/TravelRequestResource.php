@@ -20,6 +20,10 @@ class TravelRequestResource extends JsonResource
             'account'     => $this->whenLoaded('account', fn () => [
                 'id' => $this->account?->id, 'name' => $this->account?->name,
             ]),
+            'project_id'  => $this->project_id,
+            'project'     => $this->whenLoaded('project', fn () => [
+                'id' => $this->project?->id, 'name' => $this->project?->name,
+            ]),
             'destination' => $this->whenLoaded('destination', fn () => [
                 'id' => $this->destination?->id, 'name' => $this->destination?->name,
             ]),

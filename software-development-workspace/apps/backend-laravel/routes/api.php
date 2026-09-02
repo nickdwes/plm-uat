@@ -30,6 +30,8 @@ use App\Http\Controllers\Support\MailboxController;
 use App\Http\Controllers\Support\RoutingController;
 use App\Http\Controllers\Support\SlaController;
 use App\Http\Controllers\Support\TicketController;
+use App\Http\Controllers\Support\TicketMeetingController;
+use App\Http\Controllers\Support\TicketRcaController;
 use App\Http\Controllers\Support\WorkspaceController;
 use App\Http\Controllers\Payroll\PayrollRunItemController;
 use App\Http\Controllers\Payroll\RecurringDeductionController;
@@ -41,13 +43,16 @@ use App\Http\Controllers\Recruitment\InterviewController;
 use App\Http\Controllers\Recruitment\VacancyController;
 use App\Http\Controllers\Recruitment\VacancyTemplateController;
 use App\Http\Controllers\Recruitment\WorkflowController;
+use App\Http\Controllers\Training\TrainingCertifyingBodyController;
 use App\Http\Controllers\Training\TrainingItemController;
 use App\Http\Controllers\Training\CompetencyController;
 use App\Http\Controllers\Training\TrainingRecordController;
 use App\Http\Controllers\Training\TrainingDashboardController;
 use App\Http\Controllers\Training\TrainingAssignmentController;
+use App\Http\Controllers\Training\TrainingBudgetRequestController;
 use App\Http\Controllers\Training\VendorComplianceController;
 use App\Http\Controllers\Vendor\VendorController;
+use App\Http\Controllers\Vendor\VendorDocumentController;
 use App\Http\Controllers\Vendor\VendorProfileController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\Attendance\AttendanceAnalyticsController;
@@ -56,13 +61,48 @@ use App\Http\Controllers\Attendance\AttendanceController;
 use App\Http\Controllers\Attendance\EnablementDayController;
 use App\Http\Controllers\Account\AccountController;
 use App\Http\Controllers\Pipeline\LeadController;
+use App\Http\Controllers\Pipeline\LeadCorrespondenceController;
 use App\Http\Controllers\Pipeline\OpportunityController;
 use App\Http\Controllers\Pipeline\OpportunityPipelineController;
 use App\Http\Controllers\Pipeline\ResearchController;
 use App\Http\Controllers\Project\ProjectController;
+use App\Http\Controllers\Project\ProjectDashboardController;
+use App\Http\Controllers\Project\PmTaskDefinitionController;
+use App\Http\Controllers\Project\ProjectDeliveryMilestoneController;
+use App\Http\Controllers\Project\ProjectDependencyController;
+use App\Http\Controllers\Project\ProjectEmailController;
+use App\Http\Controllers\Project\ProjectAlertController;
+use App\Http\Controllers\Project\ProjectApprovalController;
+use App\Http\Controllers\Project\ProjectBomController;
+use App\Http\Controllers\Project\ProjectClosureController;
+use App\Http\Controllers\Project\ProjectOrderController;
+use App\Http\Controllers\Project\ProjectOrderReleaseController;
+use App\Http\Controllers\Project\ProjectFinanceController;
+use App\Http\Controllers\Project\ProjectLogisticsSummaryController;
+use App\Http\Controllers\Project\ProjectTravelEstimateController;
+use App\Http\Controllers\Project\ProjectVendorEngagementController;
+use App\Http\Controllers\Project\ProjectTravelOptimizationController;
+use App\Http\Controllers\Project\ProjectIssueController;
+use App\Http\Controllers\Project\ProjectMaterialOrderController;
+use App\Http\Controllers\Project\ProjectMeetingController;
 use App\Http\Controllers\Project\ProjectMilestoneController;
+use App\Http\Controllers\Project\ProjectPhaseController;
+use App\Http\Controllers\Project\ProjectRiskController;
+use App\Http\Controllers\Project\ProjectTeamController;
+use App\Http\Controllers\Project\ProjectGovernanceController;
+use App\Http\Controllers\Project\ProjectCustomerTeamController;
+use App\Http\Controllers\Project\ProjectReportsController;
+use App\Http\Controllers\Project\ProjectProfessionalServiceController;
+use App\Http\Controllers\Project\ProjectSubcontractorController;
+use App\Http\Controllers\Project\ProjectTravelScheduleController;
+use App\Http\Controllers\Project\ProjectTravelRequestController;
+use App\Http\Controllers\Project\ProjectResourceController;
+use App\Http\Controllers\Procurement\ProcurementController;
+use App\Http\Controllers\Project\ProjectVendorController;
+use App\Http\Controllers\Project\ProjectWeeklyReportController;
 use App\Http\Controllers\Task\LeaveHandoverController;
 use App\Http\Controllers\Task\TaskBoardController;
+use App\Http\Controllers\Task\TaskMeetingController;
 use App\Http\Controllers\Task\TaskController;
 use App\Http\Controllers\Task\TaskRecurrenceController;
 use App\Http\Controllers\Asset\AssetController;
@@ -71,7 +111,10 @@ use App\Http\Controllers\Travel\DeliveryController;
 use App\Http\Controllers\Travel\TravelRequestController;
 use App\Http\Controllers\Travel\TravelReconciliationController;
 use App\Http\Controllers\Travel\TravelSettingsController;
+use App\Http\Controllers\Authorization\DenyAssignmentController;
 use App\Http\Controllers\Authorization\RoleController;
+use App\Http\Controllers\Authorization\RoleDefinitionController;
+use App\Http\Controllers\Authorization\UserDirectoryController;
 use App\Http\Controllers\Goals\GoalController;
 use App\Http\Controllers\Roster\HandoverController;
 use App\Http\Controllers\Roster\RosterConfigController;
@@ -92,6 +135,17 @@ use Illuminate\Support\Facades\Route;
 // ── Auth (no CSRF — Bearer token based) ──────────────────────────────────────
 Route::post('/login',  [AuthenticatedSessionController::class, 'store'])->middleware('guest');
 Route::post('/logout', [AuthenticatedSessionController::class, 'destroy'])->middleware('auth:sanctum');
+
+/*
+ * The second factor, for people who have enrolled an authenticator.
+ *
+ * Guest, because nobody is signed in yet — the password step deliberately
+ * issues no token. Throttled at the route as well as per-account: the
+ * per-account lock stops somebody grinding one victim, and this stops a script
+ * spreading its guesses across many.
+ */
+Route::post('/login/verify-otp', [AuthenticatedSessionController::class, 'verifyOtp'])
+    ->middleware(['guest', 'throttle:10,1']);
 
 /*
  * Forgotten passwords.
@@ -237,6 +291,11 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // POST, not GET: the password must not land in the access log, the
         // browser history, or any proxy between here and the browser.
         Route::post('/export', [\App\Http\Controllers\HR\PeopleReportController::class, 'export']);
+    });
+
+    Route::prefix('reports/training')->group(function () {
+        Route::get('/summary', [\App\Http\Controllers\Training\TrainingReportController::class, 'summary']);
+        Route::get('/export',  [\App\Http\Controllers\Training\TrainingReportController::class, 'export']);
     });
 
     Route::prefix('employees')->group(function () {
@@ -399,9 +458,63 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     // different rights in different organizations.
     Route::prefix('authorization')->group(function () {
         Route::get('/options',            [RoleController::class, 'options']);
+
+        // The caller's own rights, for the client to shape its UI around.
+        // Everyone may know what they hold; the API stays the authority.
+        Route::get('/my-permissions',     [RoleController::class, 'myPermissions']);
         Route::get('/roles',              [RoleController::class, 'index']);
         Route::get('/roles/{role}',       [RoleController::class, 'show']);
+
+        // Writing definitions. Built-ins are immutable templates — the write
+        // path for "the HR role, except…" is clone-then-edit-the-copy.
+        Route::post('/roles',                 [RoleDefinitionController::class, 'store']);
+        Route::put('/roles/{role}',           [RoleDefinitionController::class, 'update']);
+        Route::post('/roles/{role}/clone',    [RoleDefinitionController::class, 'clone']);
+        Route::delete('/roles/{role}',        [RoleDefinitionController::class, 'destroy']);
+
+        // Per-user denies — the veto checked before any grant.
+        Route::get('/denies',            [DenyAssignmentController::class, 'index']);
+        Route::post('/denies',           [DenyAssignmentController::class, 'store']);
+        Route::delete('/denies/{deny}',  [DenyAssignmentController::class, 'destroy']);
         Route::get('/users/{user}/assignments', [RoleController::class, 'assignmentsFor']);
+
+        /*
+         * Who can log in, and which employee each of them is. `employees.user_id`
+         * is what every "own" scope resolves through, and nothing showed it —
+         * so nothing showed when it was missing.
+         */
+        Route::get('/users',                    [UserDirectoryController::class, 'index']);
+        Route::put('/users/{user}/employee',    [UserDirectoryController::class, 'linkEmployee']);
+
+        // Which way in each person has. Discovery asks Microsoft; the override
+        // is for when an administrator knows better than a cached lookup.
+        Route::post('/users/{user}/discover',   [UserDirectoryController::class, 'rediscover']);
+        Route::put('/users/{user}/auth-method', [UserDirectoryController::class, 'setAuthMethod']);
+        Route::post('/users/{user}/reset-password', [UserDirectoryController::class, 'resetPassword']);
+
+        /*
+         * Provisioning, both directions. Onboarded here and absent there gets
+         * an account made; present there and absent here becomes a suggestion
+         * somebody accepts, never an automatic import.
+         */
+        Route::post('/users/{user}/provision',      [UserDirectoryController::class, 'provision']);
+        Route::get('/directory/unmatched',          [UserDirectoryController::class, 'unmatchedDirectoryAccounts']);
+        Route::post('/directory/create-employee',   [UserDirectoryController::class, 'createFromDirectory']);
+
+        /*
+         * Authenticator enrolment. The secret and the recovery codes are
+         * returned once each, by these two responses, and by nothing else.
+         */
+        Route::post('/users/{user}/authenticator',         [UserDirectoryController::class, 'beginEnrollment']);
+        Route::post('/users/{user}/authenticator/confirm', [UserDirectoryController::class, 'confirmEnrollment']);
+
+        /*
+         * Withdrawing access, here and in Office 365. Its own permission:
+         * this disables a Microsoft account and closes live sessions, which is
+         * not something to inherit from being able to grant a role.
+         */
+        Route::post('/users/{user}/deprovision', [UserDirectoryController::class, 'deprovision']);
+        Route::post('/users/{user}/reprovision', [UserDirectoryController::class, 'reprovision']);
         Route::post('/assignments',       [RoleController::class, 'grant']);
         Route::delete('/assignments/{assignment}', [RoleController::class, 'revoke']);
     });
@@ -417,10 +530,17 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Before /{account}: a literal segment declared after a route
         // parameter is never reached.
         Route::get('/lookups',         [AccountController::class, 'lookups']);
+        Route::post('/fetch-logos',    [AccountController::class, 'fetchLogos']);
+        Route::post('/fetch-logos-by-domain', [AccountController::class, 'fetchLogosByDomain']);
 
         Route::get('/{account}',       [AccountController::class, 'show']);
         Route::put('/{account}',       [AccountController::class, 'update']);
         Route::delete('/{account}',    [AccountController::class, 'destroy']);
+
+        // The client's logo — a small mark for the list and the record.
+        Route::post('/{account}/logo',   [AccountController::class, 'uploadLogo']);
+        Route::delete('/{account}/logo', [AccountController::class, 'removeLogo']);
+        Route::post('/{account}/logo/fetch', [AccountController::class, 'fetchLogo']);
 
         // Who works the account, beyond the manager who owns it.
         Route::post('/{account}/team',           [AccountController::class, 'storeTeamMember']);
@@ -434,8 +554,18 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // from this side.
         Route::get('/{account}/travels',         [AccountController::class, 'travels']);
 
+        // Work delivered for them, and problems raised about it. Both links
+        // have existed on their own tables for a while; the customer record
+        // simply never read back down them.
+        Route::get('/{account}/projects',        [AccountController::class, 'projects']);
+        Route::get('/{account}/support',         [AccountController::class, 'supportTickets']);
+
         // Deal counts for the Overview. Counted, never stored.
         Route::get('/{account}/summary',         [AccountController::class, 'summary']);
+
+        // A personal bookmark on a customer.
+        Route::post('/{account}/follow',          [AccountController::class, 'follow']);
+        Route::delete('/{account}/follow',        [AccountController::class, 'unfollow']);
 
         // Paperwork. Never publicly addressable; served through download.
         Route::post('/{account}/attachments',    [AccountController::class, 'storeAttachment']);
@@ -477,7 +607,8 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // every field on the lead.
         Route::post('/{lead}/status',   [LeadController::class, 'moveToStatus']);
 
-        // Grading the five dimensions, which is a different act from editing.
+        // Answering the five qualification questions, which is a different
+        // act from editing the lead.
         Route::post('/{lead}/qualify',  [LeadController::class, 'qualify']);
 
         Route::post('/{lead}/stakeholders',               [LeadController::class, 'storeStakeholder']);
@@ -492,6 +623,26 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         Route::post('/{lead}/team',           [LeadController::class, 'storeTeamMember']);
         Route::delete('/{lead}/team/{member}',[LeadController::class, 'destroyTeamMember']);
+
+        /*
+         * ── Correspondence ────────────────────────────────────────────────
+         *
+         * The calls, the mail, and what pursuing it costs. Three lists under
+         * one tab; approving a request is the only act here gated on more than
+         * being able to work the lead.
+         */
+        Route::get('/{lead}/meetings',                    [LeadCorrespondenceController::class, 'meetings']);
+        Route::post('/{lead}/meetings',                   [LeadCorrespondenceController::class, 'scheduleMeeting']);
+        Route::post('/{lead}/meetings/{meeting}/cancel',  [LeadCorrespondenceController::class, 'cancelMeeting']);
+
+        Route::get('/{lead}/emails',                      [LeadCorrespondenceController::class, 'emails']);
+        Route::post('/{lead}/emails/sync',                [LeadCorrespondenceController::class, 'syncEmails']);
+
+        Route::get('/{lead}/requests',                    [LeadCorrespondenceController::class, 'requests']);
+        Route::post('/{lead}/requests',                   [LeadCorrespondenceController::class, 'storeRequest']);
+        Route::post('/{lead}/requests/{leadRequest}/decide',  [LeadCorrespondenceController::class, 'decideRequest']);
+        Route::post('/{lead}/requests/{leadRequest}/fulfil',  [LeadCorrespondenceController::class, 'fulfilRequest']);
+        Route::delete('/{lead}/requests/{leadRequest}',       [LeadCorrespondenceController::class, 'destroyRequest']);
     });
 
     Route::prefix('opportunities')->group(function () {
@@ -572,6 +723,45 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
      * support, training, meetings and internal work. The project-nested
      * endpoints below remain as a filtered view of the same table.
      */
+    // ── Procurement register (module — under asset management) ──────────────
+    Route::prefix('procurement')->group(function () {
+        // Cross-project order dashboard — declared before /{procurement}.
+        Route::get('/orders',           [\App\Http\Controllers\Procurement\OrderDashboardController::class, 'index']);
+        // Analytics — likewise ahead of /{procurement} so "dashboard" and
+        // "vendors" are not read as request ids.
+        Route::get('/dashboard',        [\App\Http\Controllers\Procurement\ProcurementDashboardController::class, 'index']);
+        Route::get('/vendors/{vendor}/scorecard', [\App\Http\Controllers\Procurement\ProcurementDashboardController::class, 'vendor']);
+        Route::get('/',                 [ProcurementController::class, 'index']);
+        Route::post('/',                [ProcurementController::class, 'store']);
+        Route::put('/{procurement}',    [ProcurementController::class, 'update']);
+        Route::post('/{procurement}/submit',   [ProcurementController::class, 'submit']);
+        Route::post('/{procurement}/decision', [ProcurementController::class, 'decide']);
+
+        // Sourcing: the quotation round on a purchase.
+        Route::get('/{procurement}/rfq',              [\App\Http\Controllers\Procurement\RfqController::class, 'show']);
+        Route::post('/{procurement}/rfq',             [\App\Http\Controllers\Procurement\RfqController::class, 'open']);
+        Route::post('/{procurement}/rfq/invite',      [\App\Http\Controllers\Procurement\RfqController::class, 'invite']);
+        Route::post('/{procurement}/rfq/quotations',  [\App\Http\Controllers\Procurement\RfqController::class, 'storeQuotation']);
+        Route::post('/{procurement}/rfq/waive',       [\App\Http\Controllers\Procurement\RfqController::class, 'waive']);
+        Route::post('/{procurement}/rfq/award',       [\App\Http\Controllers\Procurement\RfqController::class, 'award']);
+
+        // The order placed with the supplier, and what arrives against it.
+        Route::get('/{procurement}/orders',                        [\App\Http\Controllers\Procurement\PurchaseOrderController::class, 'show']);
+        Route::post('/{procurement}/orders',                       [\App\Http\Controllers\Procurement\PurchaseOrderController::class, 'store']);
+        Route::post('/{procurement}/orders/{order}/response',      [\App\Http\Controllers\Procurement\PurchaseOrderController::class, 'respond']);
+        Route::post('/{procurement}/orders/{order}/receipts',      [\App\Http\Controllers\Procurement\PurchaseOrderController::class, 'receive']);
+        Route::post('/{procurement}/orders/{order}/cancel',        [\App\Http\Controllers\Procurement\PurchaseOrderController::class, 'cancel']);
+
+        // Supplier invoices, the three-way match, payment and closure.
+        Route::get('/{procurement}/invoices',                        [\App\Http\Controllers\Procurement\SupplierInvoiceController::class, 'index']);
+        Route::post('/{procurement}/orders/{order}/invoices',        [\App\Http\Controllers\Procurement\SupplierInvoiceController::class, 'store']);
+        Route::post('/{procurement}/invoices/{invoice}/override',    [\App\Http\Controllers\Procurement\SupplierInvoiceController::class, 'override']);
+        Route::post('/{procurement}/invoices/{invoice}/payment',     [\App\Http\Controllers\Procurement\SupplierInvoiceController::class, 'pay']);
+        Route::post('/{procurement}/close',                          [\App\Http\Controllers\Procurement\SupplierInvoiceController::class, 'close']);
+        Route::get('/{procurement}/timeline',                        [\App\Http\Controllers\Procurement\ProcurementDashboardController::class, 'timeline']);
+        Route::delete('/{procurement}', [ProcurementController::class, 'destroy']);
+    });
+
     Route::prefix('tasks')->group(function () {
         Route::get('/',       [TaskBoardController::class, 'index']);
         Route::post('/',      [TaskBoardController::class, 'store']);
@@ -595,12 +785,34 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Raise what it owes now rather than waiting for the nightly run.
         Route::post('/recurrences/{recurrence}/run', [TaskRecurrenceController::class, 'run']);
 
+        // Where the work is and whose fault the waiting was. Declared before
+        // /{task} so "analytics" is not read as a task id.
+        Route::get('/analytics', [\App\Http\Controllers\Task\TaskAnalyticsController::class, 'index']);
+
         Route::get('/{task}', [TaskBoardController::class, 'show']);
         Route::put('/{task}',    [TaskBoardController::class, 'update']);
         Route::delete('/{task}', [TaskBoardController::class, 'destroy']);
 
         // Signing a task off, or sending it back. Only the named approver.
         Route::post('/{task}/approval', [TaskBoardController::class, 'decideApproval']);
+
+        // What the reader is to this task — doing, assisting, tracking, or nothing.
+        Route::put('/{task}/involvement', [TaskBoardController::class, 'setInvolvement']);
+
+        // Finishing a task, and saying what came of it. One call, because a
+        // summary without a closed task is worse than neither.
+        Route::post('/{task}/closure', [TaskBoardController::class, 'close']);
+
+        // A deadline that moves, and a clock that stops. Both leave a record and
+        // both raise an issue, because a delay only its owner can see is not
+        // one anybody manages.
+        Route::post('/{task}/extensions', [TaskBoardController::class, 'extend']);
+        Route::post('/{task}/pause',      [TaskBoardController::class, 'pause']);
+        Route::post('/{task}/resume',     [TaskBoardController::class, 'resume']);
+
+        // Who is on it. The first fills the named seat, the rest join them.
+        Route::post('/{task}/assignees',             [TaskBoardController::class, 'addAssignee']);
+        Route::delete('/{task}/assignees/{employee}', [TaskBoardController::class, 'removeAssignee']);
 
         // Asking somebody, rather than assigning them.
         Route::post('/{task}/requests',                    [TaskBoardController::class, 'storeRequest']);
@@ -627,6 +839,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{task}/issues',                   [TaskBoardController::class, 'storeIssue']);
         Route::put('/{task}/issues/{issue}',            [TaskBoardController::class, 'updateIssue']);
         Route::post('/{task}/issues/{issue}/escalate',  [TaskBoardController::class, 'escalateIssue']);
+
+        // Meetings — scheduled from the task, tracked on its project or ticket.
+        Route::get('/{task}/meetings',                    [TaskMeetingController::class, 'index']);
+        Route::post('/{task}/meetings',                   [TaskMeetingController::class, 'store']);
+        Route::post('/{task}/meetings/{meeting}/sync',    [TaskMeetingController::class, 'sync']);
+        Route::delete('/{task}/meetings/{meeting}',       [TaskMeetingController::class, 'destroy']);
     });
 
     /*
@@ -637,6 +855,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
      */
     Route::prefix('projects')->group(function () {
         Route::get('/',             [ProjectController::class, 'index']);
+        // Literal segment before /{project} so the param never swallows it.
+        Route::get('/dashboard',    [ProjectDashboardController::class, 'index']);
+
+        // The org's standard PM activity checklist. Literal segments, before
+        // /{project} so the param never swallows them.
+        Route::get('/pm-definitions',                  [PmTaskDefinitionController::class, 'index']);
+        Route::post('/pm-definitions',                 [PmTaskDefinitionController::class, 'store']);
+        Route::put('/pm-definitions/{pmDefinition}',   [PmTaskDefinitionController::class, 'update']);
+        Route::delete('/pm-definitions/{pmDefinition}',[PmTaskDefinitionController::class, 'destroy']);
+
         Route::post('/',            [ProjectController::class, 'store']);
         Route::get('/{project}',    [ProjectController::class, 'show']);
         Route::put('/{project}',    [ProjectController::class, 'update']);
@@ -651,10 +879,14 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // Before /{task}: a literal segment after a route parameter is never
         // reached.
         Route::post('/{project}/tasks/reorder',  [TaskController::class, 'reorder']);
+        // Seed the standard PM activity checklist. Literal before /{task}.
+        Route::post('/{project}/tasks/generate-pm-activities', [TaskController::class, 'generatePmActivities']);
         Route::get('/{project}/tasks/{task}',    [TaskController::class, 'show']);
         Route::put('/{project}/tasks/{task}',    [TaskController::class, 'update']);
         Route::delete('/{project}/tasks/{task}', [TaskController::class, 'destroy']);
 
+        Route::put('/{project}/tasks/{task}/prerequisites/{prerequisite}', [TaskController::class, 'updatePrerequisite']);
+        Route::post('/{project}/tasks/{task}/prerequisites/{prerequisite}/raise', [TaskController::class, 'raisePrerequisite']);
         Route::post('/{project}/tasks/{task}/members',           [TaskController::class, 'storeMember']);
         Route::delete('/{project}/tasks/{task}/members/{member}',[TaskController::class, 'destroyMember']);
 
@@ -665,16 +897,210 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::get('/{project}/comments',  [TaskController::class, 'comments']);
         Route::post('/{project}/comments', [TaskController::class, 'storeComment']);
 
-        // ── Contract milestones ───────────────────────────────────────────
+        // ── Delivery milestones ───────────────────────────────────────────
+        // Dated deliverable checkpoints — no money. (Payment lives below.)
+        Route::get('/{project}/delivery-milestones',                 [ProjectDeliveryMilestoneController::class, 'index']);
+        Route::post('/{project}/delivery-milestones',                [ProjectDeliveryMilestoneController::class, 'store']);
+        Route::put('/{project}/delivery-milestones/{milestone}',     [ProjectDeliveryMilestoneController::class, 'update']);
+        Route::delete('/{project}/delivery-milestones/{milestone}',  [ProjectDeliveryMilestoneController::class, 'destroy']);
+
+        // ── Payment (contract) milestones ─────────────────────────────────
         // What the customer agreed to pay, and against which task.
         Route::get('/{project}/milestones',              [ProjectMilestoneController::class, 'index']);
         Route::post('/{project}/milestones',             [ProjectMilestoneController::class, 'store']);
         Route::put('/{project}/milestones/{milestone}',  [ProjectMilestoneController::class, 'update']);
         Route::delete('/{project}/milestones/{milestone}',[ProjectMilestoneController::class, 'destroy']);
         Route::post('/{project}/milestones/{milestone}/transition', [ProjectMilestoneController::class, 'transition']);
+        // Proof of delivery — what finance invoices against.
+        Route::post('/{project}/milestones/{milestone}/proofs', [ProjectMilestoneController::class, 'storeProof']);
+        Route::get('/{project}/milestones/{milestone}/proofs/{attachment}/download', [ProjectMilestoneController::class, 'downloadProof']);
+        Route::delete('/{project}/milestones/{milestone}/proofs/{attachment}', [ProjectMilestoneController::class, 'destroyProof']);
 
+        // ── Phases (lifecycle) ────────────────────────────────────────────
+        Route::get('/{project}/phases',                    [ProjectPhaseController::class, 'index']);
+        Route::post('/{project}/phases',                   [ProjectPhaseController::class, 'store']);
+        Route::post('/{project}/phases/generate-defaults', [ProjectPhaseController::class, 'generateDefaults']);
+        Route::put('/{project}/phases/{phase}',            [ProjectPhaseController::class, 'update']);
+        Route::delete('/{project}/phases/{phase}',         [ProjectPhaseController::class, 'destroy']);
+
+        // ── Team & roles ──────────────────────────────────────────────────
+        Route::get('/{project}/team',                      [ProjectTeamController::class, 'index']);
+        Route::post('/{project}/team/roles',               [ProjectTeamController::class, 'storeRole']);
+        Route::post('/{project}/team/roles/generate-defaults', [ProjectTeamController::class, 'generateDefaultRoles']);
+        Route::post('/{project}/team/roles/generate-teams',    [ProjectTeamController::class, 'generateDefaultTeams']);
+        Route::put('/{project}/team/roles/{role}',             [ProjectTeamController::class, 'updateRole']);
+        Route::delete('/{project}/team/roles/{role}',      [ProjectTeamController::class, 'destroyRole']);
+        Route::post('/{project}/team/people',              [ProjectTeamController::class, 'storePerson']);
+        Route::delete('/{project}/team/people/{person}',   [ProjectTeamController::class, 'destroyPerson']);
+        Route::put('/{project}/team/people/{person}',      [ProjectTeamController::class, 'updatePerson']);
+
+        // Governance committee — the fixed catalogue of roles and their attributes.
+        Route::get('/{project}/governance',                    [ProjectGovernanceController::class, 'index']);
+        Route::post('/{project}/governance',                   [ProjectGovernanceController::class, 'upsert']);
+        Route::post('/{project}/governance/generate-template', [ProjectGovernanceController::class, 'generateTemplate']);
+        Route::delete('/{project}/governance/{governanceRole}',[ProjectGovernanceController::class, 'destroy']);
+
+        // Customer team & stakeholders — the client's side of governance.
+        Route::get('/{project}/customer-team',                 [ProjectCustomerTeamController::class, 'index']);
+        Route::post('/{project}/customer-team/roles',          [ProjectCustomerTeamController::class, 'upsertRole']);
+        Route::post('/{project}/customer-team/roles/generate-template', [ProjectCustomerTeamController::class, 'generateTemplate']);
+        Route::delete('/{project}/customer-team/roles/{customerRole}',  [ProjectCustomerTeamController::class, 'destroyRole']);
+        Route::post('/{project}/customer-team/contacts',       [ProjectCustomerTeamController::class, 'storeContact']);
+        Route::post('/{project}/customer-team/stakeholders',   [ProjectCustomerTeamController::class, 'storeStakeholder']);
+        Route::put('/{project}/customer-team/stakeholders/{stakeholder}',   [ProjectCustomerTeamController::class, 'updateStakeholder']);
+        Route::delete('/{project}/customer-team/stakeholders/{stakeholder}',[ProjectCustomerTeamController::class, 'destroyStakeholder']);
+
+        // Governance reports — RACI, org chart, committee, stakeholders, directory, escalation.
+        Route::get('/{project}/reports', [ProjectReportsController::class, 'index']);
+        Route::get('/{project}/travel-schedule', [ProjectTravelScheduleController::class, 'index']);
+        Route::get('/{project}/resource-plan',   [ProjectResourceController::class, 'index']);
+        Route::get('/{project}/travel-requests',            [ProjectTravelRequestController::class, 'index']);
+        Route::post('/{project}/travel-requests/generate',  [ProjectTravelRequestController::class, 'generate']);
+        Route::put('/{project}/travel-requests/{travelRequest}',  [ProjectTravelRequestController::class, 'update']);
+        Route::post('/{project}/travel-requests/{travelRequest}/decision', [ProjectTravelRequestController::class, 'decide']);
+        Route::post('/{project}/travel-requests/{travelRequest}/raise-in-module', [ProjectTravelRequestController::class, 'raiseInModule']);
+        Route::delete('/{project}/travel-requests/{travelRequest}', [ProjectTravelRequestController::class, 'destroy']);
+
+        // Approval tracker — one queue over travel + procurement sign-offs.
+        Route::get('/{project}/approvals', [ProjectApprovalController::class, 'index']);
+        Route::post('/{project}/approvals/{kind}/{id}/decision', [ProjectApprovalController::class, 'decide']);
+
+        // Controls & alerts — one feed over the logistics conditions worth acting on.
+        Route::get('/{project}/alerts', [ProjectAlertController::class, 'index']);
+
+        // Logistics summary — a rollup of requirements, prerequisites, travel, procurement, resourcing.
+        Route::get('/{project}/logistics-summary', [ProjectLogisticsSummaryController::class, 'index']);
+
+        // Travel cycle optimisation — recommendations over the consolidated cycles.
+        Route::get('/{project}/travel-optimization', [ProjectTravelOptimizationController::class, 'index']);
+
+        // Rate-card travel estimate — price each cycle and optionally apply to requests.
+        Route::get('/{project}/travel-estimate', [ProjectTravelEstimateController::class, 'index']);
+        Route::post('/{project}/travel-estimate/apply', [ProjectTravelEstimateController::class, 'apply']);
+
+        // Vendor engagements — demands raised by task requirements for a vendor/PS/subcontractor.
+        Route::get('/{project}/vendor-engagements', [ProjectVendorEngagementController::class, 'index']);
+        Route::put('/{project}/vendor-engagements/{engagement}', [ProjectVendorEngagementController::class, 'update']);
+        Route::delete('/{project}/vendor-engagements/{engagement}', [ProjectVendorEngagementController::class, 'destroy']);
+        Route::get('/{project}/procurement',   [ProcurementController::class, 'projectIndex']);
+        Route::post('/{project}/procurement',  [ProcurementController::class, 'projectStore']);
+
+        // Professional services & subcontractors — advisory and contractor resources.
+        Route::get('/{project}/professional-services',    [ProjectProfessionalServiceController::class, 'index']);
+        Route::post('/{project}/professional-services',   [ProjectProfessionalServiceController::class, 'store']);
+        Route::put('/{project}/professional-services/{professionalService}',   [ProjectProfessionalServiceController::class, 'update']);
+        Route::delete('/{project}/professional-services/{professionalService}',[ProjectProfessionalServiceController::class, 'destroy']);
+        Route::get('/{project}/subcontractors',           [ProjectSubcontractorController::class, 'index']);
+        Route::post('/{project}/subcontractors',          [ProjectSubcontractorController::class, 'store']);
+        Route::put('/{project}/subcontractors/{subcontractor}',    [ProjectSubcontractorController::class, 'update']);
+        Route::delete('/{project}/subcontractors/{subcontractor}', [ProjectSubcontractorController::class, 'destroy']);
+
+        // ── Issues & escalations ──────────────────────────────────────────
+        Route::get('/{project}/issues',                    [ProjectIssueController::class, 'index']);
+        Route::post('/{project}/issues',                   [ProjectIssueController::class, 'store']);
+        Route::put('/{project}/issues/{issue}',            [ProjectIssueController::class, 'update']);
+        Route::post('/{project}/issues/{issue}/escalate',  [ProjectIssueController::class, 'escalate']);
+        Route::delete('/{project}/issues/{issue}',         [ProjectIssueController::class, 'destroy']);
+
+        // ── Dependencies ──────────────────────────────────────────────────
+        Route::get('/{project}/dependencies',                 [ProjectDependencyController::class, 'index']);
+        Route::post('/{project}/dependencies',                [ProjectDependencyController::class, 'store']);
+        Route::put('/{project}/dependencies/{dependency}',    [ProjectDependencyController::class, 'update']);
+        Route::delete('/{project}/dependencies/{dependency}', [ProjectDependencyController::class, 'destroy']);
+
+        // ── Risks ─────────────────────────────────────────────────────────
+        Route::get('/{project}/risks',           [ProjectRiskController::class, 'index']);
+        Route::post('/{project}/risks',          [ProjectRiskController::class, 'store']);
+        Route::put('/{project}/risks/{risk}',    [ProjectRiskController::class, 'update']);
+        Route::delete('/{project}/risks/{risk}', [ProjectRiskController::class, 'destroy']);
+        Route::post('/{project}/risks/{risk}/evidence', [ProjectRiskController::class, 'storeEvidence']);
+        Route::get('/{project}/risks/{risk}/evidence/{attachment}/download', [ProjectRiskController::class, 'downloadEvidence']);
+        Route::delete('/{project}/risks/{risk}/evidence/{attachment}', [ProjectRiskController::class, 'destroyEvidence']);
+
+        // ── Finance (budget lines + expenses) ─────────────────────────────
+        Route::get('/{project}/finance',                     [ProjectFinanceController::class, 'index']);
+        Route::get('/{project}/finance/analytics',           [ProjectFinanceController::class, 'analytics']);
+        Route::post('/{project}/finance/budget-lines/generate', [ProjectFinanceController::class, 'generateBudget']);
+        Route::post('/{project}/finance/budget-lines',       [ProjectFinanceController::class, 'storeBudgetLine']);
+        Route::put('/{project}/finance/budget-lines/{line}', [ProjectFinanceController::class, 'updateBudgetLine']);
+        Route::delete('/{project}/finance/budget-lines/{line}', [ProjectFinanceController::class, 'destroyBudgetLine']);
+        Route::post('/{project}/finance/expenses',           [ProjectFinanceController::class, 'storeExpense']);
+        Route::put('/{project}/finance/expenses/{expense}',  [ProjectFinanceController::class, 'updateExpense']);
+        Route::delete('/{project}/finance/expenses/{expense}', [ProjectFinanceController::class, 'destroyExpense']);
+
+        // ── Supplier material ordering & delivery ─────────────────────────
+        // Bill of Materials — the priced lines the order engine generates from.
+        Route::get('/{project}/bom',                 [ProjectBomController::class, 'index']);
+        Route::post('/{project}/bom/items',          [ProjectBomController::class, 'storeItem']);
+        Route::put('/{project}/bom/items/{item}',    [ProjectBomController::class, 'updateItem']);
+        Route::delete('/{project}/bom/items/{item}', [ProjectBomController::class, 'destroyItem']);
+        Route::post('/{project}/bom/import',         [ProjectBomController::class, 'import']);
+        Route::post('/{project}/bom/approve',        [ProjectBomController::class, 'approve']);
+        Route::post('/{project}/bom/reopen',         [ProjectBomController::class, 'reopen']);
+
+        // Order release — the gate deciding when ordering may begin.
+        Route::get('/{project}/order-release', [ProjectOrderReleaseController::class, 'show']);
+        Route::put('/{project}/order-release', [ProjectOrderReleaseController::class, 'update']);
+
+        // Order-lifecycle records generated from the BOM.
+        Route::get('/{project}/orders',                  [ProjectOrderController::class, 'index']);
+        Route::post('/{project}/orders/generate',        [ProjectOrderController::class, 'generate']);
+        Route::put('/{project}/orders/{order}/status',   [ProjectOrderController::class, 'updateStatus']);
+        Route::post('/{project}/orders/{order}/raise',   [ProjectOrderController::class, 'raise']);
+        Route::delete('/{project}/orders/{order}',       [ProjectOrderController::class, 'destroy']);
+
+        // Training & enablement — a training order's course, cost/person, trainees.
+        Route::get('/{project}/training', [\App\Http\Controllers\Project\ProjectTrainingController::class, 'index']);
+        Route::put('/{project}/training/{fulfillment}', [\App\Http\Controllers\Project\ProjectTrainingController::class, 'updateFulfillment']);
+        Route::post('/{project}/training/{fulfillment}/trainees', [\App\Http\Controllers\Project\ProjectTrainingController::class, 'storeTrainee']);
+        Route::put('/{project}/training/{fulfillment}/trainees/{trainee}', [\App\Http\Controllers\Project\ProjectTrainingController::class, 'updateTrainee']);
+        Route::delete('/{project}/training/{fulfillment}/trainees/{trainee}', [\App\Http\Controllers\Project\ProjectTrainingController::class, 'destroyTrainee']);
+
+        // Financial closure — the end of the order lifecycle.
+        Route::get('/{project}/closure',        [ProjectClosureController::class, 'readiness']);
+        Route::post('/{project}/closure/close', [ProjectClosureController::class, 'close']);
+        Route::post('/{project}/closure/reopen',[ProjectClosureController::class, 'reopen']);
+
+        Route::get('/{project}/material-orders',                 [ProjectMaterialOrderController::class, 'index']);
+        Route::post('/{project}/material-orders',                [ProjectMaterialOrderController::class, 'store']);
+        Route::put('/{project}/material-orders/{order}',         [ProjectMaterialOrderController::class, 'update']);
+        Route::delete('/{project}/material-orders/{order}',      [ProjectMaterialOrderController::class, 'destroy']);
+        Route::post('/{project}/material-orders/{order}/trackers', [ProjectMaterialOrderController::class, 'storeTracker']);
+        Route::delete('/{project}/material-orders/{order}/trackers/{tracker}', [ProjectMaterialOrderController::class, 'destroyTracker']);
+        Route::post('/{project}/material-orders/{order}/updates',  [ProjectMaterialOrderController::class, 'storeUpdate']);
+        Route::delete('/{project}/material-orders/{order}/updates/{update}', [ProjectMaterialOrderController::class, 'destroyUpdate']);
+        Route::post('/{project}/material-orders/{order}/contacts', [ProjectMaterialOrderController::class, 'storeContact']);
+        Route::delete('/{project}/material-orders/{order}/contacts/{contact}', [ProjectMaterialOrderController::class, 'destroyContact']);
+        Route::post('/{project}/material-orders/{order}/documents', [ProjectMaterialOrderController::class, 'storeDocument']);
+        Route::get('/{project}/material-orders/{order}/documents/{attachment}/download', [ProjectMaterialOrderController::class, 'downloadDocument']);
+        Route::delete('/{project}/material-orders/{order}/documents/{attachment}', [ProjectMaterialOrderController::class, 'destroyDocument']);
+
+        // ── Vendors ───────────────────────────────────────────────────────
+        Route::get('/{project}/vendors',            [ProjectVendorController::class, 'index']);
+        Route::post('/{project}/vendors',           [ProjectVendorController::class, 'store']);
+        Route::delete('/{project}/vendors/{vendor}', [ProjectVendorController::class, 'destroy']);
+
+        // ── Correspondence — inbound email ────────────────────────────────
+        Route::get('/{project}/emails',      [ProjectEmailController::class, 'index']);
+        Route::post('/{project}/emails/sync', [ProjectEmailController::class, 'sync']);
+
+        // ── Correspondence — Teams meetings & calendar ────────────────────
+        Route::get('/{project}/meetings',              [ProjectMeetingController::class, 'index']);
+        Route::post('/{project}/meetings',             [ProjectMeetingController::class, 'store']);
+        Route::post('/{project}/meetings/{meeting}/sync', [ProjectMeetingController::class, 'sync']);
+        Route::delete('/{project}/meetings/{meeting}', [ProjectMeetingController::class, 'destroy']);
+
+        // ── Weekly report (RAG · OKRs · history) ──────────────────────────
+        Route::get('/{project}/weekly-report',            [ProjectWeeklyReportController::class, 'current']);
+        Route::get('/{project}/weekly-report/history',    [ProjectWeeklyReportController::class, 'history']);
+        Route::get('/{project}/weekly-report/pdf',        [ProjectWeeklyReportController::class, 'pdf']);
+        Route::post('/{project}/weekly-report/publish',   [ProjectWeeklyReportController::class, 'publish']);
+        Route::delete('/{project}/weekly-report/{snapshot}', [ProjectWeeklyReportController::class, 'destroy']);
+
+        Route::get('/{project}/documents', [TaskController::class, 'documents']);
         Route::post('/{project}/attachments', [TaskController::class, 'storeAttachment']);
         Route::get('/{project}/attachments/{attachment}/download', [TaskController::class, 'downloadAttachment']);
+        Route::delete('/{project}/attachments/{attachment}', [TaskController::class, 'destroyAttachment']);
     });
 
     // ── Travel ────────────────────────────────────────────────────────────────
@@ -802,6 +1228,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
      * belongs to the organisation in context — a tenant describes one company's
      * estate and importing it into another mixes two registers.
      */
+    // ── Audit trail (who did what) ─────────────────────────────────────────
+    Route::get('/audit-logs',         [\App\Http\Controllers\Audit\AuditLogController::class, 'index']);
+    Route::get('/audit-logs/actions', [\App\Http\Controllers\Audit\AuditLogController::class, 'actions']);
+
     Route::prefix('integrations/connections')->group(function () {
         Route::get('/',                       [IntegrationConnectionController::class, 'index']);
         Route::post('/',                      [IntegrationConnectionController::class, 'store']);
@@ -814,6 +1244,12 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{connection}/test',          [IntegrationConnectionController::class, 'test']);
         Route::post('/{connection}/discover',      [IntegrationConnectionController::class, 'discover']);
         Route::put('/{connection}/subscriptions',  [IntegrationConnectionController::class, 'setSubscriptions']);
+        Route::post('/{connection}/use-for-calendar', [IntegrationConnectionController::class, 'useForCalendar']);
+
+        // Its own pointer, not the calendar's: directory lookups and the
+        // identity work after them need permissions that should not sit on the
+        // registration that also reads every mailbox.
+        Route::post('/{connection}/use-for-directory', [IntegrationConnectionController::class, 'useForDirectory']);
 
         // Pulling the picture in. Separate permission from configuring where
         // it comes from — see IntegrationConnectionPolicy.
@@ -823,6 +1259,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // separate call and always available before the commit.
         Route::post('/{connection}/licences/preview', [LicenceSyncController::class, 'previewLicenceAssets']);
         Route::post('/{connection}/licences/import',  [LicenceSyncController::class, 'importLicenceAssets']);
+        // Who holds which seat. Separate from the import because it depends on
+        // the employee register, which changes for its own reasons.
+        Route::post('/{connection}/licences/map-owners', [LicenceSyncController::class, 'mapLicenceOwners']);
 
         Route::post('/{connection}/azure/preview', [LicenceSyncController::class, 'previewAzure']);
         Route::post('/{connection}/azure/import',  [LicenceSyncController::class, 'importAzure']);
@@ -838,6 +1277,13 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
          * trap the preboarding routes carry a note about.
          */
         Route::get('/summary',   [AssetController::class, 'summary']);
+
+        /*
+         * Bring the Microsoft 365 licences in and put a name to every seat.
+         * Here as well as on the integrations screen because this is the page
+         * somebody is on when they ask why the software register is empty.
+         */
+        Route::post('/sync-licences', [\App\Http\Controllers\Asset\AssetRegisterController::class, 'syncLicences']);
 
         /*
          * The tab lists. `asset_requests` and `asset_issues` have had models,
@@ -1013,6 +1459,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/tickets/{ticket}/status', [TicketController::class, 'changeStatus']);
         Route::post('/tickets/{ticket}/classify', [TicketController::class, 'reclassify']);
         Route::post('/tickets/{ticket}/assign', [TicketController::class, 'assign']);
+        Route::post('/tickets/{ticket}/issue-summary', [TicketController::class, 'updateIssueSummary']);
+        Route::post('/tickets/{ticket}/owner', [TicketController::class, 'updateOwner']);
+        Route::post('/tickets/{ticket}/meetings', [TicketMeetingController::class, 'store']);
+        Route::delete('/tickets/{ticket}/meetings/{meeting}', [TicketMeetingController::class, 'destroy']);
+        Route::get('/tickets/{ticket}/rca', [TicketRcaController::class, 'show']);
+        Route::put('/tickets/{ticket}/rca', [TicketRcaController::class, 'update']);
+        Route::get('/tickets/{ticket}/rca/pdf', [TicketRcaController::class, 'pdf']);
+        Route::post('/tickets/{ticket}/rca/evidence', [TicketRcaController::class, 'uploadEvidence']);
+        Route::get('/tickets/{ticket}/rca/evidence/{evidenceFile}/download', [TicketRcaController::class, 'downloadEvidence']);
+        Route::delete('/tickets/{ticket}/rca/evidence/{evidenceFile}', [TicketRcaController::class, 'destroyEvidence']);
         Route::post('/tickets/{ticket}/time',   [TicketController::class, 'logTime']);
         Route::post('/tickets/{ticket}/merge',  [TicketController::class, 'merge']);
         Route::post('/tickets/{ticket}/detach', [TicketController::class, 'detach']);
@@ -1198,6 +1654,10 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         // The same organisation seen as a reporting line rather than a
         // structure — the two disagree often enough to be worth both.
         Route::get('/org-chart',                              [OrgManagementController::class, 'orgChart']);
+        // Who runs what, at every level, in one answer — and the one place
+        // to set it.
+        Route::get('/leadership',                             [OrgManagementController::class, 'leadership']);
+
         Route::get('/functional-units',                       [OrgManagementController::class, 'functionalUnits']);
         Route::post('/functional-units',                      [OrgManagementController::class, 'storeFunctionalUnit']);
         Route::put('/functional-units/{functionalUnit}',      [OrgManagementController::class, 'updateFunctionalUnit']);
@@ -1411,9 +1871,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
             Route::get('/',                [TrainingItemController::class, 'index']);
             Route::post('/',               [TrainingItemController::class, 'store']);
             Route::get('/stats',           [TrainingItemController::class, 'stats']);
+            Route::get('/budget-summary',  [TrainingItemController::class, 'budgetSummary']);
             Route::get('/{trainingItem}',  [TrainingItemController::class, 'show']);
             Route::put('/{trainingItem}',  [TrainingItemController::class, 'update']);
             Route::delete('/{trainingItem}', [TrainingItemController::class, 'destroy']);
+        });
+
+        // Certifying professional bodies (ISACA, PMI, ...) — global lookup
+        Route::prefix('certifying-bodies')->group(function () {
+            Route::get('/',  [TrainingCertifyingBodyController::class, 'index']);
+            Route::post('/', [TrainingCertifyingBodyController::class, 'store']);
         });
 
         // Competencies & Role Profiles
@@ -1456,6 +1923,19 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
             Route::get('/{assignment}',       [TrainingAssignmentController::class, 'show']);
             Route::patch('/{assignment}/approve', [TrainingAssignmentController::class, 'approve']);
             Route::patch('/{assignment}/reject',  [TrainingAssignmentController::class, 'reject']);
+        });
+
+        // Training budget requests
+        Route::prefix('budget-requests')->group(function () {
+            Route::get('/settings',                     [TrainingBudgetRequestController::class, 'showSettings']);
+            Route::put('/settings',                     [TrainingBudgetRequestController::class, 'updateSettings']);
+            Route::get('/my-pending',                   [TrainingBudgetRequestController::class, 'myPending']);
+            Route::get('/',                              [TrainingBudgetRequestController::class, 'index']);
+            Route::post('/',                             [TrainingBudgetRequestController::class, 'store']);
+            Route::get('/{budgetRequest}',               [TrainingBudgetRequestController::class, 'show']);
+            Route::patch('/{budgetRequest}/approve-manager', [TrainingBudgetRequestController::class, 'approveManager']);
+            Route::patch('/{budgetRequest}/approve-finance', [TrainingBudgetRequestController::class, 'approveFinance']);
+            Route::patch('/{budgetRequest}/reject',      [TrainingBudgetRequestController::class, 'reject']);
         });
 
         // Vendor compliance (Phase 4)
@@ -1562,6 +2042,16 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
     // ── Vendor Module ─────────────────────────────────────────────────────────
     Route::prefix('vendors')->group(function () {
         Route::get('/metrics',                  [VendorController::class, 'metrics']);
+
+        // What each stakeholder role has to produce — org-level settings, so
+        // it sits above the per-vendor routes.
+        // What a registration form should ask, given the roles picked.
+        Route::get('/role-fields',                   [VendorController::class, 'roleFields']);
+
+        Route::get('/requirements',                  [VendorDocumentController::class, 'requirements']);
+        // One write endpoint: a rule's identity is (role, document key), so
+        // this upserts rather than offering two ways to say one thing.
+        Route::post('/requirements',                 [VendorDocumentController::class, 'storeRequirement']);
         Route::get('/',                         [VendorController::class, 'index']);
         Route::post('/',                        [VendorController::class, 'store']);
         Route::get('/{vendor}',                 [VendorController::class, 'show']);
@@ -1572,6 +2062,33 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
         Route::post('/{vendor}/reject',         [VendorController::class, 'reject']);
         Route::post('/{vendor}/suspend',        [VendorController::class, 'suspend']);
         Route::post('/{vendor}/reactivate',     [VendorController::class, 'reactivate']);
+        // A refusal should be fixable rather than final.
+        Route::post('/{vendor}/return-to-draft', [VendorController::class, 'returnToDraft']);
+
+        // Banking and legal identity wait for a second pair of eyes.
+        Route::post('/{vendor}/pending-change/confirm', [VendorController::class, 'confirmChange']);
+        Route::post('/{vendor}/pending-change/discard', [VendorController::class, 'discardChange']);
+
+        // Classification. A party plays several roles at once, each with its
+        // own period — started here, ended (never deleted) below.
+        Route::post('/{vendor}/roles',          [VendorController::class, 'addRole']);
+        Route::patch('/{vendor}/roles/{role}',  [VendorController::class, 'endRole']);
+
+        // Compliance paperwork, and what each role demands. The listing
+        // carries the checklist because "what do we hold" and "is it enough"
+        // are one question.
+        Route::get('/{vendor}/documents',                       [VendorDocumentController::class, 'index']);
+        Route::post('/{vendor}/documents',                      [VendorDocumentController::class, 'store']);
+        Route::put('/{vendor}/documents/{document}',            [VendorDocumentController::class, 'update']);
+        Route::get('/{vendor}/documents/{document}/download',   [VendorDocumentController::class, 'download']);
+        Route::delete('/{vendor}/documents/{document}',         [VendorDocumentController::class, 'destroy']);
+
+        // The people at a vendor — a real table at last, rather than one
+        // denormalised name on the row.
+        Route::get('/{vendor}/contacts',              [VendorController::class, 'contacts']);
+        Route::post('/{vendor}/contacts',             [VendorController::class, 'storeContact']);
+        Route::put('/{vendor}/contacts/{contact}',    [VendorController::class, 'updateContact']);
+        Route::delete('/{vendor}/contacts/{contact}', [VendorController::class, 'destroyContact']);
 
         // ── Vendor sub-resources (products, incentives, professional certs) ──
         Route::get('/{vendor}/products',                          [VendorProfileController::class, 'indexProducts']);
@@ -1591,6 +2108,9 @@ Route::prefix('v1')->middleware(['auth:sanctum', 'org.context'])->group(function
 
         // ── Partnership tiers ──────────────────────────────────────────────────
         Route::get('/{vendor}/tiers',                           [VendorProfileController::class, 'indexTiers']);
+        // Whether we still hold what each tier demands — the reason the
+        // requirements are named rather than counted.
+        Route::get('/{vendor}/tiers/compliance',                [VendorProfileController::class, 'tierCompliance']);
         Route::post('/{vendor}/tiers',                          [VendorProfileController::class, 'storeTier']);
         Route::put('/{vendor}/tiers/{tier}',                    [VendorProfileController::class, 'updateTier']);
         Route::delete('/{vendor}/tiers/{tier}',                 [VendorProfileController::class, 'destroyTier']);

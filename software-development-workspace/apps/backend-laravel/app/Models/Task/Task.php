@@ -36,7 +36,7 @@ class Task extends Model
 
         // What kind of work, and what raised it. All optional — most tasks
         // belong to nothing but the person doing them.
-        'category', 'project_id', 'opportunity_id', 'lead_id', 'research_id', 'account_id',
+        'category', 'project_id', 'phase_id', 'weekly_okr', 'opportunity_id', 'lead_id', 'research_id', 'account_id',
 
         // Where it came from, and what produced it. The pair is unique per
         // organisation, which is what stops a generator raising duplicates.
@@ -45,10 +45,11 @@ class Task extends Model
         // Whether somebody else can cover it. Null follows the category.
         'handover_policy',
 
-        'effort_estimate_days', 'started_on', 'assigned_to',
+        'effort_estimate_days', 'started_on', 'assigned_to', 'support_team_id',
+        'department_id', 'functional_unit_id', 'business_unit_id',
 
         // Who owes the work — us, the customer, or a vendor.
-        'owner_party', 'owner_account_id', 'owner_vendor_partner_id',
+        'owner_party', 'owner_account_id', 'owner_vendor_partner_id', 'responsibility',
         'owner_contact_id', 'owner_contact_name',
 
         // What actually happened, and who signs it off.
@@ -64,6 +65,7 @@ class Task extends Model
         'approved_at'  => 'datetime',
         'position'     => 'integer',
         'requires_approval'    => 'boolean',
+        'weekly_okr'           => 'boolean',
         'effort_estimate_days' => 'decimal:2',
     ];
 
@@ -92,6 +94,20 @@ class Task extends Model
     public const CATEGORIES = [
         'opportunity', 'project', 'support', 'meeting', 'training', 'certificate',
         'research', 'collaboration', 'internal', 'ticket', 'account', 'leave',
+    ];
+
+    /**
+     * Who the task is waiting on right now.
+     *
+     * Not the same question as `owner_party`, which says who owes the work and
+     * stays put for the task's whole life. This one moves: the job is ours, but
+     * today it is sitting with the client for sign-off and next week it will be
+     * with procurement. Keeping them apart is what lets a report say "we are
+     * eleven days late and nine of them were the client's".
+     */
+    public const RESPONSIBILITIES = [
+        'self', 'internal_team', 'customer', 'vendor',
+        'subcontractor', 'management', 'procurement', 'finance',
     ];
 
     /** The one status that means the work is done, named once. */
@@ -197,6 +213,18 @@ class Task extends Model
         };
     }
 
+    /** What the task needs arranged before it can be done — 1:1. */
+    public function logistics(): HasOne
+    {
+        return $this->hasOne(TaskLogistics::class);
+    }
+
+    /** The actionable checklist generated from the logistics flags. */
+    public function prerequisites(): HasMany
+    {
+        return $this->hasMany(TaskPrerequisite::class)->orderBy('id');
+    }
+
     /** Cover that is still standing today. */
     public function activeHandover(): HasOne
     {
@@ -225,6 +253,34 @@ class Task extends Model
     public function assignee(): BelongsTo
     {
         return $this->belongsTo(\App\Models\Employee::class, 'assigned_to');
+    }
+
+    /** The team this task is routed to — a shared queue when nobody is named. */
+    public function supportTeam(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Support\Team::class, 'support_team_id');
+    }
+
+    public function department(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Department::class, 'department_id');
+    }
+
+    /** The "function" — a functional unit is the top of the org hierarchy. */
+    public function functionalUnit(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\OrgFunctionalUnit::class, 'functional_unit_id');
+    }
+
+    public function businessUnit(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\OrgBusinessUnit::class, 'business_unit_id');
+    }
+
+    /** What raised this task — a ticket, a training record — when generated. */
+    public function generatedFrom(): \Illuminate\Database\Eloquent\Relations\MorphTo
+    {
+        return $this->morphTo('generated_from', 'generated_from_type', 'generated_from_id');
     }
 
     public function ownerAccount(): BelongsTo
@@ -370,6 +426,92 @@ class Task extends Model
     public function getIsOursAttribute(): bool
     {
         return $this->owner_party === 'internal';
+    }
+
+    public function closure(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(TaskClosure::class);
+    }
+
+    public function extensions(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TaskDeadlineExtension::class)->orderByDesc('id');
+    }
+
+    public function escalations(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TaskEscalation::class)->orderByDesc('id');
+    }
+
+    /**
+     * Days past the deadline, or null where it is not past one.
+     *
+     * Signed the way people say it: 3 means three days late. Negative days are
+     * not "minus three late", they are "due in three", which `dueIn` says.
+     */
+    public function getDaysOverdueAttribute(): ?int
+    {
+        if (! $this->deadline || $this->is_done || ! $this->deadline->isPast()) {
+            return null;
+        }
+
+        return (int) $this->deadline->startOfDay()->diffInDays(now()->startOfDay());
+    }
+
+    public function pauses(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(TaskPause::class)->orderByDesc('id');
+    }
+
+    /** The wait it is sitting in now, if it is sitting in one. */
+    public function activePause(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(TaskPause::class)->whereNull('resumed_at')->latestOfMany();
+    }
+
+    public function getIsPausedAttribute(): bool
+    {
+        return $this->relationLoaded('activePause')
+            ? $this->activePause !== null
+            : $this->pauses()->whereNull('resumed_at')->exists();
+    }
+
+    /**
+     * Days this task has spent waiting on somebody else.
+     *
+     * Elapsed time counts every day since the work started, which charges us
+     * for the six weeks a client sat on a signature. Subtracting this is what
+     * turns "eleven days late" into "eleven days late, nine of them theirs".
+     */
+    public function getPausedDaysAttribute(): float
+    {
+        $pauses = $this->relationLoaded('pauses') ? $this->pauses : $this->pauses()->get();
+
+        return round($pauses->sum(fn (TaskPause $p) => $p->minutes()) / 1440, 1);
+    }
+
+    /**
+     * Whether this task cannot be finished until somebody says what came of it.
+     *
+     * Sub-tasks are exempt. A sub-task is a real task with its own owner, but
+     * it is a step inside something larger — demanding four paragraphs to tick
+     * off "book the room" is how a governance control gets worked around
+     * instead of used. The parent carries the summary for all of them.
+     *
+     * The rule lives here rather than in a controller because both the task
+     * board and the project-nested route can finish a task, and a control only
+     * one of them enforces is not a control.
+     */
+    public function needsClosureSummary(): bool
+    {
+        return $this->parent_task_id === null && ! $this->closure()->exists();
+    }
+
+    /** Reaching a state where the work is claimed to be over. */
+    public static function isFinishing(?string $status, bool $requiresApproval): bool
+    {
+        return $status === self::DONE
+            || ($requiresApproval && $status === 'awaiting_approval');
     }
 
     /** Who owes it, in words — for a badge that has to read at a glance. */

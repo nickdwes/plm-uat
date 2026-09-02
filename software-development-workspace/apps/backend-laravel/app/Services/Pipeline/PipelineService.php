@@ -5,6 +5,7 @@ namespace App\Services\Pipeline;
 use App\Models\Account\Account;
 use App\Models\Pipeline\Lead;
 use App\Models\Pipeline\Opportunity;
+use App\Support\Pipeline\LeadQualification;
 use App\Models\Pipeline\OpportunityPhase;
 use App\Services\Account\AccountActivityService;
 use App\Support\Account\ReferenceSequence;
@@ -64,7 +65,20 @@ class PipelineService
                 ]);
             }
 
-            $opportunity = $this->createOpportunity(array_merge($data, [
+            /*
+             * The assessment travels with the lead.
+             *
+             * The deal keeps its own copy from this moment on — the picture at
+             * bidding is not the one that justified opening the lead, and it
+             * has to be free to diverge. But it starts from what was already
+             * established, rather than making somebody answer five questions a
+             * second time about the same customer on the same day.
+             */
+            $assessment = collect(array_keys(LeadQualification::DIMENSIONS))
+                ->mapWithKeys(fn (string $key) => [$key => $data[$key] ?? $lead->{$key}])
+                ->all();
+
+            $opportunity = $this->createOpportunity(array_merge($data, $assessment, [
                 'account_id'  => $accountId,
                 'lead_id'     => $lead->id,
                 // Inherited so the deal starts with what the lead established

@@ -67,6 +67,42 @@ class IntegrationConnectionController extends Controller
         return response()->json(['data' => $this->payload($connection->fresh('subscriptions'))]);
     }
 
+    /**
+     * Name this connection as the one that creates Teams meetings for the
+     * org — or, called again on the connection already holding that spot,
+     * clear it. One explicit pointer, never a guess between several.
+     */
+    public function useForCalendar(IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('update', $connection);
+
+        $org = \App\Models\Organization::findOrFail($connection->organization_id);
+        $org->calendar_connection_id = $org->calendar_connection_id === $connection->id ? null : $connection->id;
+        $org->save();
+
+        return response()->json(['data' => $this->payload($connection->fresh('subscriptions'))]);
+    }
+
+    /**
+     * Name this connection as the one that reads the directory — or clear it.
+     *
+     * Its own pointer, not the calendar's. Directory lookups need
+     * `User.Read.All`, and the identity work after them needs the ability to
+     * change how people authenticate; those belong on a registration that does
+     * not also read every mailbox, so that one leaked secret is not a
+     * compromise of all three.
+     */
+    public function useForDirectory(IntegrationConnection $connection): JsonResponse
+    {
+        $this->authorize('update', $connection);
+
+        $org = \App\Models\Organization::findOrFail($connection->organization_id);
+        $org->identity_connection_id = $org->identity_connection_id === $connection->id ? null : $connection->id;
+        $org->save();
+
+        return response()->json(['data' => $this->payload($connection->fresh('subscriptions'))]);
+    }
+
     public function destroy(IntegrationConnection $connection): JsonResponse
     {
         $this->authorize('delete', $connection);
@@ -296,6 +332,10 @@ class IntegrationConnectionController extends Controller
             'last_test_message' => $connection->last_test_message,
             'granted_roles'     => $connection->granted_roles ?? [],
             'last_synced_at'    => $connection->last_synced_at?->toDateTimeString(),
+            'is_calendar_connection' => \App\Models\Organization::where('id', $connection->organization_id)
+                ->where('calendar_connection_id', $connection->id)->exists(),
+            'is_directory_connection' => \App\Models\Organization::where('id', $connection->organization_id)
+                ->where('identity_connection_id', $connection->id)->exists(),
             'subscriptions'     => $connection->subscriptions->map(fn ($s) => [
                 'id'              => $s->id,
                 'subscription_id' => $s->subscription_id,

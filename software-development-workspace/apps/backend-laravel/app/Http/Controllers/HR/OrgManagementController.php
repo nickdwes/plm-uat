@@ -217,6 +217,16 @@ class OrgManagementController extends Controller
             ->orderBy('section_order')->orderBy('sort_order')->orderBy('id')
             ->get();
 
+        // A category can switch off standard fields that don't apply to it — a
+        // room has no warranty. Only class-level (shared) fields are suppressed;
+        // a category's own fields always stand.
+        $suppressed = $category?->suppressed_fields ?? [];
+        if ($suppressed) {
+            $fields = $fields->reject(
+                fn ($f) => $f->asset_category_id === null && in_array($f->key, $suppressed, true)
+            )->values();
+        }
+
         return response()->json(['data' => $fields]);
     }
 
@@ -646,19 +656,29 @@ class OrgManagementController extends Controller
         abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
 
         $orgId = app('current.organization_id');
-        return response()->json(['data' => OrgFunctionalUnit::where('organization_id', $orgId)->orderBy('name')->get()]);
+
+        // With the head, because "who runs Technology" is the first thing
+        // anybody asks of this list and an id alone cannot answer it.
+        return response()->json([
+            'data' => OrgFunctionalUnit::where('organization_id', $orgId)
+                ->with('lead:id,first_name,last_name,employee_number')
+                ->orderBy('name')->get(),
+        ]);
     }
 
     public function storeFunctionalUnit(Request $request): JsonResponse
     {
         abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
 
+        $orgId = app('current.organization_id');
+
         $data = $request->validate([
             'name'        => 'required|string|max:120',
             'code'        => 'nullable|string|max:20',
             'description' => 'nullable|string|max:300',
+            'lead_employee_id' => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
         ]);
-        $unit = OrgFunctionalUnit::create(array_merge($data, ['organization_id' => app('current.organization_id')]));
+        $unit = OrgFunctionalUnit::create(array_merge($data, ['organization_id' => $orgId]));
         return response()->json($unit, 201);
     }
 
@@ -666,14 +686,17 @@ class OrgManagementController extends Controller
     {
         abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_MANAGE), 403);
 
+        $orgId = app('current.organization_id');
+
         $data = $request->validate([
             'name'        => 'sometimes|string|max:120',
             'code'        => 'nullable|string|max:20',
             'description' => 'nullable|string|max:300',
             'is_active'   => 'nullable|boolean',
+            'lead_employee_id' => ['nullable', 'integer', Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
         ]);
         $functionalUnit->update($data);
-        return response()->json($functionalUnit);
+        return response()->json($functionalUnit->fresh('lead'));
     }
 
     public function destroyFunctionalUnit(OrgFunctionalUnit $functionalUnit): JsonResponse
@@ -682,6 +705,73 @@ class OrgManagementController extends Controller
 
         $functionalUnit->delete();
         return response()->json(null, 204);
+    }
+
+    /**
+     * Who runs what, at every level, in one answer.
+     *
+     * The structure is spread across four tables and four dialogs, so
+     * "who are our department heads" meant opening thirteen drawers. It is
+     * also the question the task escalation ladder asks every night — and
+     * at the time of writing not one head was set anywhere, which is why
+     * most of its rungs reached nobody.
+     *
+     * Read-only and assembled here rather than in the browser: the client
+     * would otherwise make four calls and stitch the hierarchy itself.
+     */
+    public function leadership(): JsonResponse
+    {
+        abort_unless(auth()->user()?->hasPermission(Permission::DEPARTMENTS_VIEW), 403);
+
+        $orgId = app('current.organization_id');
+        $lead  = 'lead:id,first_name,last_name,employee_number,work_email';
+
+        $units = OrgFunctionalUnit::where('organization_id', $orgId)
+            ->with($lead)->orderBy('name')->get();
+
+        $departments = Department::where('organization_id', $orgId)
+            ->with($lead)->orderBy('name')->get();
+
+        $businessUnits = \App\Models\OrgBusinessUnit::where('organization_id', $orgId)
+            ->with($lead)->orderBy('name')->get();
+
+        $practices = \App\Models\OrgPractice::where('organization_id', $orgId)
+            ->with($lead)->orderBy('name')->get();
+
+        $row = fn ($record, string $level, ?string $parent) => [
+            'id'      => $record->id,
+            'level'   => $level,
+            'name'    => $record->name,
+            'code'    => $record->code,
+            'parent'  => $parent,
+            'lead'    => $record->lead ? [
+                'id'              => $record->lead->id,
+                'name'            => trim($record->lead->first_name . ' ' . $record->lead->last_name),
+                'employee_number' => $record->lead->employee_number,
+                'work_email'      => $record->lead->work_email,
+            ] : null,
+        ];
+
+        $unitNames = $units->pluck('name', 'id');
+        $deptNames = $departments->pluck('name', 'id');
+        $buNames   = $businessUnits->pluck('name', 'id');
+
+        $rows = collect()
+            ->concat($units->map(fn ($u) => $row($u, 'function', null)))
+            ->concat($departments->map(fn ($d) => $row($d, 'department', $unitNames[$d->functional_unit_id] ?? null)))
+            ->concat($businessUnits->map(fn ($b) => $row($b, 'business_unit', $deptNames[$b->department_id] ?? null)))
+            ->concat($practices->map(fn ($p) => $row($p, 'practice', $buNames[$p->business_unit_id] ?? null)))
+            ->values();
+
+        return response()->json([
+            'data' => $rows,
+            'meta' => [
+                'total'   => $rows->count(),
+                // The number worth acting on: a structure with no heads is a
+                // structure nothing can escalate through.
+                'unfilled' => $rows->whereNull('lead')->count(),
+            ],
+        ]);
     }
 
     // ── Departments CRUD (updated to support functional_unit_id & lead) ──────

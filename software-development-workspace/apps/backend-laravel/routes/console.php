@@ -15,6 +15,13 @@ Artisan::command('inspire', function () {
 Schedule::command('compliance:reminders')->dailyAt('07:00');
 
 /*
+ * The same question asked of suppliers: whose tax certificate, insurance or
+ * OEM authorisation is about to lapse. Fifteen minutes after the org's own
+ * compliance sweep so the two never contend for the mail path.
+ */
+Schedule::command('vendors:remind-expiries')->dailyAt('07:15');
+
+/*
  * Raise whatever recurring task schedules owe.
  *
  * Early, so a task due today is in somebody's list before they open it.
@@ -23,6 +30,20 @@ Schedule::command('compliance:reminders')->dailyAt('07:00');
  * but there is no reason to have two runs fighting over the same rows.
  */
 Schedule::command('tasks:generate-recurring')->dailyAt('06:00')->withoutOverlapping();
+
+// Remind task owners to plan and authorize travel five days before a travel
+// task starts.
+Schedule::command('tasks:remind-travel')->dailyAt('06:30')->withoutOverlapping();
+
+/*
+ * Climb the ladder on work that has gone past its marks — overdue, paused
+ * longer than promised, or moved once too often.
+ *
+ * Daily rather than the ticket ladder's fifteen minutes: a task deadline is a
+ * date, and nothing about it changes between breakfast and lunch. Early, so the
+ * escalation is waiting when somebody opens their morning.
+ */
+Schedule::command('tasks:escalate')->dailyAt('06:45')->withoutOverlapping();
 
 /*
  * Hand covered tasks back once the leave is over.

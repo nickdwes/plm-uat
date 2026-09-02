@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { can } from "../stores/permissions";
 import { ref, onMounted, watch } from "vue";
 import { api, ApiError } from "../lib/api";
 import { authStore, currentOrgSlug } from "../stores/auth";
@@ -165,11 +166,14 @@ watch(currentOrgSlug, load);
           <span class="action-icon">🌴</span>
           <span>Apply Leave</span>
         </router-link>
-        <router-link :to="{ name: 'employees' }" class="action-card">
+        <!-- Same map as the sidebar and the router: a tile is only an
+             invitation to a door the role opens. -->
+        <router-link v-if="can('employees.view') || can('employees.view_team')"
+                     :to="{ name: 'employees' }" class="action-card">
           <span class="action-icon">👥</span>
           <span>Employees</span>
         </router-link>
-        <router-link :to="{ name: 'payroll' }" class="action-card">
+        <router-link v-if="can('payroll.view')" :to="{ name: 'payroll' }" class="action-card">
           <span class="action-icon">💰</span>
           <span>Payroll</span>
         </router-link>

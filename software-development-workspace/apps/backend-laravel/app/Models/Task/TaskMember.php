@@ -22,8 +22,19 @@ class TaskMember extends Model
 
     protected $fillable = ['organization_id', 'task_id', 'employee_id', 'capacity'];
 
-    /** Doing it, versus helping with it. */
-    public const CAPACITIES = ['assignee', 'assisting'];
+    /**
+     * Doing it, helping with it, or just watching it.
+     *
+     * `tracking` carries no obligation — it is how somebody says "tell me what
+     * happens here" without being on the hook for any of it. It is kept in this
+     * table rather than a separate watchers one for the same reason assisting
+     * is: two tables would have to be stopped from disagreeing about whether
+     * the same person is on the task twice.
+     */
+    public const CAPACITIES = ['assignee', 'assisting', 'tracking'];
+
+    /** What the reader is to a task, in the vocabulary the UI speaks. */
+    public const INVOLVEMENT = ['doing' => 'assignee', 'assisting' => 'assisting', 'tracking' => 'tracking'];
 
     public function employee(): BelongsTo
     {

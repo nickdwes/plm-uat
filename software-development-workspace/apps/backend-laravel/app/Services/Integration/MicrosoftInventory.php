@@ -228,10 +228,27 @@ class MicrosoftInventory
                 ];
             }
 
-            $url = $response->json('@odata.nextLink');
+            $url = $this->safeNextLink($response->json('@odata.nextLink'));
         }
 
         return $users;
+    }
+
+    /**
+     * A pagination link is only followed if it stays on graph.microsoft.com.
+     * The response is authenticated HTTPS from Graph, so this is belt-and-braces
+     * — but the bearer token is re-attached to whatever host the link names, and
+     * a link is not something to re-send a token to on trust alone.
+     */
+    private function safeNextLink(?string $url): ?string
+    {
+        if ($url === null) {
+            return null;
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+
+        return $host === 'graph.microsoft.com' ? $url : null;
     }
 
     /**

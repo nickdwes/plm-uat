@@ -99,6 +99,9 @@ class TrainingRecordController extends Controller
             progressPercent: $request->input('progress_percent'),
             notes: $request->input('notes'),
             employeeId: $employee->id,
+            score: $request->input('score'),
+            certificateNumber: $request->input('certificate_number'),
+            certificateExpiryDate: $request->input('certificate_expiry_date'),
         );
 
         return new TrainingRecordResource($record);
@@ -143,7 +146,7 @@ class TrainingRecordController extends Controller
 
         $request->validate([
             'file'     => 'required|file|max:10240|mimes:pdf,jpg,jpeg,png,webp,doc,docx',
-            'category' => 'nullable|string|in:certificate,screenshot,other',
+            'category' => 'nullable|string|in:certificate,transcript,screenshot,other',
         ]);
 
         $employee = $request->user()->employee;

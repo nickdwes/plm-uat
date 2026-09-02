@@ -34,10 +34,17 @@ class VendorComplianceService
         return $query->paginate($perPage);
     }
 
+    /**
+     * Registering from the compliance screen is still registering.
+     *
+     * This used to write the row itself and skip `vendor_number` entirely —
+     * two creation paths that disagreed, so where a vendor was first typed in
+     * decided whether it had a reference at all. Delegated, so there is one
+     * way in.
+     */
     public function createVendor(int $organizationId, array $data): VendorPartner
     {
-        $data['organization_id'] = $organizationId;
-        return VendorPartner::create($data);
+        return app(\App\Services\Vendor\VendorService::class)->create($organizationId, $data);
     }
 
     public function updateVendor(VendorPartner $vendor, array $data): VendorPartner
@@ -122,8 +129,14 @@ class VendorComplianceService
                 ->whereHas('employee', function ($q) use ($vendor) {
                     $q->where('organization_id', $vendor->organization_id);
                 })
+                /*
+                 * `status` and `certificate_expiry_date` are the columns this
+                 * table actually has. It used to ask for `completion_status`
+                 * and `expiry_date`, neither of which exists — the screen only
+                 * looked healthy because no vendor had a required
+                 * certification yet, so the query was never reached.
+                 */
                 ->where('status', 'completed')
-                ->where('completion_status', 'passed')
                 ->count();
 
             // Expiring within 60 days (if expiry_date column exists)
@@ -132,9 +145,8 @@ class VendorComplianceService
                     $q->where('organization_id', $vendor->organization_id);
                 })
                 ->where('status', 'completed')
-                ->where('completion_status', 'passed')
-                ->whereNotNull('expiry_date')
-                ->whereBetween('expiry_date', [now(), now()->addDays(60)])
+                ->whereNotNull('certificate_expiry_date')
+                ->whereBetween('certificate_expiry_date', [now(), now()->addDays(60)])
                 ->count();
 
             $expiringSoon += $expiring;
@@ -212,7 +224,7 @@ class VendorComplianceService
             'employee_id'      => $empId,
             'training_item_id' => $trainingItemId,
             'status'           => 'not_started',
-            'completion_status'=> null,
+
             'is_priority'      => true,
             'enrollment_date'  => $now->toDateString(),
             'due_date'         => $now->addDays(30)->toDateString(),

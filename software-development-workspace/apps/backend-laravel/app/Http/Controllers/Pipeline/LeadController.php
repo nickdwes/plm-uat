@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Pipeline\StoreLeadRequest;
 use App\Http\Requests\Pipeline\StoreOpportunityRequest;
 use App\Http\Resources\Pipeline\LeadResource;
+use App\Support\Pipeline\LeadQualification;
 use App\Http\Resources\Pipeline\OpportunityResource;
 use App\Models\Pipeline\Lead;
 use App\Http\Resources\Pipeline\LeadActivityResource;
@@ -43,10 +44,19 @@ class LeadController extends Controller
             return;
         }
 
-        $employeeId = $request->user()->employeeId();
+        /*
+         * Three widths, one shape: the whole book (view, above), the team's
+         * leads (view_team — mine plus my direct reports'), or just mine
+         * (view_own). The team is the one-level house convention, so a sales
+         * manager sees what their people are working without inheriting the
+         * whole org's pipeline.
+         */
+        $employeeIds = $request->user()->hasPermission(Permission::PIPELINE_VIEW_TEAM)
+            ? \App\Support\Authorization\ResourceAttributes::teamEmployeeIds($request->user())
+            : array_filter([$request->user()->employeeId()]);
 
-        $q->where(fn ($w) => $w->where('owner_id', $employeeId)
-            ->orWhereHas('team', fn ($t) => $t->where('employee_id', $employeeId)));
+        $q->where(fn ($w) => $w->whereIn('owner_id', $employeeIds)
+            ->orWhereHas('team', fn ($t) => $t->whereIn('employee_id', $employeeIds)));
     }
 
     public function index(Request $request): AnonymousResourceCollection
@@ -192,35 +202,44 @@ class LeadController extends Controller
     // ── Qualification ─────────────────────────────────────────────────────
 
     /**
-     * Grade the five dimensions.
+     * Answer the five questions.
      *
-     * Its own endpoint because assessing a lead is a different act from
-     * editing one, and the summary judgements beside it — budget available,
-     * stakeholders engaged — are the reasoning behind the grades rather than
-     * facts about the lead itself.
+     * Its own endpoint because assessing a lead is a different act from editing
+     * one. Takes answer values rather than numbers — 'allocated', not 90 — and
+     * stores what the answer is worth, so the columns stay integers and every
+     * reader of them keeps working. See LeadQualification for why the numbers
+     * went away.
+     *
+     * Every question is independently optional. Answering one and leaving four
+     * is a real state, reported honestly as a partial assessment, and it is a
+     * better outcome than the all-or-nothing form that got no answers at all.
      */
     public function qualify(Request $request, Lead $lead): LeadResource
     {
         $this->authorize('update', $lead);
 
-        $grade = ['nullable', 'integer', 'min:0', 'max:100'];
+        $data = $request->validate(
+            collect(LeadQualification::DIMENSIONS)
+                ->map(fn ($_, $key) => ['nullable', Rule::in(LeadQualification::values($key))])
+                ->put('qualification_notes', ['nullable', 'string', 'max:20000'])
+                ->all(),
+        );
 
-        $data = $request->validate([
-            'fit_company'     => $grade,
-            'fit_budget'      => $grade,
-            'fit_solution'    => $grade,
-            'fit_timeline'    => $grade,
-            'fit_stakeholder' => $grade,
+        $update = [];
 
-            'budget_availability'       => ['nullable', Rule::in(['available', 'limited', 'none'])],
-            'stakeholder_engagement'    => ['nullable', Rule::in(['high', 'medium', 'low'])],
-            'timeline_estimate'         => ['nullable', 'string', 'max:64'],
-            'technical_readiness'       => ['nullable', Rule::in(['high', 'medium', 'low'])],
-            'decision_authority_access' => ['nullable', Rule::in(['available', 'limited', 'none'])],
-            'qualification_notes'       => ['nullable', 'string', 'max:20000'],
-        ]);
+        foreach (array_keys(LeadQualification::DIMENSIONS) as $key) {
+            // Absent means "not part of this answer"; explicitly null means
+            // "un-answer it". Only the second should clear a stored value.
+            if ($request->exists($key)) {
+                $update[$key] = LeadQualification::pointsFor($key, $data[$key] ?? null);
+            }
+        }
 
-        $lead->update($data);
+        if ($request->exists('qualification_notes')) {
+            $update['qualification_notes'] = $data['qualification_notes'] ?? null;
+        }
+
+        $lead->update($update);
 
         return new LeadResource($lead->fresh(self::DETAIL));
     }

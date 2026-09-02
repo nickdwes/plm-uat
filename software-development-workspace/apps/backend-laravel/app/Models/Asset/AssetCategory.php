@@ -39,10 +39,10 @@ class AssetCategory extends Model
 
     protected $fillable = [
         'organization_id', 'asset_class', 'name', 'description',
-        'custody_model', 'is_active', 'sort_order',
+        'custody_model', 'is_active', 'sort_order', 'suppressed_fields',
     ];
 
-    protected $casts = ['is_active' => 'boolean'];
+    protected $casts = ['is_active' => 'boolean', 'suppressed_fields' => 'array'];
 
     protected $attributes = [
         'is_active'     => true,

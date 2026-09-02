@@ -50,6 +50,31 @@ class LoginRequest extends FormRequest
             ]);
         }
 
+        /*
+         * A suspended or disabled account gets no further.
+         *
+         * Checked after the password rather than before it, on purpose: a
+         * different answer for a wrong password and a disabled account tells an
+         * attacker which addresses are real. This costs one hash and keeps the
+         * two indistinguishable from outside.
+         *
+         * The session is dropped before throwing — `Auth::attempt` has already
+         * logged them in by this point, and leaving that standing would be a
+         * refusal that refuses nothing.
+         */
+        if (! $this->user()->canSignIn()) {
+            $status = $this->user()->account_status;
+            Auth::guard('web')->logout();
+
+            RateLimiter::hit($this->throttleKey());
+
+            throw ValidationException::withMessages([
+                'email' => $status === \App\Models\User::STATUS_SUSPENDED
+                    ? 'This account is suspended. Speak to an administrator.'
+                    : 'This account has been disabled.',
+            ]);
+        }
+
         RateLimiter::clear($this->throttleKey());
     }
 

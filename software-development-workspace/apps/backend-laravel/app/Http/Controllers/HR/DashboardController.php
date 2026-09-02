@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\HR;
 
+use App\Support\Authorization\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\LeaveRequest;
@@ -14,6 +15,10 @@ class DashboardController extends Controller
 {
     public function summary(): JsonResponse
     {
+        // An org-wide HR aggregate: headcounts, leave, attendance. The same
+        // permission that reads the employee register reads its summary.
+        abort_unless(request()->user()->hasPermission(Permission::EMPLOYEES_VIEW), 403);
+
         $orgId = app('current.organization_id');
         $today = now()->toDateString();
 

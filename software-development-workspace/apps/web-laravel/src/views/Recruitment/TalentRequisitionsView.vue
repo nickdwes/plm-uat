@@ -43,6 +43,17 @@ interface Template {
 }
 
 const router  = useRouter();
+
+/**
+ * Open the record. The whole row, because a "View" button in the last column
+ * sits past the right edge of most screens on a table this wide.
+ */
+function openRow(id: number, event: MouseEvent) {
+  const el = event.target as HTMLElement | null;
+  if (el?.closest("button, a, input, select, label")) return;
+
+  router.push({ name: "requisition", params: { id } });
+}
 const rows    = ref<Row[]>([]);
 const summary = ref<Summary | null>(null);
 const loading = ref(true);
@@ -296,7 +307,7 @@ onMounted(refresh);
             </tr>
           </thead>
           <tbody>
-            <tr v-for="r in rows" :key="r.id">
+            <tr v-for="r in rows" :key="r.id" class="rq-clickable" @click="openRow(r.id, $event)">
               <td class="tr-ref">{{ r.reference }}</td>
               <td>
                 <p class="tr-job">{{ r.job_title }}</p>
@@ -614,4 +625,6 @@ onMounted(refresh);
   font-family: inherit; font-size: var(--text-sm-size); color: var(--color-text);
 }
 .btn-sm { padding: 5px var(--space-3); font-size: var(--text-xs-size); }
+.rq-clickable { @apply cursor-pointer; transition: background-color 120ms ease; }
+.rq-clickable:hover { background: var(--color-neutral-100); }
 </style>

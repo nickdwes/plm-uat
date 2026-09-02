@@ -104,19 +104,21 @@ class OpportunityPipelineController extends Controller
                 // ── Qualification ────────────────────────────────────────
                 'qualification' => [
                     'dimensions' => collect(LeadQualification::DIMENSIONS)
-                        ->map(fn ($label, $key) => ['key' => $key, 'label' => $label, 'value' => $opportunity->{$key}])
-                        ->values(),
+                        ->map(fn ($label, $key) => [
+                            'key'      => $key,
+                            'label'    => $label,
+                            'question' => LeadQualification::QUESTIONS[$key],
+                            'options'  => LeadQualification::options($key),
+                            'value'    => $opportunity->{$key},
+                            'answer'   => LeadQualification::answerFor($key, $opportunity->{$key}),
+                        ])->values(),
                     'score'        => $opportunity->fit_score,
                     'band'         => LeadQualification::band($opportunity->fit_score),
                     'completeness' => LeadQualification::completeness($opportunity),
                     'percentile'   => LeadQualification::percentile($opportunity, 'opportunities'),
-                    'summary'      => [
-                        'budget_availability'       => $opportunity->budget_availability,
-                        'stakeholder_engagement'    => $opportunity->stakeholder_engagement,
-                        'timeline_estimate'         => $opportunity->timeline_estimate,
-                        'technical_readiness'       => $opportunity->technical_readiness,
-                        'decision_authority_access' => $opportunity->decision_authority_access,
-                    ],
+                    // Named so the stage can say what is missing rather than
+                    // just refusing.
+                    'unanswered'   => LeadQualification::unanswered($opportunity),
                     'qualified_at' => $opportunity->qualified_at?->toIso8601String(),
                 ],
 
@@ -247,21 +249,26 @@ class OpportunityPipelineController extends Controller
 
     // ── Qualification ─────────────────────────────────────────────────────
 
+    /** Answer the five questions. Same vocabulary as the lead it came from. */
     public function qualify(Request $request, Opportunity $opportunity): JsonResponse
     {
         $this->authorize('update', $opportunity);
 
-        $grade = ['nullable', 'integer', 'min:0', 'max:100'];
+        $data = $request->validate(
+            collect(LeadQualification::DIMENSIONS)
+                ->map(fn ($_, $key) => ['nullable', Rule::in(LeadQualification::values($key))])
+                ->all(),
+        );
 
-        $opportunity->update($request->validate([
-            'fit_company' => $grade, 'fit_budget' => $grade, 'fit_solution' => $grade,
-            'fit_timeline' => $grade, 'fit_stakeholder' => $grade,
-            'budget_availability'       => ['nullable', Rule::in(['available', 'limited', 'none'])],
-            'stakeholder_engagement'    => ['nullable', Rule::in(['high', 'medium', 'low'])],
-            'timeline_estimate'         => ['nullable', 'string', 'max:64'],
-            'technical_readiness'       => ['nullable', Rule::in(['high', 'medium', 'low'])],
-            'decision_authority_access' => ['nullable', Rule::in(['available', 'limited', 'none'])],
-        ]));
+        $update = [];
+
+        foreach (array_keys(LeadQualification::DIMENSIONS) as $key) {
+            if ($request->exists($key)) {
+                $update[$key] = LeadQualification::pointsFor($key, $data[$key] ?? null);
+            }
+        }
+
+        $opportunity->update($update);
 
         return $this->show($opportunity->fresh());
     }

@@ -44,7 +44,11 @@ class ImportPlmLeads extends Command
     private const STATUSES = [
         'new'                        => 'new',
         'contacted'                  => 'contacted',
-        'qualified'                  => 'qualified',
+        // The legacy's "qualified" was a resting place; ours is an act that
+        // opens a deal. A legacy lead sitting there never became one, so it
+        // arrives as what it actually is — worked, not yet converted — rather
+        // than in a state with no column and no way out.
+        'qualified'                  => 'contacted',
         'attached to an opportunity' => 'converted',
         'attached to a project'      => 'converted',
         'lost'                       => 'unqualified',

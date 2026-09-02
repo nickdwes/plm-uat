@@ -57,6 +57,61 @@ class GraphMailClient
         return array_map(fn ($m) => $this->normalise($m), $response->json('value') ?? []);
     }
 
+    /**
+     * Messages involving any of these addresses, across the whole mailbox.
+     *
+     * For correspondence attached to a record rather than to a folder: a lead
+     * has no mailbox of its own, but it does have the customer's people, so
+     * the mail is found by who is on it.
+     *
+     * `participants:` is Graph's own index over from, to and cc, which is what
+     * "involving" has to mean — a message we sent is as much correspondence as
+     * one we received, and filtering on `from` alone would drop half of it.
+     * One search per address rather than one OR'd query, because Graph's KQL
+     * refuses parentheses in `$search` and an unparenthesised OR silently
+     * widens to every message in the box.
+     *
+     * **`$search` cannot be combined with `$orderby`** — Graph returns 400 if
+     * you try — so ordering happens in PHP on the merged set, which also has
+     * to happen anyway to interleave the per-address results.
+     *
+     * @param  list<string>  $addresses
+     * @return list<array<string, mixed>>  normalised, newest first, each with
+     *                                     `matched_address` recording why it is here
+     */
+    public function messagesWith(Mailbox $mailbox, array $addresses, int $limit = 25): array
+    {
+        $found = [];
+
+        foreach (array_slice(array_values(array_unique(array_filter($addresses))), 0, 10) as $address) {
+            $response = $this->request($mailbox)
+                ->get(self::BASE . "/users/{$mailbox->address}/messages", [
+                    '$top'     => $limit,
+                    '$search'  => '"participants:' . $address . '"',
+                    '$select'  => 'id,internetMessageId,subject,bodyPreview,body,from,toRecipients,'
+                        . 'ccRecipients,receivedDateTime,hasAttachments,internetMessageHeaders,conversationId',
+                ]);
+
+            if ($response->failed()) {
+                throw new RuntimeException('Graph message search failed: ' . $response->body());
+            }
+
+            foreach ($response->json('value') ?? [] as $message) {
+                if (empty($message['id']) || isset($found[$message['id']])) {
+                    continue;
+                }
+
+                $found[$message['id']] = $this->normalise($message) + ['matched_address' => $address];
+            }
+        }
+
+        $messages = array_values($found);
+
+        usort($messages, static fn ($a, $b) => strcmp((string) ($b['received_at'] ?? ''), (string) ($a['received_at'] ?? '')));
+
+        return array_slice($messages, 0, $limit);
+    }
+
     public function attachments(Mailbox $mailbox, string $messageId): array
     {
         $response = $this->request($mailbox)

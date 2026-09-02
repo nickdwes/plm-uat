@@ -10,11 +10,14 @@ class ProjectResource extends JsonResource
     public function toArray(Request $request): array
     {
         /*
-         * The contract value is commercial, gated the same way the deal's is.
-         * A project screen is not a way round the elevation.
+         * The contract value is commercial, gated the same way the deal's is —
+         * a project screen is not a way round the elevation. A project with no
+         * opportunity is internal: there is no deal to protect, so its numbers
+         * stay open (the milestones endpoint applies the identical rule, and
+         * the client's Budget tab follows this flag — the two must agree).
          */
-        $showsMoney = $this->opportunity
-            && ($request->user()?->can('viewCommercials', $this->opportunity) ?? false);
+        $showsMoney = $this->opportunity === null
+            || ($request->user()?->can('viewCommercials', $this->opportunity) ?? false);
 
         return [
             'id'          => $this->id,
@@ -22,6 +25,7 @@ class ProjectResource extends JsonResource
             'name'        => $this->name,
             'description' => $this->description,
             'status'      => $this->status,
+            'rag'         => $this->rag,
             'priority'    => $this->priority,
 
             'deadline'     => $this->deadline?->toDateString(),
@@ -66,9 +70,37 @@ class ProjectResource extends JsonResource
                 'oem_ps_cost' => $showsMoney ? $this->oem_ps_cost : null,
             ],
 
+            // ── Charter ──────────────────────────────────────────────────
+            'scope'    => $this->scope,
+            'charter'  => $this->charter,
+            'pip'      => $this->pip,
+            'product'  => $this->product,
+            'project_email' => $this->project_email,
+            'execution_start' => $this->execution_start?->toDateString(),
+            'execution_end'   => $this->execution_end?->toDateString(),
+            'charter_completion_date'  => $this->charter_completion_date?->toDateString(),
+            'contract_completion_date' => $this->contract_completion_date?->toDateString(),
+
+            'client_contact' => $this->whenLoaded('clientContact', fn () => $this->clientContact ? [
+                'id' => $this->clientContact->id, 'name' => trim($this->clientContact->first_name . ' ' . $this->clientContact->last_name),
+            ] : null),
+            'client_sponsor' => $this->whenLoaded('clientSponsor', fn () => $this->clientSponsor ? [
+                'id' => $this->clientSponsor->id, 'name' => trim($this->clientSponsor->first_name . ' ' . $this->clientSponsor->last_name),
+            ] : null),
+            'client_contact_id'         => $this->client_contact_id,
+            'client_sponsor_contact_id' => $this->client_sponsor_contact_id,
+
             'account' => $this->whenLoaded('account', fn () => $this->account ? [
                 'id' => $this->account->id, 'name' => $this->account->name,
                 'initials' => $this->account->initials,
+                // The client's own contacts, for the charter's people pickers.
+                'contacts' => $this->account->relationLoaded('contacts')
+                    ? $this->account->contacts->map(fn ($c) => [
+                        'id' => $c->id,
+                        'name' => trim($c->first_name . ' ' . $c->last_name),
+                        'designation' => $c->designation,
+                    ])->values()
+                    : [],
             ] : null),
 
             'opportunity' => $this->whenLoaded('opportunity', fn () => $this->opportunity ? [

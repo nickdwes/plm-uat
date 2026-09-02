@@ -161,6 +161,27 @@ return [
             ],
 
         /*
+         * Supplier compliance paperwork — tax certificates, insurance,
+         * OEM authorisation letters. Its own prefix so retention can differ:
+         * a tax compliance certificate is worth keeping for the statutory
+         * period after the relationship ends, which is not true of a CV.
+         */
+        'vendor_documents' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'vendor-documents',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/vendor-documents'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
+
+        /*
          * Lead paperwork — requirement documents, budget sheets, proposals.
          *
          * Private for the same reason as everything else here: a budget
@@ -361,6 +382,33 @@ return [
             'visibility' => 'private',
             'throw'      => true,
         ],
+
+        /*
+         * RCA evidence — screenshots, log extracts, monitoring graphs. Private
+         * like every other document class; an incident screenshot can carry
+         * customer data or internal error detail that doesn't belong on a
+         * URL that needs no authentication.
+         *
+         * Filed under the shared employee-documents container with its own
+         * prefix rather than a dedicated one — same reuse `travel_evidence`
+         * makes, and for the same reason: a new container needs provisioning
+         * and authorising in Azure before anything can write to it, and nobody
+         * pays that cost for a prefix.
+         */
+        'rca_evidence' => env('DOCUMENT_DISK', 'local') === 'azure'
+            ? [
+                'driver'    => 'azure',
+                'account'   => env('AZURE_STORAGE_ACCOUNT'),
+                'container' => 'hrms-employee-documents',
+                'prefix'    => 'rca-evidence',
+                'throw'     => true,
+            ]
+            : [
+                'driver'     => 'local',
+                'root'       => storage_path('app/private/rca-evidence'),
+                'visibility' => 'private',
+                'throw'      => true,
+            ],
 
         's3' => [
             'driver' => 's3',

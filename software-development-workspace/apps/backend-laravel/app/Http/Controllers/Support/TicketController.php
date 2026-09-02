@@ -10,6 +10,7 @@ use App\Services\Support\SupportDefaults;
 use App\Services\Support\TicketService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 /**
  * The service desk.
@@ -47,7 +48,25 @@ class TicketController extends Controller
         if ($request->filled('account'))  { $query->where('account_id', $request->integer('account')); }
         if ($request->filled('type'))     { $query->where('ticket_type_id', $request->integer('type')); }
         if ($request->filled('team'))     { $query->where('support_team_id', $request->integer('team')); }
+        if ($request->filled('priority')) { $query->where('priority_id', $request->integer('priority')); }
         if ($request->boolean('unassigned')) { $query->whereNull('assigned_to'); }
+
+        // No reply has ever gone back to the requester — the queue's own
+        // "somebody has touched this" question, distinct from status.
+        if ($request->boolean('no_first_response')) { $query->whereNull('first_response_at'); }
+
+        // Already missed its promise, not merely close to it — the same
+        // response_met/resolution_met pair the desk dashboard counts by.
+        if ($request->boolean('sla_breached')) {
+            $query->whereHas('sla', fn ($q) => $q->where('response_met', false)->orWhere('resolution_met', false));
+        }
+
+        if ($request->filled('opened_from')) {
+            $query->whereDate('opened_at', '>=', $request->date('opened_from'));
+        }
+        if ($request->filled('opened_to')) {
+            $query->whereDate('opened_at', '<=', $request->date('opened_to'));
+        }
 
         if ($request->boolean('mine') && $request->user()) {
             $query->where('assigned_to', $request->user()->id);
@@ -82,7 +101,8 @@ class TicketController extends Controller
                 $q->where('subject', 'ilike', "%{$term}%")
                   ->orWhere('reference', 'ilike', "%{$term}%")
                   ->orWhere('requester_email', 'ilike', "%{$term}%")
-                  ->orWhere('requester_name', 'ilike', "%{$term}%");
+                  ->orWhere('requester_name', 'ilike', "%{$term}%")
+                  ->orWhereHas('account', fn ($aq) => $aq->where('name', 'ilike', "%{$term}%"));
             });
         }
 
@@ -97,26 +117,54 @@ class TicketController extends Controller
 
         $record = $this->find($ticket);
 
+        $record->load([
+            'status', 'type', 'urgency', 'impact', 'priority',
+            'assignee', 'account', 'contact', 'contract', 'parent',
+            'messages' => fn ($q) => $q->with('author:id,name')->orderBy('id'),
+            'worklogs' => fn ($q) => $q->with('user:id,name')->orderByDesc('performed_on'),
+            'sla.sla', 'slaEvents' => fn ($q) => $q->orderBy('occurred_at'),
+            'team', 'children:id,reference,subject,ticket_status_id,parent_ticket_id',
+            'serviceCategory', 'analyst:id,name', 'escalationOwner:id,name',
+            'splitFrom:id,reference,subject', 'splits:id,reference,subject,split_from_ticket_id',
+            /*
+             * The hand-off trail and the escalations. Written since the
+             * routing revision and, until now, loaded by nothing — which is
+             * the whole failure this rebuild keeps finding in the old
+             * module: a record nothing can read.
+             */
+            'events' => fn ($q) => $q->with('actor:id,name')->orderBy('occurred_at'),
+            'escalations' => fn ($q) => $q->with(['to:id,name', 'by:id,name'])
+                ->orderByDesc('escalated_at'),
+            'emails.recipients',
+            'meetings' => fn ($q) => $q->with('creator:id,name')->orderByDesc('scheduled_at'),
+        ]);
+
+        /*
+         * "Who else is on this?" split into customer and internal — a plain
+         * email address on its own says nothing about which side of the desk
+         * it belongs to, so it is matched against `users` rather than guessed
+         * from a domain. The requester is excluded; they are already shown as
+         * the requester everywhere else.
+         */
+        $addresses = $record->emails->flatMap->recipients
+            ->filter(fn ($r) => $r->address)
+            ->unique(fn ($r) => strtolower($r->address))
+            ->reject(fn ($r) => $record->requester_email && strtolower($r->address) === strtolower($record->requester_email))
+            ->values();
+
+        $internalEmails = \App\Models\User::whereIn('email', $addresses->pluck('address'))
+            ->pluck('email')->map(fn ($e) => strtolower($e))->all();
+
+        $participants = $addresses->map(fn ($r) => [
+            'name'     => $r->name,
+            'address'  => $r->address,
+            'kind'     => $r->kind,
+            'internal' => in_array(strtolower($r->address), $internalEmails, true),
+        ])->values();
+
         return response()->json([
-            'data' => $record->load([
-                'status', 'type', 'urgency', 'impact', 'priority',
-                'assignee', 'account', 'contact', 'contract', 'parent',
-                'messages' => fn ($q) => $q->with('author:id,name')->orderBy('id'),
-                'worklogs' => fn ($q) => $q->with('user:id,name')->orderByDesc('performed_on'),
-                'sla.sla', 'slaEvents' => fn ($q) => $q->orderBy('occurred_at'),
-                'team', 'children:id,reference,subject,ticket_status_id,parent_ticket_id',
-                'serviceCategory', 'analyst:id,name', 'escalationOwner:id,name',
-                'splitFrom:id,reference,subject', 'splits:id,reference,subject,split_from_ticket_id',
-                /*
-                 * The hand-off trail and the escalations. Written since the
-                 * routing revision and, until now, loaded by nothing — which is
-                 * the whole failure this rebuild keeps finding in the old
-                 * module: a record nothing can read.
-                 */
-                'events' => fn ($q) => $q->with('actor:id,name')->orderBy('occurred_at'),
-                'escalations' => fn ($q) => $q->with(['to:id,name', 'by:id,name'])
-                    ->orderByDesc('escalated_at'),
-            ]),
+            'data' => $record,
+            'email_participants' => $participants,
             'minutes_logged' => $record->minutesLogged(),
             /*
              * Counted alongside raw elapsed. The gap between them is the
@@ -220,7 +268,50 @@ class TicketController extends Controller
             array_keys($request->only(['assigned_to', 'support_team_id'])),
         )));
 
+        // Re-route the ticket's task to match its new team / assignee.
+        app(\App\Services\Support\TicketTaskSync::class)->sync($record->fresh(['assignee', 'status', 'priority']));
+
         return response()->json(['data' => $record->fresh(['assignee', 'team'])]);
+    }
+
+    /**
+     * Hand the ball to a side by name, overriding whatever the last message
+     * implied. The auto-tracking in `TicketService::reply()` gets it right
+     * most of the time; this is for when a reply says "still looking into
+     * it" and sending it should not read as a handoff to the customer.
+     */
+    public function updateOwner(Request $request, int $ticket): JsonResponse
+    {
+        $this->authorize('update', Ticket::class);
+
+        $data = $request->validate([
+            'owner'  => ['required', 'string', Rule::in(Ticket::OWNERS)],
+            'reason' => ['nullable', 'string', 'max:300'],
+        ]);
+
+        $record = $this->find($ticket);
+        $this->service->setOwner($record, $data['owner'], $data['reason'] ?? null, $request->user());
+
+        return response()->json(['data' => $record->fresh()]);
+    }
+
+    /**
+     * The agent's own words for what the issue was — not the customer's raw
+     * message, and not derived from it. This is what an RCA line item pulls
+     * from, so it is written once here rather than re-summarised on demand.
+     */
+    public function updateIssueSummary(Request $request, int $ticket): JsonResponse
+    {
+        $this->authorize('update', Ticket::class);
+
+        $data = $request->validate([
+            'issue_summary' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $record = $this->find($ticket);
+        $record->update($data);
+
+        return response()->json(['data' => $record]);
     }
 
     public function logTime(Request $request, int $ticket): JsonResponse

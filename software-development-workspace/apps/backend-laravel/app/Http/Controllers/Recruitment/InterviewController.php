@@ -102,6 +102,8 @@ class InterviewController extends Controller
     public function index(Request $request, int $applicationId): JsonResponse
     {
         $application = Application::findOrFail($applicationId);
+        // Interviews belong to an application; they answer to its policy.
+        $this->authorize('view', $application);
 
         $interviews = Interview::where('application_id', $applicationId)
             ->where('organization_id', $this->orgId())
@@ -128,6 +130,8 @@ class InterviewController extends Controller
     public function store(Request $request, int $applicationId): JsonResponse
     {
         $application = Application::with('candidate', 'vacancy')->findOrFail($applicationId);
+        // Scheduling is moving the application forward — same gate.
+        $this->authorize('moveStage', $application);
 
         $v = $request->validate([
             'title'              => 'required|string|max:200',
@@ -391,7 +395,7 @@ class InterviewController extends Controller
             . ($interview->agenda ? "<p><strong>Agenda:</strong><br>" . nl2br(htmlspecialchars($interview->agenda)) . "</p>" : "");
 
         try {
-            $teams  = new TeamsService();
+            $teams  = TeamsService::forOrganization($interview->organization_id);
             $result = $teams->createOrUpdateEvent($interview, $attendees, $subject, $bodyHtml);
 
             $interview->update([
@@ -463,6 +467,10 @@ class InterviewController extends Controller
 
     public function employees(Request $request): JsonResponse
     {
+        // The panelist picker exists to schedule interviews; the recruitment
+        // viewer gate keeps it from doubling as an open staff directory.
+        $this->authorize('viewAny', Application::class);
+
         $orgId  = $this->orgId();
         $search = $request->query('q', '');
 

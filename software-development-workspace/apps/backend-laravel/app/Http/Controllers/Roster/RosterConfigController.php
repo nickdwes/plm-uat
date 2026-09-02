@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Roster;
 
+use App\Support\Authorization\Permission;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Roster\StoreShiftGroupRequest;
 use App\Http\Requests\Roster\StoreShiftTypeRequest;
@@ -28,7 +29,7 @@ class RosterConfigController extends Controller
     public function showConfig(Request $request): RosterConfigResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403,
             'Only HR administrators can view roster configuration.'
         );
@@ -44,7 +45,7 @@ class RosterConfigController extends Controller
     public function updateConfig(UpsertRosterConfigRequest $request): RosterConfigResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403,
             'Only HR administrators can update roster configuration.'
         );
@@ -65,7 +66,7 @@ class RosterConfigController extends Controller
     public function indexShiftGroups(Request $request): AnonymousResourceCollection
     {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_VIEW),
             403
         );
 
@@ -80,7 +81,7 @@ class RosterConfigController extends Controller
     public function storeShiftGroup(StoreShiftGroupRequest $request): ShiftGroupResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -98,7 +99,7 @@ class RosterConfigController extends Controller
     public function updateShiftGroup(StoreShiftGroupRequest $request, RosterShiftGroup $shiftGroup): ShiftGroupResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -115,7 +116,7 @@ class RosterConfigController extends Controller
     public function destroyShiftGroup(Request $request, RosterShiftGroup $shiftGroup): JsonResponse
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -134,7 +135,7 @@ class RosterConfigController extends Controller
     public function indexShiftTypes(Request $request): AnonymousResourceCollection
     {
         abort_unless(
-            $request->user()->isManagerIn(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_VIEW),
             403
         );
 
@@ -152,7 +153,7 @@ class RosterConfigController extends Controller
     public function storeShiftType(StoreShiftTypeRequest $request): JsonResponse
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -170,7 +171,7 @@ class RosterConfigController extends Controller
     public function updateShiftType(StoreShiftTypeRequest $request, RosterShiftType $shiftType): ShiftTypeResource
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 
@@ -187,7 +188,7 @@ class RosterConfigController extends Controller
     public function destroyShiftType(Request $request, RosterShiftType $shiftType): JsonResponse
     {
         abort_unless(
-            $request->user()->isOrgHR(app('current.organization_id')),
+            $request->user()->hasPermission(Permission::ROSTER_PUBLISH),
             403
         );
 

@@ -5,6 +5,7 @@ namespace App\Policies;
 use App\Models\Employee;
 use App\Models\User;
 use App\Support\Authorization\Permission;
+use Illuminate\Database\Eloquent\Model;
 
 /**
  * Who may see and change an employee record.
@@ -42,11 +43,22 @@ class EmployeePolicy extends BasePolicy
      */
     public function view(User $user, mixed $employee): bool
     {
-        if ($this->can($user, Permission::EMPLOYEES_VIEW) || $this->isCompanyHR($user)) {
+        // A person always sees their own record, whatever the org context.
+        if (isset($employee->user_id) && $user->id === $employee->user_id) {
             return true;
         }
 
-        if (isset($employee->user_id) && $user->id === $employee->user_id) {
+        // Every other branch is tenant-scoped: holding a permission in the
+        // organisation currently in context must not reach a record that
+        // belongs to a different one. Without this, `employees.view` in org A
+        // plus another org's employee id read that employee across the
+        // boundary. Group admins (no org in context) are unaffected —
+        // inCurrentOrg() returns true when the context org is null.
+        if (! $this->recordInCurrentOrg($employee)) {
+            return false;
+        }
+
+        if ($this->can($user, Permission::EMPLOYEES_VIEW) || $this->isCompanyHR($user)) {
             return true;
         }
 
@@ -62,7 +74,8 @@ class EmployeePolicy extends BasePolicy
 
     public function update(User $user, mixed $employee): bool
     {
-        return $this->can($user, Permission::EMPLOYEES_UPDATE) || $this->isCompanyHR($user);
+        return $this->recordInCurrentOrg($employee)
+            && ($this->can($user, Permission::EMPLOYEES_UPDATE) || $this->isCompanyHR($user));
     }
 
     /**
@@ -76,7 +89,8 @@ class EmployeePolicy extends BasePolicy
      */
     public function exit(User $user, mixed $employee): bool
     {
-        return $this->can($user, Permission::EMPLOYEES_EXIT) || $this->isCompanyHR($user);
+        return $this->recordInCurrentOrg($employee)
+            && ($this->can($user, Permission::EMPLOYEES_EXIT) || $this->isCompanyHR($user));
     }
 
     /**
@@ -105,6 +119,44 @@ class EmployeePolicy extends BasePolicy
      */
     public function delete(User $user, mixed $employee): bool
     {
-        return $this->can($user, Permission::EMPLOYEES_DELETE) || $this->isGlobalHR($user);
+        // isGlobalHR (group admin) legitimately reaches every org, and
+        // recordInCurrentOrg() returns true for them (no org in context), so
+        // this narrows org-scoped deleters without constraining group HR.
+        return $this->recordInCurrentOrg($employee)
+            && ($this->can($user, Permission::EMPLOYEES_DELETE) || $this->isGlobalHR($user));
+    }
+
+    /**
+     * The record belongs to the organisation currently in context — the tenancy
+     * check the record-level abilities were missing. Employee carries no org
+     * global scope (its column is primary_organization_id), so this is the only
+     * thing standing between a permission held in one org and another org's
+     * record.
+     *
+     * "Belongs to" includes secondments: a host org must be able to open a
+     * person placed into it, so membership is checked the same way the
+     * directory scope checks it (primary org OR an active placement), not by a
+     * bare primary_organization_id comparison. A group admin with no org in
+     * context is unconstrained (context org null → allowed). A non-Employee or
+     * non-model argument (there are none today) denies by default.
+     */
+    private function recordInCurrentOrg(mixed $employee): bool
+    {
+        if (! $employee instanceof Model) {
+            return false;
+        }
+
+        $orgId = app()->bound('current.organization_id') ? app('current.organization_id') : null;
+
+        // No org in context — group-wide administration. Preserve existing behaviour.
+        if ($orgId === null) {
+            return true;
+        }
+
+        if ($employee instanceof Employee) {
+            return $employee->isMemberOfOrganization((int) $orgId);
+        }
+
+        return $this->inCurrentOrg($employee);
     }
 }

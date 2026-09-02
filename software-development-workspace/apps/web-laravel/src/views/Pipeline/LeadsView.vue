@@ -367,13 +367,14 @@ onMounted(() => { void loadBoard(); });
     </div>
 
     <!-- New lead.
-         A slide-over rather than a centred modal: it is the same act as New
-         Estimate, New Bid and New Research, and those are panels. A dialog
-         that blackens the board also hides the column you were adding to. -->
-    <div v-if="showNew" class="lv-sheet-backdrop" @click.self="showNew = false">
-      <aside class="lv-sheet" role="dialog" aria-modal="true" aria-label="New lead">
-        <div class="lv-sheet-head">
-          <h3 class="lv-sheet-title">New Lead</h3>
+         A centred dialog, matching the task window rather than the slide-overs
+         beside it. Adding a lead is a short, self-contained act: you fill six
+         fields and leave. Docking it to the edge kept the board visible behind
+         it, but the board is not what you are reading while you type. -->
+    <div v-if="showNew" class="lv-modal-backdrop" @click.self="showNew = false">
+      <div class="lv-modal" role="dialog" aria-modal="true" aria-label="New lead">
+        <div class="lv-modal-head">
+          <h3 class="lv-modal-title">New Lead</h3>
           <button class="lv-close" aria-label="Close" @click="showNew = false">×</button>
         </div>
 
@@ -411,7 +412,7 @@ onMounted(() => { void loadBoard(); });
         <button class="btn-primary btn-block" :disabled="saving || !canCreate" @click="create()">
           {{ saving ? "Adding…" : "Add Lead" }}
         </button>
-      </aside>
+      </div>
     </div>
   </div>
 </template>
@@ -554,17 +555,20 @@ onMounted(() => { void loadBoard(); });
 .link-btn { @apply cursor-pointer border-none bg-transparent p-0; font-family: inherit; font-size: var(--text-sm-size); color: var(--color-brand-on-surface); }
 .link-btn:hover { @apply underline; }
 
-.lv-sheet-backdrop { @apply fixed inset-0 flex justify-end z-50; background: rgb(0 0 0 / 0.28); }
-.lv-sheet {
-  @apply flex flex-col overflow-y-auto; width: min(26rem, 100%); gap: var(--space-4);
+/* Centred, matching the task window's dialogs — same backdrop, same radius,
+   same rise. Capped at 90vh so a short form sits at its natural height and a
+   long one scrolls inside itself rather than off the screen. */
+.lv-modal-backdrop { @apply fixed inset-0 flex items-center justify-center z-50; background: rgb(0 0 0 / 0.32); padding: var(--space-4); }
+.lv-modal {
+  @apply flex flex-col overflow-y-auto; width: min(26rem, 100%); max-height: 90vh; gap: var(--space-4);
   padding: var(--space-5); background: var(--color-surface-raised);
-  box-shadow: var(--shadow-lg);
-  animation: sheet-in 180ms ease;
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  animation: lv-modal-in 160ms ease;
 }
-@keyframes sheet-in { from { transform: translateX(12px); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .lv-sheet { animation: none; } }
-.lv-sheet-head { @apply flex items-center justify-between; }
-.lv-sheet-title { font-size: var(--text-base-size); font-weight: 600; margin: 0; color: var(--color-text); }
+@keyframes lv-modal-in { from { transform: translateY(8px); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .lv-modal { animation: none; } }
+.lv-modal-head { @apply flex items-center justify-between; }
+.lv-modal-title { font-size: var(--text-base-size); font-weight: 600; margin: 0; color: var(--color-text); }
 .lv-close { @apply cursor-pointer border-none bg-transparent p-0; font-size: 1.5rem; line-height: 1; color: var(--color-text-muted); }
 
 .btn-primary, .btn-ghost {

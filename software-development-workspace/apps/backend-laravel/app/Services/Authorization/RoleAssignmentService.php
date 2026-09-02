@@ -134,7 +134,7 @@ class RoleAssignmentService
                 return (int) $existing->id;
             }
 
-            return (int) DB::table('user_roles')->insertGetId([
+            $id = (int) DB::table('user_roles')->insertGetId([
                 'user_id'         => $subject->getKey(),
                 'role_id'         => $role->getKey(),
                 'organization_id' => $organizationId,
@@ -146,6 +146,18 @@ class RoleAssignmentService
                 'created_at'      => now(),
                 'updated_at'      => now(),
             ]);
+
+            // Handing somebody a role is a privilege change — the trail an
+            // auditor reaches for first.
+            \App\Services\Audit\AuditLogger::record(
+                action: 'role_granted',
+                auditable: $subject,
+                description: "Granted role \"{$role->name}\" to {$subject->name}" . ($reason ? " — {$reason}" : ''),
+                organizationId: $organizationId,
+                userId: $granter->getKey(), actorName: $granter->name,
+            );
+
+            return $id;
         });
     }
 
@@ -157,6 +169,8 @@ class RoleAssignmentService
      */
     public function revoke(User $revoker, int $assignmentId, ?string $reason = null): bool
     {
+        $assignment = DB::table('user_roles')->where('id', $assignmentId)->whereNull('revoked_at')->first();
+
         $updated = DB::table('user_roles')
             ->where('id', $assignmentId)
             ->whereNull('revoked_at')
@@ -166,6 +180,16 @@ class RoleAssignmentService
                 'grant_reason' => $reason ?: DB::raw('grant_reason'),
                 'updated_at'   => now(),
             ]);
+
+        if ($updated > 0 && $assignment) {
+            $roleName = DB::table('roles')->where('id', $assignment->role_id)->value('name');
+            \App\Services\Audit\AuditLogger::record(
+                action: 'role_revoked',
+                description: "Revoked role \"{$roleName}\" from user #{$assignment->user_id}" . ($reason ? " — {$reason}" : ''),
+                organizationId: $assignment->organization_id,
+                userId: $revoker->getKey(), actorName: $revoker->name,
+            );
+        }
 
         return $updated > 0;
     }

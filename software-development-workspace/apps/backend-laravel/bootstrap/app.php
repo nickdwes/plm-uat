@@ -35,6 +35,13 @@ return Application::configure(basePath: dirname(__DIR__))
             'org.context' => \App\Http\Middleware\ResolveOrganizationContext::class,
         ]);
 
+        // The coarse "every action" audit — one row per successful mutating
+        // request that no model observer already detailed. Appended to the API
+        // group so it wraps the whole request and can read the response status.
+        $middleware->api(append: [
+            \App\Http\Middleware\AuditRequests::class,
+        ]);
+
         // Ensure org.context resolves the tenant before SubstituteBindings
         // tries to resolve route-model bindings (which use BelongsToOrganization scope).
         $middleware->priority([

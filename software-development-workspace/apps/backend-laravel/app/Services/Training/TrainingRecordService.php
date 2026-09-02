@@ -112,35 +112,56 @@ class TrainingRecordService extends BaseService
         EmployeeTrainingRecord $record,
         int $progressPercent,
         ?string $notes,
-        int $employeeId
+        int $employeeId,
+        ?float $score = null,
+        ?string $certificateNumber = null,
+        ?string $certificateExpiryDate = null,
     ): EmployeeTrainingRecord {
-        // Progress can never decrease
-        if ($progressPercent <= $record->progress_percent) {
-            return $record;
-        }
+        // Progress can never decrease. A score/certificate submitted
+        // alongside a non-advancing progress value is still worth recording
+        // — e.g. re-submitting a corrected certificate number — so only the
+        // progress log itself is skipped, not the whole call.
+        $progressAdvanced = $progressPercent > $record->progress_percent;
 
-        DB::transaction(function () use ($record, $progressPercent, $notes, $employeeId) {
-            ProgressUpdate::create([
-                'training_record_id' => $record->id,
-                'employee_id'        => $employeeId,
-                'progress_percent'   => $progressPercent,
-                'notes'              => $notes,
-                'recorded_at'        => now(),
-            ]);
+        DB::transaction(function () use (
+            $record, $progressPercent, $notes, $employeeId, $progressAdvanced,
+            $score, $certificateNumber, $certificateExpiryDate,
+        ) {
+            if ($progressAdvanced) {
+                ProgressUpdate::create([
+                    'training_record_id' => $record->id,
+                    'employee_id'        => $employeeId,
+                    'progress_percent'   => $progressPercent,
+                    'notes'              => $notes,
+                    'recorded_at'        => now(),
+                ]);
+            }
 
-            $update = ['progress_percent' => $progressPercent];
+            $update = $progressAdvanced ? ['progress_percent' => $progressPercent] : [];
 
-            if ($record->status === 'enrolled' && $progressPercent > 0) {
+            if ($progressAdvanced && $record->status === 'enrolled' && $progressPercent > 0) {
                 $update['status']     = 'in_progress';
                 $update['started_at'] = now();
             }
 
-            if ($progressPercent >= 100) {
+            if ($progressAdvanced && $progressPercent >= 100) {
                 $update['status']       = 'completed';
                 $update['completed_at'] = now();
             }
 
-            $record->update($update);
+            if ($score !== null) {
+                $update['score'] = $score;
+            }
+            if ($certificateNumber !== null) {
+                $update['certificate_number'] = $certificateNumber;
+            }
+            if ($certificateExpiryDate !== null) {
+                $update['certificate_expiry_date'] = $certificateExpiryDate;
+            }
+
+            if (!empty($update)) {
+                $record->update($update);
+            }
         });
 
         return $record->fresh(['trainingItem', 'progressUpdates', 'evidenceFiles']);

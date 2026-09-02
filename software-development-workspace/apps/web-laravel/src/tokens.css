@@ -50,16 +50,19 @@
   --ramp-slate-600: #475569;
 
   /* ── Feedback ramps ──────────────────────────────────────────────────── */
+  --ramp-success-700: #047857;   /* 4.83:1 with white — the 500 is 2.28:1 */
   --ramp-success-500: #10B981;
   --ramp-success-400: #34D399;
   --ramp-success-100: #D1FAE5;
   --ramp-success-900: #064E3B;
 
+  --ramp-warning-700: #B45309;   /* 4.87:1 with white — the 500 is 3.03:1 */
   --ramp-warning-500: #ED6C02;
   --ramp-warning-400: #FBBF24;
   --ramp-warning-100: #FEF3C7;
   --ramp-warning-900: #78350F;
 
+  --ramp-error-700: #B91C1C;     /* 5.94:1 with white */
   --ramp-error-500: #D32F2F;
   --ramp-error-400: #F87171;
   --ramp-error-100: #FEE2E2;
@@ -129,6 +132,24 @@
   --color-text-inverse:  var(--ramp-neutral-0);
 
   /* ── Feedback ────────────────────────────────────────────────────────── */
+  /*
+   * The `-text` / `-subtle` pair.
+   *
+   * A second, parallel family that a large share of the views were written
+   * against and that was never actually defined — 449 references across 32
+   * files resolving to nothing, so error text rendered in body colour and a
+   * tinted panel rendered transparent.
+   *
+   * `-text` is darker than the base on purpose: the 500s are fill colours and
+   * do not carry enough contrast as type. `-subtle` is the wash behind it.
+   */
+  --color-success-text:   var(--ramp-success-700);
+  --color-warning-text:   var(--ramp-warning-700);
+  --color-danger-text:    var(--ramp-error-700);
+  --color-success-subtle: rgba(16, 185, 129, 0.10);
+  --color-warning-subtle: rgba(237, 108, 2, 0.10);
+  --color-danger-subtle:  rgba(211, 47, 47, 0.09);
+
   --color-success:       var(--ramp-success-500);
   --color-success-light: var(--ramp-success-100);
   --color-warning:       var(--ramp-warning-500);
@@ -222,6 +243,15 @@
   --color-text-inverse: var(--ramp-neutral-900);
 
   /* Feedback — base tones lighten, "light" tones become deep tinted fills */
+  /* Lighter as type on a dark ground, and the washes carry more alpha to
+     register against it. */
+  --color-success-text:   var(--ramp-success-400);
+  --color-warning-text:   var(--ramp-warning-400);
+  --color-danger-text:    var(--ramp-error-400);
+  --color-success-subtle: rgba(52, 211, 153, 0.14);
+  --color-warning-subtle: rgba(251, 191, 36, 0.14);
+  --color-danger-subtle:  rgba(248, 113, 113, 0.14);
+
   --color-success:       var(--ramp-success-400);
   --color-success-light: var(--ramp-success-900);
   --color-warning:       var(--ramp-warning-400);

@@ -17,7 +17,8 @@ use Illuminate\Database\Eloquent\Model;
  * Three attributes carry every decision in this system:
  *
  *   ownership   the record belongs to the acting user's own employee record
- *   reporting   the subject reports to the acting user, directly or further down
+ *   reporting   the subject reports directly to the acting user (one level —
+ *               the house convention; policies check it inline)
  *   tenancy     the record belongs to the organization in context
  *
  * Tenancy is the one that must never be skipped. Every other check assumes
@@ -28,81 +29,28 @@ use Illuminate\Database\Eloquent\Model;
 final class ResourceAttributes
 {
     /**
-     * Does this record belong to the user's own employee record?
+     * The user's team, as employee ids: themself plus their DIRECT reports.
      *
-     * Accepts an Employee (compared by id) or any model carrying an
-     * `employee_id`. A user with no employee record owns nothing.
+     * One level down on purpose — the house convention every inline policy
+     * check already follows. A deep-walking reportsTo() lived here once with
+     * zero callers; if a real need for whole-subtree scoping arrives, revive
+     * it from git rather than widening this, because "my team" and "everyone
+     * under me transitively" are different promises to make a manager.
+     *
+     * @return int[] empty when the user has no employee record.
      */
-    public static function isOwnedBy(User $user, ?Model $resource): bool
+    public static function teamEmployeeIds(User $user): array
     {
-        if ($resource === null) {
-            return false;
-        }
-
         $employeeId = $user->employeeId();
 
         if ($employeeId === null) {
-            return false;
+            return [];
         }
 
-        if ($resource instanceof Employee) {
-            return (int) $resource->getKey() === $employeeId;
-        }
-
-        $attr = $resource->getAttribute('employee_id');
-
-        return $attr !== null && (int) $attr === $employeeId;
-    }
-
-    /**
-     * Is the subject somewhere beneath the user in the reporting line?
-     *
-     * Walks `employees.reports_to` upward from the subject rather than
-     * expanding the manager's subtree downward — an employee has one chain
-     * up but a manager may have a large tree below, so this is bounded by
-     * org depth instead of headcount.
-     *
-     * $maxDepth guards against a cycle in the data (A reports to B reports
-     * to A). Such a cycle should not exist, but authorization is the wrong
-     * place to discover it by hanging.
-     */
-    public static function reportsTo(User $user, ?Model $subject, int $maxDepth = 12): bool
-    {
-        if (! $subject instanceof Employee) {
-            return false;
-        }
-
-        $managerEmployeeId = $user->employeeId();
-
-        if ($managerEmployeeId === null) {
-            return false;
-        }
-
-        // Nobody manages themselves.
-        if ((int) $subject->getKey() === $managerEmployeeId) {
-            return false;
-        }
-
-        $seen    = [];
-        $current = $subject->reports_to;
-
-        for ($depth = 0; $current !== null && $depth < $maxDepth; $depth++) {
-            $current = (int) $current;
-
-            if ($current === $managerEmployeeId) {
-                return true;
-            }
-
-            // Cycle detected — stop rather than loop.
-            if (isset($seen[$current])) {
-                return false;
-            }
-            $seen[$current] = true;
-
-            $current = Employee::whereKey($current)->value('reports_to');
-        }
-
-        return false;
+        return [
+            $employeeId,
+            ...Employee::where('reports_to', $employeeId)->pluck('id')->map(fn ($id) => (int) $id),
+        ];
     }
 
     /**

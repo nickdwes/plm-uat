@@ -10,6 +10,7 @@ use App\Models\Support\Engineer;
 use App\Models\Support\Escalation;
 use App\Models\Support\ServiceCategory;
 use App\Models\Support\Ticket;
+use App\Models\Support\TicketStatus;
 use App\Services\Support\EscalationService;
 use App\Services\Support\RoutingEngine;
 use Illuminate\Http\JsonResponse;
@@ -282,7 +283,7 @@ class RoutingController extends Controller
     {
         $this->authorize('triage', Ticket::class);
 
-        $base = fn () => Ticket::with(['status', 'priority', 'account', 'team', 'assignee', 'sla'])
+        $base = fn () => Ticket::with(['status', 'priority', 'type', 'account', 'team', 'assignee', 'sla'])
             ->whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']));
 
         return response()->json([
@@ -306,6 +307,74 @@ class RoutingController extends Controller
             'open_escalations' => Escalation::whereNull('resolved_at')
                 ->with(['ticket:id,reference,subject', 'to:id,name', 'by:id,name'])
                 ->orderByDesc('escalated_at')->limit(50)->get(),
+
+            'counts'         => $this->deskCounts(),
+            'by_type'        => $this->byType(),
+            'active_tickets' => $base()->orderByDesc('updated_at')->limit(15)->get(),
+            'top_assignees'  => $this->topAssignees(),
         ]);
+    }
+
+    /**
+     * How the open load breaks down by kind — incident, service request,
+     * change, and the rest — so the desk can see what it is actually being
+     * asked for, not just how much. Untyped tickets are counted under a null
+     * bucket rather than dropped.
+     */
+    private function byType(): \Illuminate\Support\Collection
+    {
+        return Ticket::whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']))
+            ->selectRaw('ticket_type_id, COUNT(*) as tickets_count')
+            ->groupBy('ticket_type_id')
+            ->with('type:id,name')
+            ->get()
+            ->map(fn ($row) => [
+                'type'          => $row->type?->name ?? 'Unclassified',
+                'tickets_count' => (int) $row->tickets_count,
+            ])
+            ->sortByDesc('tickets_count')
+            ->values();
+    }
+
+    /**
+     * The four headline numbers. Three of the four (open, in progress,
+     * closed) partition every ticket exhaustively by TicketStatus::STATE_*;
+     * SLA violations is not a fourth state but a condition layered over the
+     * first two — a ticket is open *and* breached, never breached instead of
+     * open. Scoped to non-terminal tickets: a breach on something already
+     * closed happened, but it isn't waiting on anyone to act on it any more.
+     */
+    private function deskCounts(): array
+    {
+        $stateCount = fn (array $states) => Ticket::whereHas(
+            'status', fn ($q) => $q->whereIn('state', $states)
+        )->count();
+
+        return [
+            'open'           => $stateCount([TicketStatus::STATE_OPEN]),
+            'in_progress'    => $stateCount([TicketStatus::STATE_PENDING]),
+            'closed'         => $stateCount([TicketStatus::STATE_RESOLVED, TicketStatus::STATE_CLOSED]),
+            'sla_violations' => Ticket::whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']))
+                ->whereHas('sla', fn ($q) => $q->where('response_met', false)->orWhere('resolution_met', false))
+                ->count(),
+        ];
+    }
+
+    /** Who is actually carrying the open load right now, ranked by count. */
+    private function topAssignees(): \Illuminate\Support\Collection
+    {
+        return Ticket::whereHas('status', fn ($q) => $q->whereIn('state', ['open', 'pending']))
+            ->whereNotNull('assigned_to')
+            ->selectRaw('assigned_to, COUNT(*) as tickets_count')
+            ->groupBy('assigned_to')
+            ->orderByDesc('tickets_count')
+            ->with('assignee:id,name')
+            ->limit(8)
+            ->get()
+            ->map(fn ($row) => [
+                'user_id'       => $row->assigned_to,
+                'name'          => $row->assignee?->name ?? 'Unknown',
+                'tickets_count' => (int) $row->tickets_count,
+            ]);
     }
 }

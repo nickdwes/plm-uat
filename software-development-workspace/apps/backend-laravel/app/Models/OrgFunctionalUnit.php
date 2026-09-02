@@ -19,6 +19,7 @@ class OrgFunctionalUnit extends Model
         'name',
         'code',
         'description',
+        'lead_employee_id',
         'is_active',
     ];
 
@@ -27,6 +28,12 @@ class OrgFunctionalUnit extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    /** Whoever runs this function. */
+    public function lead(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Employee::class, 'lead_employee_id');
     }
 
     public function departments(): HasMany

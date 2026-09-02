@@ -55,5 +55,6 @@ return [
          * like an encrypted one until somebody reads the blob.
          */
         'asset_documents',
+        'vendor_documents',
     ],
 ];

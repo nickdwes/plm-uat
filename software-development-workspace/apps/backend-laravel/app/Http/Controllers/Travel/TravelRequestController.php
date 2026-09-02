@@ -28,7 +28,7 @@ class TravelRequestController extends Controller
     {
         $this->authorize('viewAny', TravelRequest::class);
 
-        $q = TravelRequest::with(['employee', 'destination', 'account', 'approvals'])
+        $q = TravelRequest::with(['employee', 'destination', 'account', 'project:id,name', 'approvals'])
             ->orderByDesc('created_at');
 
         // Narrowed from the authenticated user, never from input: reading the
@@ -52,7 +52,7 @@ class TravelRequestController extends Controller
 
         // travel_type included so the deliveries screen asks for deliveries
         // rather than filtering a full list in the browser.
-        foreach (['status', 'travel_type', 'employee_id', 'account_id', 'travel_destination_id'] as $filter) {
+        foreach (['status', 'travel_type', 'employee_id', 'account_id', 'travel_destination_id', 'project_id'] as $filter) {
             if ($request->filled($filter)) {
                 $q->where($filter, $request->input($filter));
             }

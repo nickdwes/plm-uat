@@ -81,6 +81,74 @@ class AccountApiTest extends TestCase
         $this->getJson($this->url())->assertForbidden();
     }
 
+    // ── Logo ──────────────────────────────────────────────────────────────
+
+    public function test_a_logo_can_be_uploaded_and_comes_back_as_a_url(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+        $this->actor([Permission::ACCOUNTS_UPDATE]);
+        $account = $this->account();
+
+        $file = \Illuminate\Http\UploadedFile::fake()->create('logo.png', 40, 'image/png');
+
+        $res = $this->postJson($this->url("/{$account->id}/logo"), ['logo' => $file])->assertOk();
+
+        $this->assertNotNull($res->json('data.logo_url'));
+        $account->refresh();
+        $this->assertNotNull($account->logo_path);
+        \Illuminate\Support\Facades\Storage::disk('public')->assertExists($account->logo_path);
+    }
+
+    public function test_replacing_a_logo_deletes_the_old_file(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+        $this->actor([Permission::ACCOUNTS_UPDATE]);
+        $account = $this->account();
+
+        $this->postJson($this->url("/{$account->id}/logo"), ['logo' => \Illuminate\Http\UploadedFile::fake()->create('a.png', 40, 'image/png')])->assertOk();
+        $first = $account->fresh()->logo_path;
+
+        $this->postJson($this->url("/{$account->id}/logo"), ['logo' => \Illuminate\Http\UploadedFile::fake()->create('b.png', 40, 'image/png')])->assertOk();
+
+        \Illuminate\Support\Facades\Storage::disk('public')->assertMissing($first);
+        \Illuminate\Support\Facades\Storage::disk('public')->assertExists($account->fresh()->logo_path);
+    }
+
+    public function test_a_logo_upload_needs_the_update_permission(): void
+    {
+        $this->actor([Permission::ACCOUNTS_VIEW]);
+        $account = $this->account();
+
+        $this->postJson($this->url("/{$account->id}/logo"), ['logo' => \Illuminate\Http\UploadedFile::fake()->create('a.png', 40, 'image/png')])
+            ->assertForbidden();
+    }
+
+    public function test_a_logo_must_be_an_image(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+        $this->actor([Permission::ACCOUNTS_UPDATE]);
+        $account = $this->account();
+
+        $this->postJson($this->url("/{$account->id}/logo"), ['logo' => \Illuminate\Http\UploadedFile::fake()->create('notes.pdf', 20, 'application/pdf')])
+            ->assertStatus(422);
+    }
+
+    public function test_a_logo_can_be_removed(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('public');
+        $this->actor([Permission::ACCOUNTS_UPDATE]);
+        $account = $this->account();
+
+        $this->postJson($this->url("/{$account->id}/logo"), ['logo' => \Illuminate\Http\UploadedFile::fake()->create('a.png', 40, 'image/png')])->assertOk();
+        $path = $account->fresh()->logo_path;
+
+        $this->deleteJson($this->url("/{$account->id}/logo"))
+            ->assertOk()
+            ->assertJsonPath('data.logo_url', null);
+
+        \Illuminate\Support\Facades\Storage::disk('public')->assertMissing($path);
+    }
+
     public function test_view_own_shows_only_the_managers_own_customers(): void
     {
         [, $employee] = $this->actor([Permission::ACCOUNTS_VIEW_OWN]);

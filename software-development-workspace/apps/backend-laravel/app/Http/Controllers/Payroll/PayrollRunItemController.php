@@ -39,7 +39,7 @@ class PayrollRunItemController extends Controller
 
     public function index(int $run): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         $payrollRun = $this->run($run);
 
@@ -122,7 +122,7 @@ class PayrollRunItemController extends Controller
     /** The codes an ad-hoc line can be raised against. */
     public function codes(): JsonResponse
     {
-        $this->authorize('view', PayrollPeriod::class);
+        $this->authorize('viewAny', PayrollPeriod::class);
 
         return response()->json([
             'earnings' => PayrollEarningCode::where('is_active', true)

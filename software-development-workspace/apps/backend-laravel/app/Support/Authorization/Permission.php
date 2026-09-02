@@ -123,11 +123,29 @@ final class Permission
      */
     public const VENDORS_VIEW   = 'vendors.view';
     public const VENDORS_MANAGE = 'vendors.manage';
+    /**
+     * Deciding a supplier's onboarding, and confirming a change to its bank
+     * details or legal identity.
+     *
+     * Split from `manage` because registering a party and blessing it are two
+     * jobs: the whole point of a review is that somebody other than the person
+     * who typed it in looks at it.
+     */
+    public const VENDORS_APPROVE = 'vendors.approve';
 
     public const TRAINING_VIEW     = 'training.view';
     public const TRAINING_VIEW_OWN = 'training.view_own';
     public const TRAINING_MANAGE   = 'training.manage';
     public const TRAINING_APPROVE  = 'training.approve';
+
+    /**
+     * The second stage of a training budget request, above the org's
+     * threshold. Kept apart from TRAINING_APPROVE for the same reason
+     * Travel keeps finance and executive approval apart from line-manager
+     * approval: whoever can sign off on a course happening should not be
+     * the same person who can release the money for it.
+     */
+    public const TRAINING_BUDGET_APPROVE_FINANCE = 'training.budget_approve_finance';
 
     // ── Onboarding / preboarding ──────────────────────────────────────────
     public const ONBOARDING_VIEW   = 'onboarding.view';
@@ -148,6 +166,53 @@ final class Permission
     public const ROLES_VIEW   = 'roles.view';
     public const ROLES_MANAGE = 'roles.manage';
     public const ROLES_ASSIGN = 'roles.assign';
+
+    /**
+     * Taking somebody's access away, here and in Office 365.
+     *
+     * Its own permission rather than folded into `roles.assign`, because the
+     * blast radius is different in kind: assigning a role changes what a person
+     * may do inside this application, while deprovisioning disables their
+     * Microsoft account — mail, Teams, files, everything — and revokes the
+     * sessions they are holding right now. That is an act somebody should be
+     * trusted with deliberately, not one they inherit from being able to grant
+     * a role.
+     */
+    public const USERS_DEPROVISION = 'users.deprovision';
+    /**
+     * Creating an Office 365 account, and creating an employee profile from
+     * one that already exists there.
+     *
+     * Its own permission rather than folded into deprovision: taking access
+     * away and handing it out are different risks, and the person who should
+     * be able to shut a leaver out on a Friday is not automatically the
+     * person who should be able to mint mailboxes.
+     */
+    public const USERS_PROVISION = 'users.provision';
+
+    // ── Benefits ──────────────────────────────────────────────────────────
+    //
+    // The benefits module shipped with no checks at all — seventeen public
+    // methods anyone signed in could call, including deleting a benefit plan.
+    // Three tiers: read the catalogue, administer it, and decide the
+    // approvals that put an employee onto a plan.
+    public const BENEFITS_VIEW    = 'benefits.view';
+    public const BENEFITS_MANAGE  = 'benefits.manage';
+    public const BENEFITS_APPROVE = 'benefits.approve';
+
+    // ── Roster ────────────────────────────────────────────────────────────
+    //
+    // The roster was the last module gated on role *names* (`isOrgHR`,
+    // `isManagerIn`), which meant no custom role could ever reach it — the
+    // role editor had nothing to tick. Three tiers, matching the two that
+    // existed in practice plus the read:
+    //   view    — see schedules, assignments and swaps (was: any manager)
+    //   manage  — assign shifts and decide swaps       (was: any manager)
+    //   publish — own the schedule lifecycle and its configuration:
+    //             create, edit, publish, delete, configure (was: org HR)
+    public const ROSTER_VIEW    = 'roster.view';
+    public const ROSTER_MANAGE  = 'roster.manage';
+    public const ROSTER_PUBLISH = 'roster.publish';
 
     // ── Performance reviews ───────────────────────────────────────────────
     public const PERFORMANCE_VIEW      = 'performance.view';
@@ -257,6 +322,21 @@ final class Permission
     public const ASSETS_REPORT_ISSUE  = 'assets.report_issue';
     public const ASSETS_RESOLVE_ISSUE = 'assets.resolve_issue';
 
+    // ── Procurement ───────────────────────────────────────────────────────
+    /*
+     * Approval is split by the stage it acts on, because these are different
+     * people answering different questions: a department head asks whether the
+     * work needs it, finance whether the money is there, operations whether it
+     * fits delivery, an executive whether it is worth the margin. One blanket
+     * "approve" permission would let any of them stand in for the others.
+     */
+    public const PROCUREMENT_APPROVE_DEPARTMENT = 'procurement.approve_department';
+    public const PROCUREMENT_APPROVE_FINANCE    = 'procurement.approve_finance';
+    public const PROCUREMENT_APPROVE_OPERATIONS = 'procurement.approve_operations';
+    public const PROCUREMENT_APPROVE_EXECUTIVE  = 'procurement.approve_executive';
+    /** Editing the threshold ladder, delegations and policy dials. */
+    public const PROCUREMENT_MANAGE_SETTINGS    = 'procurement.manage_settings';
+
     /*
      * Reading somebody else's system.
      *
@@ -281,9 +361,31 @@ final class Permission
     public const ACCOUNTS_ASSIGN     = 'accounts.assign';
     /** Types, sectors and sub-sectors — the axes customers are reported on. */
     public const ACCOUNTS_MANAGE_REF = 'accounts.manage_reference_data';
+    /**
+     * Customer contact details — emails and phone numbers of real people at
+     * client organisations, on accounts AND on leads (one asset, one
+     * constant). Without it the records stay fully usable but the reachable
+     * values arrive masked (j***@acme.com), never blank: an honest "hidden".
+     */
+    public const ACCOUNTS_VIEW_CONTACTS = 'accounts.view_contacts';
+
+    // ── Documents (cross-cutting classification) ──────────────────────────
+    /**
+     * Documents flagged confidential — disciplinary records, investigation
+     * notes, medical letters. A default document follows its parent resource;
+     * a confidential one additionally needs this, on listing and download
+     * alike, including against the employee it is about.
+     */
+    public const DOCUMENTS_VIEW_CONFIDENTIAL = 'documents.view_confidential';
 
     // ── Pipeline (leads and opportunities) ────────────────────────────────
     public const PIPELINE_VIEW     = 'pipeline.view';
+    /**
+     * A sales manager seeing their own leads plus their direct reports' —
+     * wider than view_own, far short of the whole book. One level down, per
+     * the house team convention (ResourceAttributes::teamEmployeeIds()).
+     */
+    public const PIPELINE_VIEW_TEAM = 'pipeline.view_team';
     /** Seeing only the leads and deals you own or are assigned to. */
     public const PIPELINE_VIEW_OWN = 'pipeline.view_own';
     public const PIPELINE_CREATE   = 'pipeline.create';
@@ -352,12 +454,12 @@ final class Permission
             'accounts'      => [
                 self::ACCOUNTS_VIEW, self::ACCOUNTS_VIEW_OWN, self::ACCOUNTS_CREATE,
                 self::ACCOUNTS_UPDATE, self::ACCOUNTS_DELETE, self::ACCOUNTS_ASSIGN,
-                self::ACCOUNTS_MANAGE_REF,
+                self::ACCOUNTS_MANAGE_REF, self::ACCOUNTS_VIEW_CONTACTS,
             ],
             'pipeline'      => [
-                self::PIPELINE_VIEW, self::PIPELINE_VIEW_OWN, self::PIPELINE_CREATE,
-                self::PIPELINE_UPDATE, self::PIPELINE_DELETE, self::PIPELINE_CLOSE,
-                self::PIPELINE_VIEW_COMMERCIALS,
+                self::PIPELINE_VIEW, self::PIPELINE_VIEW_OWN, self::PIPELINE_VIEW_TEAM,
+                self::PIPELINE_CREATE, self::PIPELINE_UPDATE, self::PIPELINE_DELETE,
+                self::PIPELINE_CLOSE, self::PIPELINE_VIEW_COMMERCIALS,
             ],
             'employees'     => [
                 self::EMPLOYEES_VIEW, self::EMPLOYEES_VIEW_OWN, self::EMPLOYEES_VIEW_TEAM,
@@ -396,16 +498,23 @@ final class Permission
             'vacancies'     => [self::VACANCIES_MANAGE],
             'candidates'    => [self::CANDIDATES_VIEW],
             'applications'  => [self::APPLICATIONS_MANAGE],
-            'vendors'       => [self::VENDORS_VIEW, self::VENDORS_MANAGE],
+            'vendors'       => [self::VENDORS_VIEW, self::VENDORS_MANAGE, self::VENDORS_APPROVE],
             'training'      => [
                 self::TRAINING_VIEW, self::TRAINING_VIEW_OWN,
                 self::TRAINING_MANAGE, self::TRAINING_APPROVE,
+                self::TRAINING_BUDGET_APPROVE_FINANCE,
             ],
             'onboarding'    => [self::ONBOARDING_VIEW, self::ONBOARDING_MANAGE],
             'reports'       => [self::REPORTS_ORG, self::REPORTS_TEAM],
             'audit'         => [self::AUDIT_VIEW],
+            'documents'     => [self::DOCUMENTS_VIEW_CONFIDENTIAL],
             'settings'      => [self::SETTINGS_MANAGE],
-            'roles'         => [self::ROLES_VIEW, self::ROLES_MANAGE, self::ROLES_ASSIGN],
+            'roles'         => [
+                self::ROLES_VIEW, self::ROLES_MANAGE, self::ROLES_ASSIGN,
+                self::USERS_DEPROVISION, self::USERS_PROVISION,
+            ],
+            'benefits'      => [self::BENEFITS_VIEW, self::BENEFITS_MANAGE, self::BENEFITS_APPROVE],
+            'roster'        => [self::ROSTER_VIEW, self::ROSTER_MANAGE, self::ROSTER_PUBLISH],
             'performance'   => [
                 self::PERFORMANCE_VIEW, self::PERFORMANCE_VIEW_OWN,
                 self::PERFORMANCE_VIEW_TEAM, self::PERFORMANCE_MANAGE,
@@ -429,6 +538,11 @@ final class Permission
                 self::ASSETS_UPDATE, self::ASSETS_DELETE, self::ASSETS_ASSIGN,
                 self::ASSETS_REQUEST, self::ASSETS_APPROVE,
                 self::ASSETS_REPORT_ISSUE, self::ASSETS_RESOLVE_ISSUE,
+            ],
+            'procurement'   => [
+                self::PROCUREMENT_APPROVE_DEPARTMENT, self::PROCUREMENT_APPROVE_FINANCE,
+                self::PROCUREMENT_APPROVE_OPERATIONS, self::PROCUREMENT_APPROVE_EXECUTIVE,
+                self::PROCUREMENT_MANAGE_SETTINGS,
             ],
             'integrations'  => [
                 self::INTEGRATIONS_VIEW, self::INTEGRATIONS_MANAGE, self::INTEGRATIONS_SYNC,
@@ -455,17 +569,63 @@ final class Permission
     }
 
     /**
+     * May this string be written into a role definition?
+     *
+     * A concrete catalogue permission, or `resource.*` where the resource
+     * actually prefixes at least one catalogue permission — so a typo'd
+     * wildcard (`payrol.*`) is refused at write time instead of sitting in a
+     * role granting nothing forever. The bare `*` is deliberately NOT
+     * writable here: it belongs to the seeded group-admin role alone, and a
+     * custom role that wants everything should say which resources it means.
+     */
+    public static function isWritableGrant(string $permission): bool
+    {
+        if (self::isKnown($permission)) {
+            return true;
+        }
+
+        if (! str_ends_with($permission, '.*')) {
+            return false;
+        }
+
+        $prefix = substr($permission, 0, -1); // keep the dot: "roles."
+
+        foreach (self::all() as $known) {
+            if (str_starts_with($known, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Fail loudly on an unrecognised permission outside production, so a
      * typo surfaces in development rather than quietly denying (or, in a
      * caller that inverts the result, quietly granting).
      */
     public static function assertKnown(string $permission): void
     {
-        if (! self::isKnown($permission) && ! app()->isProduction()) {
-            throw new \InvalidArgumentException(
-                "Unknown permission [{$permission}]. Add it to " . self::class . " before checking it."
-            );
+        if (self::isKnown($permission)) {
+            return;
         }
+
+        $error = new \InvalidArgumentException(
+            "Unknown permission [{$permission}]. Add it to " . self::class . " before checking it."
+        );
+
+        /*
+         * Outside production a typo should stop the build. In production it
+         * must not take the request down — but silence was the wrong half of
+         * that trade: a typo'd check denied everybody, forever, with nothing
+         * anywhere saying why. Report it so it lands in the log and the error
+         * tracker while the request still (correctly) denies.
+         */
+        if (! app()->isProduction()) {
+            throw $error;
+        }
+
+        report($error);
     }
 
     /**

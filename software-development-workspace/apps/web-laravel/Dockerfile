@@ -16,6 +16,7 @@ RUN VITE_LARAVEL_API_URL=$VITE_LARAVEL_API_URL npm run build
 FROM nginx:alpine
 
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/security-headers.conf /etc/nginx/security-headers.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 EXPOSE 80

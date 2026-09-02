@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Roster;
 
+use App\Support\Authorization\Permission;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Roster\StoreShiftSwapRequest;
 use App\Http\Resources\Roster\ShiftSwapResource;
@@ -25,7 +26,7 @@ class RosterShiftSwapController extends Controller
 
         $filters = $request->only(['status']);
 
-        if (! $request->user()->isManagerIn($orgId)) {
+        if (! $request->user()->hasPermission(Permission::ROSTER_VIEW)) {
             $employee = $request->user()->employee;
             abort_if(! $employee, 403, 'No employee record linked to this account.');
             $filters['employee_id'] = $employee->id;
@@ -109,7 +110,7 @@ class RosterShiftSwapController extends Controller
         $orgId = app('current.organization_id');
 
         abort_unless(
-            $request->user()->isManagerIn($orgId),
+            $request->user()->hasPermission(Permission::ROSTER_MANAGE),
             403,
             'Only managers or HR can approve shift swaps.'
         );

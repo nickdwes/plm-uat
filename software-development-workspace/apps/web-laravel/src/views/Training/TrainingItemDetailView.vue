@@ -1,457 +1,500 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+/**
+ * Every property the catalog form now captures — provider/vendor, budget,
+ * certification detail, skills, who's enrolled — laid out as tabs rather
+ * than the single Overview/Metadata split this page shipped with before the
+ * catalog form grew. Each tab reads straight off the same TrainingItem
+ * response plus two lightweight per-item queries (records, budget requests)
+ * — nothing here is a separate report, just this one course's own facts.
+ */
+import { ref, computed, onMounted } from "vue";
 import { useRouter, useRoute } from "vue-router";
-import { api } from "../../lib/api";
+import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
-import type { TrainingItem } from "../../lib/types";
+import type { TrainingItem, EmployeeTrainingRecord, TrainingBudgetRequestSummary, Paginator } from "../../lib/types";
 
 const router = useRouter();
 const route = useRoute();
 
+function org(): string | null { return currentOrgSlug.value; }
+
 const item = ref<TrainingItem | null>(null);
 const loading = ref(false);
 const error = ref("");
-const activeTab = ref("overview");
+const activeTab = ref<"overview" | "provider" | "certification" | "skills" | "budget" | "enrollments">("overview");
 
-function org() { return currentOrgSlug.value; }
+const records = ref<EmployeeTrainingRecord[]>([]);
+const recordsLoading = ref(false);
+const budgetRequests = ref<TrainingBudgetRequestSummary[]>([]);
+const budgetRequestsLoading = ref(false);
 
-async function load() {
+async function load(): Promise<void> {
   if (!org()) { error.value = "Select an organisation first."; return; }
-  loading.value = true;
-  error.value = "";
+  loading.value = true; error.value = "";
   try {
-    const res = await api<{ data: TrainingItem }>("GET", `/api/v1/training/catalog/${route.params.id}`, {
-      org: org(),
-    });
+    const res = await api<{ data: TrainingItem }>("GET", `/api/v1/training/catalog/${route.params.id}`, { org: org() });
     item.value = res.data;
   } catch (e) {
     error.value = e instanceof Error ? e.message : "Failed to load item.";
-  } finally {
-    loading.value = false;
+  } finally { loading.value = false; }
+}
+
+async function loadRecords(): Promise<void> {
+  if (!org() || !item.value) return;
+  recordsLoading.value = true;
+  try {
+    const res = await api<Paginator<EmployeeTrainingRecord>>("GET", "/api/v1/training/records", {
+      org: org(), params: { training_item_id: item.value.id, per_page: 100 },
+    });
+    records.value = res.data;
+  } catch { records.value = []; }
+  finally { recordsLoading.value = false; }
+}
+
+async function loadBudgetRequests(): Promise<void> {
+  if (!org() || !item.value) return;
+  budgetRequestsLoading.value = true;
+  try {
+    const res = await api<{ data: TrainingBudgetRequestSummary[] }>("GET", "/api/v1/training/budget-requests", {
+      org: org(), params: { training_item_id: item.value.id },
+    });
+    budgetRequests.value = res.data;
+  } catch { budgetRequests.value = []; }
+  finally { budgetRequestsLoading.value = false; }
+}
+
+async function init(): Promise<void> {
+  await load();
+  if (item.value) {
+    void loadRecords();
+    void loadBudgetRequests();
   }
 }
 
-function formatCurrency(amount: number, currency: string) {
-  return `${currency} ${amount.toFixed(2)}`;
+function formatCurrency(amount: number | string, currency: string): string {
+  // Laravel's decimal:2 cast serialises to a string, not a number.
+  return `${currency} ${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-async function deleteItem() {
+function formatDate(d: string | null): string {
+  return d ? new Date(d).toLocaleDateString() : "—";
+}
+
+function labelize(value: string): string {
+  return value.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function statusBadge(status: string): string {
+  return { pending_manager: "badge-amber", pending_finance: "badge-amber", approved: "badge-green", rejected: "badge-gray",
+    enrolled: "badge-blue", in_progress: "badge-amber", completed: "badge-green", expired: "badge-gray", withdrawn: "badge-gray", failed: "badge-gray" }[status] ?? "badge-gray";
+}
+
+async function deleteItem(): Promise<void> {
   if (!item.value) return;
   if (!confirm(`Delete "${item.value.title}"? This cannot be undone.`)) return;
   try {
     await api("DELETE", `/api/v1/training/catalog/${item.value.id}`, { org: org() });
-    router.replace({ name: "training-catalog" });
+    router.push({ name: "training" });
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "Failed to delete item.";
+    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Failed to delete item.";
   }
 }
 
-onMounted(() => load());
+const enrolledCount = computed(() => records.value.filter(r => ["enrolled", "in_progress", "completed"].includes(r.status)).length);
+
+onMounted(init);
 </script>
 
 <template>
-  <div class="view">
-    <div class="view-header">
-      <button class="back-btn" @click="router.back()">← Back to Catalog</button>
-      <div v-if="item" class="header-actions">
-        <button class="btn btn-edit" @click="router.push({ name: 'training-catalog', query: { edit: item.id } })">✎ Edit</button>
-        <button class="btn btn-delete" @click="deleteItem">🗑 Delete</button>
+  <div class="tid-page">
+    <div class="tid-header">
+      <button type="button" class="link-btn" @click="router.push({ name: 'training' })">← Back to Catalog</button>
+      <div v-if="item" class="tid-header-actions">
+        <button type="button" class="btn btn-secondary" @click="router.push({ name: 'training', query: { edit: item.id } })">Edit</button>
+        <button type="button" class="btn btn-danger" @click="deleteItem">Delete</button>
       </div>
     </div>
 
-    <div v-if="error" class="alert alert-danger">{{ error }}</div>
+    <p v-if="error" class="tr-error">{{ error }}</p>
+    <p v-else-if="loading" class="tr-loading">Loading item…</p>
 
-    <div v-if="loading" class="loading">Loading item…</div>
-
-    <div v-else-if="item" class="detail-container">
-      <div class="detail-header">
-        <div>
-          <h1 class="title">{{ item.title }}</h1>
-          <div class="meta-badges">
-            <span class="badge" :class="'badge-' + item.type">{{ item.type }}</span>
-            <span class="badge badge-delivery">{{ item.delivery }}</span>
-            <span v-if="item.is_featured" class="badge badge-featured">⭐ Featured</span>
-            <span :class="['badge', item.is_active ? 'badge-active' : 'badge-inactive']">
-              {{ item.is_active ? "Active" : "Inactive" }}
-            </span>
-          </div>
+    <template v-else-if="item">
+      <header class="tid-title-block">
+        <span v-if="item.training_code" class="catalog-card-code">{{ item.training_code }}</span>
+        <h1 class="tid-title">{{ item.title }}</h1>
+        <div class="tid-badges">
+          <span v-if="item.is_featured" class="badge badge-amber">Featured</span>
+          <span class="badge badge-blue">{{ labelize(item.type) }}</span>
+          <span class="badge badge-indigo">{{ labelize(item.delivery) }}</span>
+          <span v-if="item.level" class="badge badge-gray">{{ labelize(item.level) }}</span>
+          <span :class="['badge', item.is_active ? 'badge-green' : 'badge-gray']">{{ item.is_active ? "Active" : "Inactive" }}</span>
         </div>
-      </div>
+      </header>
 
-      <!-- Tabs -->
-      <div class="tabs">
-        <button
-          class="tab-button"
-          :class="{ active: activeTab === 'overview' }"
-          @click="activeTab = 'overview'"
-        >
-          Overview
+      <nav class="tr-tabs" role="tablist">
+        <button v-for="t in ['overview','provider','certification','skills','budget','enrollments']" :key="t"
+                type="button" role="tab" class="tr-tab" :class="{ active: activeTab === t }"
+                @click="activeTab = t as typeof activeTab">
+          {{ t === 'enrollments' ? `Enrollments (${records.length})` : labelize(t) }}
         </button>
-        <button
-          class="tab-button"
-          :class="{ active: activeTab === 'metadata' }"
-          @click="activeTab = 'metadata'"
-        >
-          Metadata
-        </button>
-      </div>
+      </nav>
 
-      <!-- Overview Tab -->
-      <div v-if="activeTab === 'overview'" class="tab-content">
-        <div class="section">
-          <h3>Description</h3>
-          <p>{{ item.description || "(No description provided)" }}</p>
+      <!-- Overview -->
+      <section v-if="activeTab === 'overview'" class="tid-section">
+        <p class="tid-field-group-label">Description</p>
+        <p class="tid-desc">{{ item.description || "No description provided." }}</p>
+
+        <p class="tid-field-group-label">Key Information</p>
+        <div class="tid-info-grid">
+          <div class="tid-info-item"><label>Duration</label><div>{{ item.duration_hours }}h {{ item.duration_minutes }}m{{ item.is_long_course ? " (long course)" : "" }}</div></div>
+          <div class="tid-info-item"><label>Provider</label><div>
+            <a v-if="item.provider_url" :href="item.provider_url" target="_blank" rel="noopener" class="tid-link">{{ item.provider_name || item.provider_url }}</a>
+            <span v-else>{{ item.provider_name || "—" }}</span>
+          </div></div>
+          <div class="tid-info-item"><label>Estimated Cost</label><div>{{ formatCurrency(item.estimated_cost, item.cost_currency) }}</div></div>
+          <div class="tid-info-item"><label>Capacity</label><div>{{ enrolledCount }} enrolled{{ item.max_enrollments ? ` / ${item.max_enrollments} max` : " (no cap)" }}</div></div>
+          <div class="tid-info-item"><label>Technical</label><div>{{ item.is_technical ? "Yes" : "No" }}</div></div>
+          <div class="tid-info-item"><label>Proctored Exam</label><div>{{ item.requires_proctored_exam ? "Required" : "Not required" }}</div></div>
+          <div class="tid-info-item"><label>Requires Approval</label><div>{{ item.requires_approval ? "Yes" : "No" }}</div></div>
+          <div class="tid-info-item"><label>Created</label><div>{{ formatDate(item.created_at) }}</div></div>
         </div>
 
-        <div class="section">
-          <h3>Key Information</h3>
-          <div class="info-grid">
-            <div class="info-item">
-              <label>Duration</label>
-              <div>{{ item.duration_hours }}h {{ item.duration_minutes }}m</div>
+        <div v-if="item.tags && item.tags.length" class="tid-chip-row">
+          <span v-for="tag in item.tags" :key="tag" class="badge badge-gray">{{ tag }}</span>
+        </div>
+
+        <div class="tid-actions">
+          <RouterLink :to="{ name: 'my-training' }" class="btn btn-primary">Enroll Now</RouterLink>
+        </div>
+      </section>
+
+      <!-- Provider -->
+      <section v-else-if="activeTab === 'provider'" class="tid-section">
+        <p v-if="!item.training_provider_type" class="tr-empty">No training provider set for this item.</p>
+        <template v-else>
+          <div class="tid-info-grid">
+            <div class="tid-info-item"><label>Provider Type</label><div>{{ labelize(item.training_provider_type) }}</div></div>
+            <div class="tid-info-item" v-if="item.training_provider_type === 'certifying_body'">
+              <label>Certifying Professional Body</label><div>{{ item.certifying_body?.name ?? "—" }}</div>
             </div>
-            <div class="info-item">
-              <label>Provider</label>
-              <div>
-                <a v-if="item.provider_url" :href="item.provider_url" target="_blank" class="link">
-                  {{ item.provider_name }}
-                </a>
-                <span v-else>{{ item.provider_name }}</span>
-              </div>
+            <div class="tid-info-item" v-else><label>Vendor</label><div>{{ item.vendor_partner?.name ?? "—" }}</div></div>
+          </div>
+
+          <template v-if="item.training_provider_type === 'vendor_oem'">
+            <p class="tid-field-group-label">Products Covered</p>
+            <div v-if="item.products && item.products.length" class="tid-chip-row">
+              <span v-for="p in item.products" :key="p.id" class="badge badge-indigo">{{ p.name }}</span>
             </div>
-            <div class="info-item">
-              <label>Cost</label>
-              <div>{{ formatCurrency(item.estimated_cost, item.cost_currency) }}</div>
+            <p v-else class="tr-empty">No products linked.</p>
+
+            <p class="tid-field-group-label">OEM Partnership Compliance</p>
+            <div v-if="item.oem_compliance" class="tid-info-grid">
+              <div class="tid-info-item"><label>Required Headcount</label><div>{{ item.oem_compliance.required_headcount }}</div></div>
+              <div class="tid-info-item" v-if="item.oem_compliance.notes"><label>Notes</label><div>{{ item.oem_compliance.notes }}</div></div>
             </div>
-            <div class="info-item">
-              <label>Type</label>
-              <div class="capitalize">{{ item.type }}</div>
-            </div>
-            <div class="info-item">
-              <label>Delivery Mode</label>
-              <div class="capitalize">{{ item.delivery }}</div>
-            </div>
-            <div class="info-item">
-              <label>Long Course</label>
-              <div>{{ item.is_long_course ? "Yes" : "No" }}</div>
-            </div>
+            <p v-else class="tr-empty">Not required for {{ item.vendor_partner?.name ?? "the vendor's" }} partnership compliance.</p>
+          </template>
+        </template>
+      </section>
+
+      <!-- Certification -->
+      <section v-else-if="activeTab === 'certification'" class="tid-section">
+        <p v-if="!item.certificate_issued" class="tr-empty">No certificate is issued on completion of this training.</p>
+        <div v-else class="tid-info-grid">
+          <div class="tid-info-item"><label>Certification Name</label><div>{{ item.certification_name || "—" }}</div></div>
+          <div class="tid-info-item"><label>Exam Code</label><div>{{ item.exam_code || "—" }}</div></div>
+          <div class="tid-info-item"><label>Exam Duration</label><div>{{ item.exam_duration || "—" }}</div></div>
+          <div class="tid-info-item"><label>Passing Score</label><div>{{ item.passing_score != null ? `${item.passing_score}%` : "—" }}</div></div>
+          <div class="tid-info-item"><label>Exam Provider</label><div>{{ item.exam_provider || "—" }}</div></div>
+          <div class="tid-info-item"><label>Validity</label><div>{{ item.validity_years ? `${item.validity_years} year(s)` : "—" }}</div></div>
+          <div class="tid-info-item"><label>Renewal Required</label><div>{{ item.renewal_required ? "Yes" : "No" }}</div></div>
+          <div class="tid-info-item"><label>CPE Credits</label><div>{{ item.cpe_credits ?? "—" }}</div></div>
+        </div>
+      </section>
+
+      <!-- Skills -->
+      <section v-else-if="activeTab === 'skills'" class="tid-section">
+        <p v-if="!item.competencies || item.competencies.length === 0" class="tr-empty">
+          No skills recorded for this training yet.
+        </p>
+        <div v-else class="tid-competency-grid">
+          <div v-for="comp in item.competencies" :key="comp.id" class="tid-competency-card">
+            <div class="tid-competency-name">{{ comp.name }}</div>
+            <div v-if="comp.category" class="badge badge-indigo">{{ comp.category }}</div>
           </div>
         </div>
+      </section>
 
-        <div v-if="item.competencies && item.competencies.length > 0" class="section">
-          <h3>Related Competencies</h3>
-          <div class="competencies-list">
-            <div v-for="comp in item.competencies" :key="comp.id" class="competency-item">
-              <div class="comp-name">{{ comp.name }}</div>
-              <div class="comp-category" v-if="comp.category">{{ comp.category }}</div>
-            </div>
-          </div>
+      <!-- Budget -->
+      <section v-else-if="activeTab === 'budget'" class="tid-section">
+        <p class="tid-field-group-label">Catalog Budget</p>
+        <div class="tid-info-grid">
+          <div class="tid-info-item"><label>Budgeted</label><div>{{ item.is_budgeted ? "Yes" : "No" }}</div></div>
+          <div class="tid-info-item" v-if="item.is_budgeted"><label>Budget Amount</label><div>{{ formatCurrency(item.budget_amount ?? 0, item.cost_currency) }}</div></div>
+          <div class="tid-info-item"><label>Estimated Cost</label><div>{{ formatCurrency(item.estimated_cost, item.cost_currency) }}</div></div>
         </div>
 
-        <div class="actions">
-          <router-link :to="{ name: 'my-training' }" class="btn btn-primary">
-            Enroll Now
-          </router-link>
+        <p class="tid-field-group-label">Budget Requests Referencing This Training</p>
+        <p v-if="budgetRequestsLoading" class="tr-loading">Loading…</p>
+        <p v-else-if="budgetRequests.length === 0" class="tr-empty">No budget requests reference this training yet.</p>
+        <div v-else class="tr-budget-table-wrap">
+          <table class="tr-budget-table">
+            <thead><tr><th>Mode</th><th>Subject</th><th>Total</th><th>Status</th><th>Submitted</th></tr></thead>
+            <tbody>
+              <tr v-for="req in budgetRequests" :key="req.id">
+                <td>{{ labelize(req.mode) }}</td>
+                <td>{{ req.mode === 'by_training' ? (req.training_item?.title ?? '—') : (req.employee?.name ?? '—') }}</td>
+                <td>{{ req.currency }} {{ Number(req.total_amount).toLocaleString() }}</td>
+                <td><span class="badge" :class="statusBadge(req.status)">{{ labelize(req.status) }}</span></td>
+                <td>{{ formatDate(req.created_at) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-      </div>
+      </section>
 
-      <!-- Metadata Tab -->
-      <div v-if="activeTab === 'metadata'" class="tab-content">
-        <div class="section">
-          <h3>System Information</h3>
-          <div class="info-grid">
-            <div class="info-item">
-              <label>UUID</label>
-              <code class="code">{{ item.uuid }}</code>
-            </div>
-            <div class="info-item">
-              <label>Item ID</label>
-              <code class="code">{{ item.id }}</code>
-            </div>
-            <div class="info-item">
-              <label>Created</label>
-              <div>{{ new Date(item.created_at).toLocaleDateString() }}</div>
-            </div>
-            <div class="info-item">
-              <label>Max Enrollments</label>
-              <div>{{ item.max_enrollments || "Unlimited" }}</div>
-            </div>
-            <div class="info-item">
-              <label>Status</label>
-              <div>{{ item.is_active ? "Published" : "Draft" }}</div>
-            </div>
-          </div>
+      <!-- Enrollments -->
+      <section v-else-if="activeTab === 'enrollments'" class="tid-section">
+        <p v-if="recordsLoading" class="tr-loading">Loading…</p>
+        <p v-else-if="records.length === 0" class="tr-empty">Nobody is enrolled in this training yet.</p>
+        <div v-else class="tr-budget-table-wrap">
+          <table class="tr-budget-table">
+            <thead><tr><th>Employee</th><th>Status</th><th>Progress</th><th>Started</th><th>Completed</th><th>Score</th><th>Certificate #</th><th>Expiry</th></tr></thead>
+            <tbody>
+              <tr v-for="r in records" :key="r.id">
+                <td>{{ r.employee?.name ?? "—" }}</td>
+                <td><span class="badge" :class="statusBadge(r.status)">{{ labelize(r.status) }}</span></td>
+                <td>{{ r.progress_percent }}%</td>
+                <td>{{ formatDate(r.started_at) }}</td>
+                <td>{{ formatDate(r.completed_at) }}</td>
+                <td>{{ r.score ?? "—" }}</td>
+                <td>{{ r.certificate_number ?? "—" }}</td>
+                <td>{{ formatDate(r.certificate_expiry_date) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-
-        <div v-if="item.tags && item.tags.length > 0" class="section">
-          <h3>Tags</h3>
-          <div class="tags-list">
-            <span v-for="tag in item.tags" :key="tag" class="tag">{{ tag }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+      </section>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.view {
-  padding: 24px;
+.tid-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 
-.view-header {
+.tid-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
 }
 
-.header-actions {
+.tid-header-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-3);
 }
 
-.btn {
-  padding: 7px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  border: 1px solid;
-  transition: opacity 0.15s;
-}
-
-.btn:hover { opacity: 0.8; }
-
-.btn-edit {
-  background: #f0f4ff;
-  color: #3366cc;
-  border-color: #c8d8f8;
-}
-
-.btn-delete {
-  background: #fff3f3;
-  color: #c0392b;
-  border-color: #f5c6c6;
-}
-
-.back-btn {
-  background: none;
-  border: none;
-  font-size: 14px;
-  color: #666;
-  cursor: pointer;
-}
-
-.alert {
-  padding: 12px 16px;
-  border-radius: 6px;
-  margin-bottom: 16px;
-}
-
-.alert-danger {
-  background-color: #fee;
-  color: #c33;
-  border: 1px solid #f99;
-}
-
-.loading {
-  text-align: center;
-  padding: 32px;
-  color: #666;
-}
-
-.detail-container {
-  max-width: 1000px;
-}
-
-.detail-header {
-  margin-bottom: 32px;
-}
-
-.title {
-  font-size: 32px;
-  font-weight: 700;
-  margin: 0 0 12px 0;
-}
-
-.meta-badges {
+.tid-title-block {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tid-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+}
+
+.tid-badges {
+  display: flex;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
-.badge {
-  font-size: 12px;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-weight: 500;
+.tid-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
 }
 
-.badge-course { background: #dbeafe; color: #0284c7; }
-.badge-workshop { background: #c7d2fe; color: #4f46e5; }
-.badge-certification { background: #d1d5db; color: #374151; }
-.badge-exam_voucher { background: #fccf8f; color: #92400e; }
-.badge-delivery { background: #e0e7ff; color: #3730a3; }
-.badge-featured { background: #fff4e6; color: #d97706; }
-.badge-active { background: #dcfce7; color: #15803d; }
-.badge-inactive { background: #f3f4f6; color: #6b7280; }
+.tid-field-group-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin: var(--space-4) 0 var(--space-2);
+}
 
-.tabs {
+.tid-field-group-label:first-child { margin-top: 0; }
+
+.tid-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: var(--line-height-base);
+}
+
+.tid-info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-4);
+}
+
+.tid-info-item label {
+  display: block;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: var(--space-1);
+}
+
+.tid-info-item div {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.tid-link {
+  color: var(--color-brand-base);
+  text-decoration: none;
+}
+
+.tid-link:hover { text-decoration: underline; }
+
+.tid-chip-row {
   display: flex;
-  gap: 0;
-  border-bottom: 1px solid #e0e0e0;
-  margin-bottom: 24px;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
 }
 
-.tab-button {
+.tid-actions {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.tid-competency-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-3);
+}
+
+.tid-competency-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.tid-competency-name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+/* ── Shared with other Training views — scoped styles don't cross
+   component boundaries, so these are redefined here. ── */
+.link-btn {
   background: none;
   border: none;
-  padding: 12px 16px;
-  font-size: 14px;
-  font-weight: 500;
-  color: #666;
+  padding: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-brand-base);
+  cursor: pointer;
+}
+
+.tr-error {
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
+.tr-loading, .tr-empty {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  padding: var(--space-4) 0;
+  text-align: center;
+}
+
+.tr-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+
+.tr-tab {
+  background: none;
+  border: none;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   margin-bottom: -1px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
-.tab-button.active {
-  color: #000;
-  border-bottom-color: #000;
+.tr-tab.active {
+  color: var(--color-brand-base);
+  border-bottom-color: var(--color-brand-base);
 }
 
-.tab-content {
-  animation: fadeIn 0.2s;
+.catalog-card-code {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-medium);
 }
 
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+.tr-budget-table-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
 }
 
-.section {
-  margin-bottom: 32px;
+.tr-budget-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
 }
 
-.section h3 {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 16px 0;
-  color: #000;
+.tr-budget-table th {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-sunken);
 }
 
-.section p {
-  line-height: 1.6;
-  color: #555;
+.tr-budget-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.info-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 20px;
+.tr-budget-table tr:last-child td {
+  border-bottom: none;
 }
 
-.info-item {
-  display: flex;
-  flex-direction: column;
+.btn-danger {
+  background: var(--color-danger-subtle);
+  color: var(--color-error);
+  border: 1px solid var(--color-error);
 }
 
-.info-item label {
-  font-size: 12px;
-  font-weight: 600;
-  color: #666;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-  letter-spacing: 0.5px;
-}
-
-.info-item div {
-  font-size: 14px;
-  color: #333;
-}
-
-.code {
-  background: #f5f5f5;
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-family: monospace;
-  font-size: 12px;
-  color: #666;
-}
-
-.link {
-  color: #0066cc;
-  text-decoration: none;
-}
-
-.link:hover {
-  text-decoration: underline;
-}
-
-.capitalize {
-  text-transform: capitalize;
-}
-
-.competencies-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 12px;
-}
-
-.competency-item {
-  background: #f9f9f9;
-  border: 1px solid #e0e0e0;
-  border-radius: 6px;
-  padding: 12px;
-}
-
-.comp-name {
-  font-weight: 500;
-  font-size: 14px;
-  margin-bottom: 4px;
-}
-
-.comp-category {
-  font-size: 12px;
-  color: #999;
-}
-
-.tags-list {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.tag {
-  background: #f0f0f0;
-  padding: 6px 10px;
-  border-radius: 4px;
-  font-size: 13px;
-}
-
-.actions {
-  margin-top: 32px;
-  padding-top: 24px;
-  border-top: 1px solid #e0e0e0;
-}
-
-.btn {
-  padding: 12px 24px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  text-decoration: none;
-  display: inline-block;
-  border: none;
-  cursor: pointer;
-}
-
-.btn-primary {
-  background: #000;
-  color: white;
-}
-
-.btn-primary:hover {
-  background: #333;
+@media (max-width: 640px) {
+  .tid-header { flex-direction: column; align-items: stretch; gap: var(--space-3); }
 }
 </style>

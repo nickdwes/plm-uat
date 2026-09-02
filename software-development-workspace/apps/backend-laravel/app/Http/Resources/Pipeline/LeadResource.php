@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources\Pipeline;
 
+use App\Support\Audit\PiiMasker;
+use App\Support\Authorization\Permission;
 use App\Support\Pipeline\LeadQualification;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -10,7 +12,13 @@ class LeadResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        // Stakeholders are the same asset as account contacts — people at a
+        // customer — so the same permission classifies them (see
+        // AccountContactResource for the masking rationale).
+        $showsContacts = $request->user()?->hasPermission(Permission::ACCOUNTS_VIEW_CONTACTS) ?? false;
+
         return [
+            'contacts_visible' => $showsContacts,
             'id'        => $this->id,
             'reference' => $this->reference,
             'name'      => $this->name,
@@ -42,7 +50,9 @@ class LeadResource extends JsonResource
 
             'stakeholders' => $this->whenLoaded('stakeholders', fn () => $this->stakeholders->map(fn ($s) => [
                 'id' => $s->id, 'name' => $s->name, 'role' => $s->role,
-                'email' => $s->email, 'phone' => $s->phone, 'influence' => $s->influence,
+                'email' => $showsContacts || $s->email === null ? $s->email : PiiMasker::maskEmail($s->email),
+                'phone' => $showsContacts || $s->phone === null ? $s->phone : PiiMasker::maskTail($s->phone),
+                'influence' => $s->influence,
             ])),
 
             'attachments' => $this->whenLoaded('attachments', fn () => $this->attachments->map(fn ($a) => [
@@ -52,14 +62,26 @@ class LeadResource extends JsonResource
             ])),
 
             /*
-             * Five graded dimensions rather than one figure. A lead at 89
-             * tells you nothing to do; 94 on timeline and 60 on solution match
-             * tells you to go and fix the solution.
+             * Five questions rather than one figure. A lead at 89 tells you
+             * nothing to do; "budget under discussion, nobody identified"
+             * tells you exactly which call to make next.
+             *
+             * The options ship with the lead rather than being hardcoded on
+             * the client, because the wording of an answer is the thing being
+             * agreed on — a screen that says "Indicated" where the server
+             * means something else is worse than one that says nothing.
              */
             'qualification' => [
                 'dimensions' => collect(LeadQualification::DIMENSIONS)
                     ->map(fn ($label, $key) => [
-                        'key' => $key, 'label' => $label, 'value' => $this->{$key},
+                        'key'      => $key,
+                        'label'    => $label,
+                        'question' => LeadQualification::QUESTIONS[$key],
+                        'options'  => LeadQualification::options($key),
+                        // The points, kept for the bar widths.
+                        'value'    => $this->{$key},
+                        // The answer that produced them, for the sentence.
+                        'answer'   => LeadQualification::answerFor($key, $this->{$key}),
                     ])->values(),
 
                 'score'        => $this->qualification_score,
@@ -68,24 +90,31 @@ class LeadResource extends JsonResource
                 // claim, and only one is worth acting on.
                 'completeness' => LeadQualification::completeness($this->resource),
                 'percentile'   => LeadQualification::percentile($this->resource),
-
-                'summary' => [
-                    'budget_availability'       => $this->budget_availability,
-                    'stakeholder_engagement'    => $this->stakeholder_engagement,
-                    'timeline_estimate'         => $this->timeline_estimate,
-                    'technical_readiness'       => $this->technical_readiness,
-                    'decision_authority_access' => $this->decision_authority_access,
-                ],
-                'notes' => $this->qualification_notes,
+                'unanswered'   => LeadQualification::unanswered($this->resource),
+                'notes'        => $this->qualification_notes,
             ],
 
             /*
              * What it became. Present rather than encoded in the status, which
              * is the whole reason the legacy's status could not be counted on.
              */
+            /*
+             * Where it got to, not just that it got somewhere. The banner used
+             * to repeat the deal's name, which on a converted lead is the lead's
+             * own title — a sentence that told the reader nothing they were not
+             * already looking at.
+             *
+             * No money here on purpose: the deal's value is behind a commercials
+             * permission on its own screen, and a banner is not the place to
+             * step around that.
+             */
             'opportunity' => $this->whenLoaded('opportunity', fn () => $this->opportunity ? [
-                'id' => $this->opportunity->id, 'reference' => $this->opportunity->reference,
-                'name' => $this->opportunity->name,
+                'id'           => $this->opportunity->id,
+                'reference'    => $this->opportunity->reference,
+                'name'         => $this->opportunity->name,
+                'status'       => $this->opportunity->status,
+                'strength'     => $this->opportunity->score,
+                'qualified_at' => $this->opportunity->qualified_at?->toIso8601String(),
             ] : null),
 
             'created_at' => $this->created_at?->toIso8601String(),

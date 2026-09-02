@@ -84,6 +84,30 @@ class TaskNotifier
         );
     }
 
+    /**
+     * A late task has climbed to somebody.
+     *
+     * The reason is in the message rather than the title, because the title is
+     * what a notification list shows and "Task overdue" beside a task name is
+     * the whole point — the days and the dates are for whoever opens it.
+     */
+    public function escalatedTask(Task $task, \App\Models\Task\TaskEscalation $escalation): void
+    {
+        $this->send(
+            $escalation->to_employee_id,
+            $task,
+            'task.escalated',
+            \App\Models\Task\TaskEscalation::TRIGGERS[$escalation->trigger] . ': ' . $task->title,
+            $escalation->detail,
+            [
+                'trigger' => $escalation->trigger,
+                'level'   => $escalation->level,
+                'task_reference' => $task->reference,
+                'project' => $task->project?->name,
+            ],
+        );
+    }
+
     /** A task is waiting on somebody's sign-off. */
     public function awaitingApproval(Task $task): void
     {

@@ -78,6 +78,22 @@ class ResolveOrganizationContext
 
         // Verify the user has access to the requested org
         if (! in_array($orgId, $user->accessibleOrganizationIds(), true)) {
+            // A user reaching for an org they do not belong to is the exact
+            // cross-tenant probe worth alerting on — recorded to both the
+            // security log file and the auditable trail, never silent.
+            \Illuminate\Support\Facades\Log::channel('security')->warning('Cross-tenant access denied', [
+                'user_id'        => $user->id,
+                'requested_org'  => $orgId,
+                'ip'             => $request->ip(),
+                'path'           => $request->path(),
+            ]);
+            \App\Services\Audit\AuditLogger::record(
+                action: 'access_denied',
+                description: "Attempted access to organisation #{$orgId} without membership",
+                organizationId: (int) $orgId,
+                userId: $user->id, actorName: $user->name,
+            );
+
             return response()->json([
                 'error'   => 'organization_access_denied',
                 'message' => 'You do not have access to the requested organization.',

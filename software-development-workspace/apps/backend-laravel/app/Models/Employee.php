@@ -23,7 +23,7 @@ use App\Models\EmployeeVehicle;
  */
 class Employee extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
         // Where pay actually goes. Left out of $fillable these are silently
@@ -134,6 +134,16 @@ class Employee extends Model
     public function getFullNameAttribute(): string
     {
         return trim("{$this->first_name} {$this->last_name}");
+    }
+
+    /**
+     * How this record is named in the audit trail — the employee number, not
+     * the person's name. The audit log identifies people by a stable
+     * reference so it does not itself become a directory of who-is-who.
+     */
+    public function auditName(): string
+    {
+        return 'Employee ' . ($this->employee_number ?? "#{$this->getKey()}");
     }
 
     public function getDisplayNameAttribute(): string
@@ -295,6 +305,30 @@ class Employee extends Model
                       ->orWhereDate('employee_organization_map.effective_to', '>=', now()->toDateString()))
                   ->whereDate('employee_organization_map.effective_from', '<=', now()->toDateString()));
         });
+    }
+
+    /**
+     * Whether this one record belongs to an organisation — the single-row form
+     * of scopeForOrganization, for the authorization policy. "Belongs to" is
+     * the same two facts: employed by it (primary), or actively placed in it
+     * (an in-window secondment map row). A host org must be able to open a
+     * secondee it lists, but an unrelated org must not — so this cannot be a
+     * bare `primary_organization_id` comparison.
+     */
+    public function isMemberOfOrganization(int $organizationId): bool
+    {
+        if ((int) $this->primary_organization_id === $organizationId) {
+            return true;
+        }
+
+        return $this->organizations()
+            ->where('organization_id', $organizationId)
+            ->wherePivot('is_active', true)
+            ->where(fn ($w) => $w
+                ->whereNull('employee_organization_map.effective_to')
+                ->orWhereDate('employee_organization_map.effective_to', '>=', now()->toDateString()))
+            ->whereDate('employee_organization_map.effective_from', '<=', now()->toDateString())
+            ->exists();
     }
 
     /**

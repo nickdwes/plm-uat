@@ -341,4 +341,134 @@ class PolicyCoverageTest extends TestCase
         $this->assertContains('vendors.view', $all);
         $this->assertContains('vendors.manage', $all);
     }
+
+    /**
+     * The ratchet: every authenticated API route's controller method carries
+     * an authorization construct — a policy call, a permission check, an
+     * abort guard, or self-scoping on the caller's own identity.
+     *
+     * This is what turned the increment-1 sweep (Benefits: seventeen open
+     * methods) into a permanent invariant: the next unguarded endpoint fails
+     * this test on the day it is written. Recognised constructs are checked
+     * in the method body, then one level into same-class helpers it calls
+     * (the guard()/limitToOwn() house pattern), then in the authorize() body
+     * of any FormRequest it type-hints.
+     *
+     * EXEMPT lists routes whose protection genuinely lives elsewhere, each
+     * with the reason. Additions to it should be rare and argued.
+     */
+    public function test_every_authenticated_route_carries_an_authorization_construct(): void
+    {
+        $construct = '/\$this->authorize|->authorizeResource\(|abort_unless\(|abort_if\(|hasPermission\(|hasAnyPermission\(|Gate::|->can\(|->canAny\(|->cannot\(|auth\(\)->id\(\)|->user\(\)->id\b|->user\(\)->getKey\(\)|employeeId\(\)|->user\(\)->employee\b|accessibleOrganizationIds\(|->tokenCan\(|scopeForPermission\(/';
+
+        /*
+         * Routes whose protection genuinely lives elsewhere. Each entry is a
+         * decision, not an oversight — additions should be rare and argued.
+         */
+        $exempt = [
+            // Ending your own session needs no permission.
+            'Auth\\AuthenticatedSessionController@destroy',
+            // Everyone may read their own rights; the list is per-caller by construction.
+            'Authorization\\RoleController@myPermissions',
+            // A pure day-count calculator over a leave type and dates — reads nobody's data.
+            'Leave\\LeaveController@calculate',
+            // Self-scoped: the caller's own approval queue, filtered on their id.
+            'Training\\TrainingAssignmentController@myPending',
+            // A public reference catalogue: names of certifying bodies, nothing else.
+            'Training\\TrainingCertifyingBodyController@index',
+        ];
+
+        $offenders = [];
+        $seen = [];
+
+        foreach (app('router')->getRoutes() as $route) {
+            if (! in_array('auth:sanctum', $route->gatherMiddleware(), true)) {
+                continue;
+            }
+
+            $action = $route->getActionName();
+
+            if (! str_contains($action, '@')) {
+                continue; // the lone /user closure returns the caller themself
+            }
+
+            [$class, $method] = explode('@', $action);
+            $key = str_replace('App\\Http\\Controllers\\', '', $action);
+
+            if (isset($seen[$key]) || ! method_exists($class, $method)) {
+                continue;
+            }
+            $seen[$key] = true;
+
+            if ($this->methodAuthorizes($class, $method, $construct)) {
+                continue;
+            }
+
+            if (! in_array($key, $exempt, true)) {
+                $offenders[] = $key;
+            }
+        }
+
+        sort($offenders);
+
+        $this->assertSame([], $offenders,
+            "These authenticated endpoints carry no authorization construct at all:\n  "
+                . implode("\n  ", $offenders));
+    }
+
+    private function methodAuthorizes(string $class, string $method, string $construct): bool
+    {
+        $body = $this->methodBody($class, $method);
+
+        if ($body === null) {
+            return false;
+        }
+
+        if (preg_match($construct, $body)) {
+            return true;
+        }
+
+        // One level into same-class helpers — the guard()/limitToOwn() pattern.
+        if (preg_match_all('/\$this->([a-zA-Z0-9_]+)\(/', $body, $m)) {
+            foreach (array_unique($m[1]) as $helper) {
+                if ($helper !== $method && method_exists($class, $helper)) {
+                    $helperBody = $this->methodBody($class, $helper);
+                    if ($helperBody !== null && preg_match($construct, $helperBody)) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // A FormRequest whose authorize() genuinely decides also counts.
+        $reflection = new \ReflectionMethod($class, $method);
+        foreach ($reflection->getParameters() as $parameter) {
+            $type = $parameter->getType();
+            if ($type instanceof \ReflectionNamedType && ! $type->isBuiltin()
+                && is_subclass_of($type->getName(), \Illuminate\Foundation\Http\FormRequest::class)
+                && method_exists($type->getName(), 'authorize')) {
+                $authBody = $this->methodBody($type->getName(), 'authorize');
+                if ($authBody !== null && preg_match($construct, $authBody)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private function methodBody(string $class, string $method): ?string
+    {
+        $reflection = new \ReflectionMethod($class, $method);
+        $file = $reflection->getFileName();
+
+        if ($file === false || $reflection->getStartLine() === false) {
+            return null;
+        }
+
+        $lines = file($file);
+
+        return implode('', array_slice($lines, $reflection->getStartLine() - 1,
+            $reflection->getEndLine() - $reflection->getStartLine() + 1));
+    }
 }

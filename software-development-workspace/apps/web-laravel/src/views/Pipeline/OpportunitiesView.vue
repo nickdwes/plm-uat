@@ -26,6 +26,17 @@ interface Opportunity {
 }
 
 const router  = useRouter();
+
+/**
+ * Open the record. The whole row, because a "View" button in the last column
+ * sits past the right edge of most screens on a table this wide.
+ */
+function openRow(id: number, event: MouseEvent) {
+  const el = event.target as HTMLElement | null;
+  if (el?.closest("button, a, input, select, label")) return;
+
+  router.push({ name: "opportunity", params: { id } });
+}
 const rows    = ref<Opportunity[]>([]);
 const loading = ref(true);
 const search  = ref("");
@@ -108,7 +119,7 @@ onMounted(load);
               Nothing here. A deal starts life as a lead and is converted from it.
             </td>
           </tr>
-          <tr v-for="o in rows" :key="o.id">
+          <tr v-for="o in rows" :key="o.id" class="op-clickable" @click="openRow(o.id, $event)">
             <td class="ov-ref">{{ o.reference ?? "—" }}</td>
             <td class="ov-name">{{ o.name }}</td>
             <td>
@@ -226,4 +237,6 @@ onMounted(load);
 .link-btn { @apply cursor-pointer border-none bg-transparent p-0; font-family: inherit; font-size: var(--text-sm-size); color: var(--color-brand-on-surface); text-align: left; }
 .link-btn:hover { @apply underline; }
 
+.op-clickable { @apply cursor-pointer; transition: background-color 120ms ease; }
+.op-clickable:hover { background: var(--color-neutral-100); }
 </style>

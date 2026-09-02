@@ -28,6 +28,17 @@ interface Row {
 }
 
 const router  = useRouter();
+
+/**
+ * Open the record. The whole row, because a "View" button in the last column
+ * sits past the right edge of most screens on a table this wide.
+ */
+function openRow(id: number, event: MouseEvent) {
+  const el = event.target as HTMLElement | null;
+  if (el?.closest("button, a, input, select, label")) return;
+
+  router.push({ name: "delivery", params: { id } });
+}
 const rows    = ref<Row[]>([]);
 const loading = ref(true);
 const error   = ref<string | null>(null);
@@ -120,7 +131,7 @@ onMounted(load);
           <tr v-if="filtered.length === 0">
             <td colspan="7" class="dl-none">Nothing matches that search.</td>
           </tr>
-          <tr v-for="r in filtered" :key="r.id">
+          <tr v-for="r in filtered" :key="r.id" class="dl-clickable" @click="openRow(r.id, $event)">
             <td class="dl-ref">{{ r.reference ?? "—" }}</td>
             <td>{{ r.destination?.name ?? "—" }}</td>
             <td>{{ r.departure_date ?? "—" }}</td>
@@ -204,4 +215,6 @@ onMounted(load);
   background: var(--color-danger-subtle); color: var(--color-danger-text);
   margin-bottom: var(--space-4);
 }
+.dl-clickable { @apply cursor-pointer; transition: background-color 120ms ease; }
+.dl-clickable:hover { background: var(--color-neutral-100); }
 </style>

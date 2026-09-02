@@ -9,5 +9,13 @@
     "**/dist": true,
     "**/build": true,
     "**/.venv": true
-  }
+  },
+
+  // Tailwind's at-rules (@apply, @reference, @tailwind, @variants, @screen)
+  // are unknown to VS Code's built-in CSS linter, which flags them as errors.
+  // The Tailwind compiler understands them and the build is unaffected, so
+  // stop the linter from reporting unknown at-rules.
+  "css.lint.unknownAtRules": "ignore",
+  "scss.lint.unknownAtRules": "ignore",
+  "less.lint.unknownAtRules": "ignore"
 }

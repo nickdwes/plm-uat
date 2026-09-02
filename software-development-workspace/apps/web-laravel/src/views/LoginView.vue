@@ -53,7 +53,7 @@ async function login(): Promise<void> {
     });
     // Decide where the session lives before writing it.
     setPersistence(remember.value);
-    setAuth(res.user, res.organizations, res.token);
+    setAuth(res.user, res.organizations, res.token, res.permissions);
     void router.push({ name: "dashboard" });
   } catch (err) {
     if (err instanceof ApiError) {

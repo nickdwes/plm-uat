@@ -4,11 +4,9 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Support\Authorization\Permission;
-use App\Support\Authorization\ResourceAttributes;
 use App\Support\Authorization\Scope;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -18,7 +16,7 @@ use Laravel\Sanctum\HasApiTokens;
 class User extends Authenticatable
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasApiTokens, HasFactory, Notifiable;
+    use HasApiTokens, HasFactory, Notifiable, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
         'name',
@@ -31,7 +29,54 @@ class User extends Authenticatable
         // a disable that appears to succeed and does nothing.
         'account_status',
         'status_changed_at',
+
+        // ── Dual-path authentication ──────────────────────────────────────
+        'alt_username', 'auth_method', 'otp_preference',
+        'discovery_status', 'account_enabled', 'last_discovery_at', 'discovery_error',
+        'totp_secret', 'totp_confirmed_at', 'recovery_codes',
+        'totp_last_step', 'totp_failures', 'totp_locked_until',
     ];
+
+    /*
+     * Which way in this person has.
+     *
+     * Not a preference — a fact about the tenant, discovered by asking Graph.
+     * UNRESOLVED means nobody has asked yet, which is different from asking
+     * and being told no.
+     */
+    public const AUTH_SSO         = 'SSO';
+    public const AUTH_LOCAL_TOTP  = 'LOCAL_TOTP';
+    public const AUTH_EMAIL_OTP   = 'EMAIL_OTP';
+    public const AUTH_UNRESOLVED  = 'UNRESOLVED';
+
+    public const AUTH_METHODS = [self::AUTH_SSO, self::AUTH_LOCAL_TOTP, self::AUTH_EMAIL_OTP, self::AUTH_UNRESOLVED];
+
+    /** What Graph said, kept apart from what we concluded from it. */
+    public const DISCOVERY_NEVER    = 'never';
+    public const DISCOVERY_ENABLED  = 'found_enabled';
+    public const DISCOVERY_DISABLED = 'found_disabled';
+    public const DISCOVERY_MISSING  = 'not_found';
+    public const DISCOVERY_ERROR    = 'error';
+
+    public const OTP_EMAIL         = 'EMAIL';
+    public const OTP_AUTHENTICATOR = 'AUTHENTICATOR';
+
+    /** Enrolled, as opposed to part-way through enrolling. */
+    public function hasConfirmedAuthenticator(): bool
+    {
+        return $this->totp_secret !== null && $this->totp_confirmed_at !== null;
+    }
+
+    /**
+     * Signed up to a local method but not yet able to use it.
+     *
+     * A secret exists from the moment the QR is drawn and must not
+     * authenticate anybody until they have proved they can read it.
+     */
+    public function isPendingEnrollment(): bool
+    {
+        return $this->auth_method === self::AUTH_LOCAL_TOTP && ! $this->hasConfirmedAuthenticator();
+    }
 
     // ── Relationships ─────────────────────────────────────────────────────────
 
@@ -246,6 +291,33 @@ class User extends Authenticatable
         return array_values(array_unique($granted));
     }
 
+    /**
+     * The concrete permissions this user actually holds — the client's copy.
+     *
+     * Every string in the catalogue, kept where hasPermission() passes. That
+     * routes through the real engine — denies first, then per-assignment
+     * exclusion-beats-wildcard — so the list handed to the browser can never
+     * disagree with what the API will enforce. permissionsFor() above cannot
+     * be used for this: it returns the raw grants, and a raw `payroll.*`
+     * alongside an exclusion of `payroll.approve` would read client-side as
+     * approvable.
+     *
+     * Wildcards are expanded here, on the server, so the client needs no
+     * matcher at all — a Set lookup is the whole of its logic.
+     *
+     * ~141 checks against per-request memoized assignments: cheap, and the
+     * price of never maintaining two matchers.
+     *
+     * @return string[]
+     */
+    public function effectivePermissionsFor(?int $organizationId = null): array
+    {
+        return array_values(array_filter(
+            \App\Support\Authorization\Permission::all(),
+            fn (string $permission) => $this->scopeForPermission($permission, $organizationId) !== null,
+        ));
+    }
+
     /** Does an assignment apply in the organization being asked about? */
     protected function assignmentAppliesIn(array $assignment, ?int $organizationId): bool
     {
@@ -391,6 +463,31 @@ class User extends Authenticatable
         return ($this->account_status ?? self::STATUS_ACTIVE) === self::STATUS_ACTIVE;
     }
 
+    /**
+     * May this account sign in at all?
+     *
+     * Deliberately **not** `isAccountActive()`. That one is strict — only
+     * `active` passes — and 88 of the 89 logins here are `pending`, set by the
+     * staff importer and never cleared. Gating sign-in on it would lock out
+     * the entire organisation.
+     *
+     * What must be refused is a decision somebody made: `suspended` and
+     * `disabled`. `pending` is the absence of a decision, and the absence of a
+     * decision is not grounds to turn somebody away.
+     *
+     * Until this existed, nothing read `account_status` on the way in — so
+     * disabling an account changed a column and nothing else, and the person
+     * carried on signing in.
+     */
+    public function canSignIn(): bool
+    {
+        return ! in_array(
+            $this->account_status ?? self::STATUS_ACTIVE,
+            [self::STATUS_SUSPENDED, self::STATUS_DISABLED],
+            true,
+        );
+    }
+
     public const STATUS_PENDING   = 'pending';
     public const STATUS_ACTIVE    = 'active';
     public const STATUS_SUSPENDED = 'suspended';
@@ -435,18 +532,6 @@ class User extends Authenticatable
     /** @var int|null|false false means "not yet resolved" */
     protected int|null|false $cachedEmployeeId = false;
 
-    /** Is this record the user's own? */
-    public function owns(?Model $resource): bool
-    {
-        return ResourceAttributes::isOwnedBy($this, $resource);
-    }
-
-    /** Is this employee in the user's reporting line, at any depth? */
-    public function manages(?Model $employee): bool
-    {
-        return ResourceAttributes::reportsTo($this, $employee);
-    }
-
     /**
      * The attributes that should be hidden for serialization.
      *
@@ -455,6 +540,10 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        // A shared secret and a set of one-shot passwords. Neither belongs in
+        // any serialised user, including the one the client already holds.
+        'totp_secret',
+        'recovery_codes',
     ];
 
     protected function casts(): array
@@ -462,6 +551,14 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password'          => 'hashed',
+            // Encrypted at rest: a stolen database should not be a stolen
+            // second factor.
+            'totp_secret'       => 'encrypted',
+            'recovery_codes'    => 'array',
+            'totp_confirmed_at' => 'datetime',
+            'totp_locked_until' => 'datetime',
+            'last_discovery_at' => 'datetime',
+            'account_enabled'   => 'boolean',
         ];
     }
 }

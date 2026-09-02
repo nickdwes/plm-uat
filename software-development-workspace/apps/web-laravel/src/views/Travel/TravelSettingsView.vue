@@ -854,7 +854,7 @@ onMounted(load);
   color: var(--color-brand-on-surface);
 }
 .link-btn:hover { @apply underline; }
-.link-danger { color: var(--color-danger-base, var(--color-text-muted)); }
+.link-danger { color: var(--color-error); }
 
 .btn-primary {
   @apply cursor-pointer border-none;

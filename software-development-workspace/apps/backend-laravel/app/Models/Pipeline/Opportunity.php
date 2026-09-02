@@ -39,8 +39,7 @@ class Opportunity extends Model
 
         // Fit, copied from the lead on conversion and editable afterwards.
         'fit_company', 'fit_budget', 'fit_solution', 'fit_timeline', 'fit_stakeholder',
-        'budget_availability', 'stakeholder_engagement', 'timeline_estimate',
-        'technical_readiness', 'decision_authority_access', 'qualified_at',
+        'qualified_at',
 
         'confirmed_budget', 'budget_confirmed_at', 'budget_confirmed_by',
     ];

@@ -129,6 +129,13 @@ onMounted(() => load());
             </span>
             <span v-if="record.completed_at">Completed: {{ formatDate(record.completed_at) }}</span>
           </div>
+          <div v-if="record.score != null || record.certificate_number" class="summary-info">
+            <span v-if="record.score != null">Score: {{ record.score }}%</span>
+            <span v-if="record.certificate_number">Certificate #: {{ record.certificate_number }}</span>
+            <span v-if="record.certificate_expiry_date" :class="{ overdue: record.certificate_expiry_date < new Date().toISOString() }">
+              Expires: {{ formatDate(record.certificate_expiry_date) }}
+            </span>
+          </div>
         </div>
 
         <!-- Progress circle -->
@@ -200,12 +207,22 @@ onMounted(() => load());
 
       <!-- Evidence Files tab -->
       <div v-if="activeTab === 'evidence'" class="tab-content">
-        <EvidenceUploadField
-          v-if="record.status !== 'withdrawn'"
-          :record-id="record.id"
-          :existing-files="record.evidence_files ?? []"
-          @uploaded="load"
-        />
+        <template v-if="record.status !== 'withdrawn'">
+          <p class="evidence-group-label">Certificate</p>
+          <EvidenceUploadField
+            :record-id="record.id"
+            :existing-files="record.evidence_files ?? []"
+            category="certificate"
+            @uploaded="load"
+          />
+          <p class="evidence-group-label">Transcript</p>
+          <EvidenceUploadField
+            :record-id="record.id"
+            :existing-files="record.evidence_files ?? []"
+            category="transcript"
+            @uploaded="load"
+          />
+        </template>
         <div v-else class="empty-state"><p>Cannot upload evidence for a withdrawn enrollment.</p></div>
       </div>
 
@@ -339,6 +356,16 @@ onMounted(() => load());
 }
 
 .comp-label { font-size: 12px; color: #666; font-weight: 500; }
+
+.evidence-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #667085;
+  margin: 20px 0 8px;
+}
+.evidence-group-label:first-child { margin-top: 0; }
 
 .comp-chip {
   background: #e0e7ff;

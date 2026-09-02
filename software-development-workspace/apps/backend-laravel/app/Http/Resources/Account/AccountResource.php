@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Account;
 
+use App\Support\Authorization\Permission;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,6 +15,7 @@ class AccountResource extends JsonResource
             'reference'         => $this->reference,
             'name'              => $this->name,
             'initials'          => $this->initials,
+            'logo_url'          => $this->logoUrl(),
             'status'            => $this->status,
             'country'           => $this->country,
             'city'              => $this->city,
@@ -87,6 +89,32 @@ class AccountResource extends JsonResource
                 'employee' => ['id' => $m->employee?->id, 'name' => $m->employee?->full_name],
                 'role'     => $m->role,
             ])),
+
+            /*
+             * Whether the reader is watching this one. Per user, so it is
+             * resolved against the request rather than stored on the record.
+             */
+            /*
+             * List-only figures. `whenNotNull`/`when` on the counted attribute
+             * so the detail payload, which never asks for them, is unchanged.
+             *
+             * Money is behind the commercials permission, the counts are not:
+             * "three deals in play" is account management; what they are worth
+             * is commercial, and aggregating it does not make it less so.
+             */
+            $this->mergeWhen($this->open_deals_count !== null, fn () => [
+                'open_deals'       => (int) $this->open_deals_count,
+                'projects'         => (int) $this->projects_count,
+                'open_tickets'     => (int) $this->open_tickets_count,
+                'active_contracts' => (int) $this->active_contracts_count,
+                'open_pipeline'    => $request->user()?->hasPermission(Permission::PIPELINE_VIEW_COMMERCIALS)
+                    ? (float) ($this->open_pipeline_value ?? 0)
+                    : null,
+            ]),
+
+            'is_following' => $request->user()
+                ? $this->followers()->whereKey($request->user()->id)->exists()
+                : false,
 
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),

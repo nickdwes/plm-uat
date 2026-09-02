@@ -13,6 +13,43 @@ class StoreOpportunityRequest extends FormRequest
         return true;
     }
 
+    /**
+     * Converting a lead needs no form.
+     *
+     * Qualifying a lead is what turns it into a deal, and that is one gesture
+     * on the lead's own screen — not an invitation to retype the customer's
+     * name underneath their name. The service already falls back to the lead
+     * for both, but the rules below run first and would have refused before it
+     * ever got the chance, so the defaults are filled in here.
+     *
+     * Only for the convert route. Creating a deal from nothing still has to
+     * say what it is and who it is with.
+     */
+    protected function prepareForValidation(): void
+    {
+        $lead = $this->route('lead');
+
+        if (! $lead) {
+            return;
+        }
+
+        $this->merge([
+            'name'       => $this->input('name') ?: $lead->name,
+            'account_id' => $this->input('account_id') ?: $lead->account_id,
+        ]);
+    }
+
+    /**
+     * A lead with no customer on it cannot convert, and "the account id field
+     * is required" is not what to tell somebody who never saw a field.
+     */
+    public function messages(): array
+    {
+        return $this->route('lead')
+            ? ['account_id.required' => 'Name the customer on this lead before qualifying it — a deal has to be with somebody.']
+            : [];
+    }
+
     public function rules(): array
     {
         $orgId = app('current.organization_id');

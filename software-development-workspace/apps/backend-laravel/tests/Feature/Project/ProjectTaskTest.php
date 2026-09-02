@@ -95,6 +95,22 @@ class ProjectTaskTest extends TestCase
 
     // ── Tasks and sub-tasks ───────────────────────────────────────────────
 
+    /**
+     * A task cannot be finished until somebody has said what came of it. These
+     * tests are about the stamps, the unblocking and the timeline, so the
+     * summary is put on the record first and the completion is the subject.
+     */
+    private function closeOff(Task $task): void
+    {
+        \App\Models\Task\TaskClosure::create([
+            'organization_id' => $task->organization_id,
+            'task_id'         => $task->id,
+            'work_completed'  => 'Done.', 'deliverables' => 'Handed over.',
+            'challenges'      => 'None.',  'outcomes'     => 'Working.',
+            'closed_by'       => null,     'closed_at'    => now(),
+        ]);
+    }
+
     public function test_a_task_is_given_a_reference(): void
     {
         $this->editor();
@@ -103,6 +119,179 @@ class ProjectTaskTest extends TestCase
 
         $this->assertMatchesRegularExpression('/^TK-\d+$/', $res->json('data.reference'));
         $this->assertSame('todo', $res->json('data.status'));
+    }
+
+    public function test_requirements_and_logistics_are_captured_with_the_task(): void
+    {
+        $this->editor();
+
+        $res = $this->postJson($this->url('/tasks'), [
+            'title'     => 'Site survey in Mombasa',
+            'logistics' => [
+                'needs_travel' => true, 'needs_accommodation' => true, 'needs_asset' => true,
+                'needs_software' => true, 'needs_professional_services' => true,
+                'details' => 'Two engineers, overnight', 'requires_approval' => true,
+            ],
+        ])->assertCreated();
+
+        $this->assertTrue($res->json('data.logistics.needs_travel'));
+        $this->assertTrue($res->json('data.logistics.needs_software'));
+        $this->assertTrue($res->json('data.logistics.needs_any'));
+        $this->assertTrue($res->json('data.logistics.requires_approval'));
+        $this->assertDatabaseHas('task_logistics', [
+            'task_id' => $res->json('data.id'), 'needs_asset' => true, 'needs_professional_services' => true,
+        ]);
+    }
+
+    public function test_flags_generate_tracked_prerequisites_with_an_inventory_read(): void
+    {
+        $this->editor();
+
+        $res = $this->postJson($this->url('/tasks'), [
+            'title'     => 'Deploy on site',
+            'started_on'=> '2026-10-10',
+            'logistics' => ['needs_travel' => true, 'needs_asset' => true, 'needs_external_vendors' => true, 'requires_approval' => true],
+        ])->assertCreated();
+
+        $prereqs = collect($res->json('data.prerequisites'));
+        $this->assertEqualsCanonicalizing(
+            ['travel', 'asset', 'external_vendor', 'approval'],
+            $prereqs->pluck('type')->all(),
+        );
+
+        // Travel carries a due date 5 days before the start; asset carries the
+        // inventory read (nothing in stock in the test db → procurement needed).
+        $this->assertSame('2026-10-05', $prereqs->firstWhere('type', 'travel')['due_on']);
+        $this->assertTrue($prereqs->firstWhere('type', 'asset')['procurement_needed']);
+    }
+
+    public function test_clearing_a_flag_drops_its_open_prerequisite(): void
+    {
+        $this->editor();
+
+        $id = $this->postJson($this->url('/tasks'), [
+            'title' => 'X', 'logistics' => ['needs_travel' => true, 'needs_asset' => true],
+        ])->json('data.id');
+
+        $updated = $this->putJson($this->url("/tasks/{$id}"), [
+            'title' => 'X', 'logistics' => ['needs_travel' => true, 'needs_asset' => false],
+        ])->assertOk();
+
+        $this->assertEqualsCanonicalizing(['travel'], collect($updated->json('data.prerequisites'))->pluck('type')->all());
+    }
+
+    public function test_a_prerequisite_status_can_be_advanced(): void
+    {
+        $this->editor();
+
+        $res = $this->postJson($this->url('/tasks'), [
+            'title' => 'X', 'logistics' => ['needs_travel' => true],
+        ])->assertCreated();
+        $taskId   = $res->json('data.id');
+        $prereqId = $res->json('data.prerequisites.0.id');
+
+        $this->putJson($this->url("/tasks/{$taskId}/prerequisites/{$prereqId}"), ['status' => 'done'])
+            ->assertOk()->assertJsonPath('data.status', 'done');
+
+        $this->assertDatabaseHas('task_prerequisites', ['id' => $prereqId, 'status' => 'done']);
+    }
+
+    public function test_a_task_with_no_requirements_has_none_flagged(): void
+    {
+        $this->editor();
+
+        $this->postJson($this->url('/tasks'), [
+            'title'     => 'Write the report',
+            'logistics' => ['needs_travel' => false, 'needs_procurement' => false],
+        ])->assertCreated()
+          ->assertJsonPath('data.logistics.needs_any', false);
+    }
+
+    public function test_requirements_can_be_filtered_for_planning(): void
+    {
+        $this->editor();
+
+        $this->postJson($this->url('/tasks'), [
+            'title' => 'Travel task', 'logistics' => ['needs_travel' => true],
+        ])->assertCreated();
+        $this->postJson($this->url('/tasks'), ['title' => 'Desk task'])->assertCreated();
+
+        $filtered = $this->getJson($this->url('/tasks') . '&requires=needs_travel')->assertOk()->json('data');
+        $this->assertCount(1, $filtered);
+        $this->assertSame('Travel task', $filtered[0]['title']);
+    }
+
+    public function test_the_enriched_creator_sets_dates_phase_assignees_and_dependencies(): void
+    {
+        $this->editor();
+
+        $phase = \App\Models\Project\ProjectPhase::create([
+            'organization_id' => $this->org->id, 'project_id' => $this->project->id,
+            'name' => 'Design', 'slug' => 'design', 'position' => 1,
+        ]);
+        $primary   = $this->employee();
+        $secondary = $this->employee();
+        $prereq    = $this->task(['title' => 'Kick-off']);
+
+        $res = $this->postJson($this->url('/tasks'), [
+            'title'       => 'Draw the SOW',
+            'started_on'  => '2026-02-01',
+            'deadline'    => '2026-02-14',
+            'phase_id'    => $phase->id,
+            'assignees'   => [
+                ['employee_id' => $primary->id,   'capacity' => 'assignee'],
+                ['employee_id' => $secondary->id, 'capacity' => 'assisting'],
+            ],
+            'depends_on_task_ids' => [$prereq->id],
+        ])->assertCreated();
+
+        $this->assertSame('2026-02-01', $res->json('data.started_on'));
+        $this->assertSame('2026-02-14', $res->json('data.deadline'));
+        $this->assertSame($phase->id, $res->json('data.phase_id'));
+        $this->assertCount(1, $res->json('data.assignees'));   // primary responsibility
+        $this->assertCount(1, $res->json('data.assisting'));   // secondary responsibility
+        $this->assertSame($prereq->id, $res->json('data.dependencies.0.id'));
+    }
+
+    public function test_a_task_cannot_close_before_it_starts(): void
+    {
+        $this->editor();
+
+        $this->postJson($this->url('/tasks'), [
+            'title' => 'Backwards', 'started_on' => '2026-03-10', 'deadline' => '2026-03-01',
+        ])->assertStatus(422)->assertJsonValidationErrors('deadline');
+    }
+
+    public function test_the_standard_pm_activities_are_seeded_and_attached_to_phases(): void
+    {
+        $this->editor();
+        $phase = \App\Models\Project\ProjectPhase::create([
+            'organization_id' => $this->org->id, 'project_id' => $this->project->id,
+            'name' => 'Preparation', 'slug' => 'preparation', 'position' => 0,
+        ]);
+
+        $res = $this->postJson($this->url('/tasks/generate-pm-activities'))->assertOk();
+
+        $count = \App\Models\Task\Task::where('project_id', $this->project->id)->count();
+        $this->assertGreaterThan(15, $count);          // the full checklist
+        $this->assertSame($count, $res->json('created'));
+
+        // "Project kick-off meeting" lands under the Preparation phase.
+        $kickoff = \App\Models\Task\Task::where('project_id', $this->project->id)
+            ->where('title', 'Project kick-off meeting')->first();
+        $this->assertSame($phase->id, $kickoff->phase_id);
+    }
+
+    public function test_generating_pm_activities_is_idempotent(): void
+    {
+        $this->editor();
+
+        $first  = $this->postJson($this->url('/tasks/generate-pm-activities'))->assertOk()->json('created');
+        $second = $this->postJson($this->url('/tasks/generate-pm-activities'))->assertOk()->json('created');
+
+        $this->assertGreaterThan(0, $first);
+        $this->assertSame(0, $second); // nothing added the second time
+        $this->assertSame($first, \App\Models\Task\Task::where('project_id', $this->project->id)->count());
     }
 
     public function test_a_sub_task_is_a_task_and_carries_everything_one_does(): void
@@ -168,6 +357,7 @@ class ProjectTaskTest extends TestCase
         $this->editor();
         $t = $this->task();
 
+        $this->closeOff($t);
         $res = $this->putJson($this->url("/tasks/{$t->id}"), [
             'title' => $t->title, 'status' => 'completed',
         ])->assertOk();
@@ -268,6 +458,7 @@ class ProjectTaskTest extends TestCase
         $b = $this->task(['title' => 'B']);
 
         $this->postJson($this->url("/tasks/{$b->id}/dependencies"), ['depends_on_task_id' => $a->id])->assertOk();
+        $this->closeOff($a);
         $this->putJson($this->url("/tasks/{$a->id}"), ['title' => 'A', 'status' => 'completed'])->assertOk();
 
         $this->getJson($this->url("/tasks/{$b->id}"))->assertOk()->assertJsonPath('data.is_blocked', false);
@@ -395,6 +586,7 @@ class ProjectTaskTest extends TestCase
         $id = $this->postJson($this->url('/tasks'), ['title' => 'Prototype the screens'])
             ->assertCreated()->json('data.id');
 
+        $this->closeOff(Task::findOrFail($id));
         $this->putJson($this->url("/tasks/{$id}"), [
             'title' => 'Prototype the screens', 'status' => 'completed',
         ])->assertOk();

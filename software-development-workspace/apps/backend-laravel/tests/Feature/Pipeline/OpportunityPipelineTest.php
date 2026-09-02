@@ -248,12 +248,33 @@ class OpportunityPipelineTest extends TestCase
 
     // ── Qualification ─────────────────────────────────────────────────────
 
+    public function test_a_deal_with_no_phase_is_open_on_the_list_as_well_as_the_model(): void
+    {
+        // `is_open` is `outcome === null`, and a missing phase has no outcome —
+        // so the model calls a phaseless deal open. The list asked `whereHas`,
+        // which needs the phase to exist, and answered the opposite. All 130
+        // imported deals were in that state: the customer page reported
+        // "17 active deals" while the deals list reported none.
+        $this->actor([Permission::PIPELINE_VIEW]);
+
+        $deal = $this->deal();
+        $deal->update(['opportunity_phase_id' => null]);
+
+        $ids = collect($this->getJson("/api/v1/opportunities?state=open&org={$this->org->slug}")
+            ->assertOk()->json('data'))->pluck('id');
+
+        $this->assertTrue($ids->contains($deal->id));
+    }
+
     public function test_a_deal_cannot_be_marked_qualified_against_nothing(): void
     {
         $this->actor([Permission::PIPELINE_VIEW, Permission::PIPELINE_UPDATE]);
 
-        $this->postJson($this->url($this->deal(), '/mark-qualified'))
+        $res = $this->postJson($this->url($this->deal(), '/mark-qualified'))
             ->assertStatus(422)->assertJsonValidationErrors('qualification');
+
+        // A control that blocks work should say what unblocks it.
+        $this->assertStringContainsString('Budget Alignment', $res->json('errors.qualification.0'));
     }
 
     public function test_a_deal_can_be_marked_qualified_once_assessed(): void
@@ -262,8 +283,8 @@ class OpportunityPipelineTest extends TestCase
         $deal = $this->deal();
 
         $this->postJson($this->url($deal, '/qualify'), [
-            'fit_company' => 90, 'fit_budget' => 70, 'fit_solution' => 60,
-            'fit_timeline' => 94, 'fit_stakeholder' => 84,
+            'fit_company' => 'core', 'fit_budget' => 'indicated', 'fit_solution' => 'configured',
+            'fit_timeline' => 'this_quarter', 'fit_stakeholder' => 'sponsored',
         ])->assertOk();
 
         $res = $this->postJson($this->url($deal, '/mark-qualified'))->assertOk();

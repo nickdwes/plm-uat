@@ -9,6 +9,7 @@ use App\Models\Asset\AssetIssue;
 use App\Models\Asset\AssetMaintenance;
 use App\Models\Asset\AssetRequest;
 use App\Services\Asset\AssetRequestChain;
+use App\Support\Authorization\Permission;
 use App\Services\Asset\RenewalSchedule;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
@@ -37,6 +38,67 @@ class AssetRegisterController extends Controller
      * manager's view. Somebody looking at their own is `mine=1` — the same
      * endpoint, because two endpoints over one table drift.
      */
+    /**
+     * Bring the Microsoft 365 licences into the register, and put a name to
+     * every seat.
+     *
+     * The same three steps that already existed on the integrations screen —
+     * read the tenant, create the licence products, match the holders — run
+     * here as one action, because this is the screen somebody is looking at
+     * when they ask why the software register is empty. The connection is
+     * resolved from the organisation rather than named by the caller: an
+     * asset manager should not have to know a connection id.
+     */
+    public function syncLicences(Request $request): JsonResponse
+    {
+        abort_unless($request->user()?->hasPermission(Permission::ASSETS_UPDATE), 403);
+
+        $orgId = app('current.organization_id');
+
+        $connection = \App\Models\Integration\IntegrationConnection::query()
+            ->where('organization_id', $orgId)
+            ->where('is_active', true)
+            ->where('sync_licences', true)
+            ->first();
+
+        if (! $connection) {
+            return response()->json([
+                'message' => 'No active Microsoft 365 connection is set to read licences. '
+                    . 'Set one up under Integrations first.',
+            ], 422);
+        }
+
+        // Dry by default: the first run should say what it would do before it
+        // writes rows into a register somebody reports from.
+        $commit = ! $request->boolean('preview');
+
+        try {
+            $licences = $commit
+                ? app(\App\Services\Integration\LicenceAssetImport::class)->import($connection)
+                : app(\App\Services\Integration\LicenceAssetImport::class)->preview($connection);
+
+            $owners = app(\App\Services\Integration\LicenceOwnerMapper::class)->run($connection, $commit);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        if ($commit) {
+            \App\Services\Audit\AuditLogger::record(
+                action: 'assets.licences_synced',
+                description: sprintf(
+                    'Synced Microsoft 365 licences: %d seat(s) allocated, %d released, %d seat(s) held by people not on the register',
+                    $owners['seats']['allocated'], $owners['seats']['released'], $owners['seats']['unmatched_seats'],
+                ),
+                organizationId: $orgId,
+            );
+        }
+
+        return response()->json([
+            'preview' => ! $commit,
+            'result'  => ['licences' => $licences, 'owners' => $owners],
+        ]);
+    }
+
     public function requests(Request $request): JsonResponse
     {
         $this->authorize('viewAny', Asset::class);

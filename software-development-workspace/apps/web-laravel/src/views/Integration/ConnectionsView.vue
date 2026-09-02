@@ -6,7 +6,7 @@
  * this screen is deliberately blunt about what it is asking for and what the
  * credential is allowed to do once given.
  */
-import { onMounted, ref, computed } from "vue";
+import { onMounted, onBeforeUnmount, ref, computed, watch } from "vue";
 import { api, ApiError } from "../../lib/api";
 import { currentOrgSlug } from "../../stores/auth";
 
@@ -39,6 +39,8 @@ interface Connection {
   granted_roles: string[];
   last_synced_at: string | null;
   subscriptions: Subscription[];
+  is_calendar_connection: boolean;
+  is_directory_connection: boolean;
 }
 
 interface Check { ok: boolean; count: number | null; message: string | null }
@@ -64,6 +66,34 @@ const importing = ref<number | null>(null);
 const imported  = ref<Record<number, string>>({});
 
 const showForm = ref(false);
+
+/*
+ * Whether the click now finishing also started on the backdrop.
+ *
+ * Without it a drag that begins inside the dialog and ends outside counts as a
+ * backdrop click and throws the form away — the classic way to lose a pasted
+ * secret and have to fetch it from Azure again.
+ */
+const backdropArmed = ref(false);
+
+/*
+ * Escape closes it, from wherever the focus happens to be.
+ *
+ * Bound on the window rather than the overlay: a `keydown` handler on a div
+ * only fires when that div has focus, and the focus is inside an input the
+ * whole time somebody is filling this in — so the overlay would never have
+ * seen the key.
+ */
+function escapeCloses(event: KeyboardEvent) {
+  if (event.key === "Escape") showForm.value = false;
+}
+
+watch(showForm, (isOpen) => {
+  if (isOpen) window.addEventListener("keydown", escapeCloses);
+  else window.removeEventListener("keydown", escapeCloses);
+});
+
+onBeforeUnmount(() => window.removeEventListener("keydown", escapeCloses));
 const editing  = ref<Connection | null>(null);
 const saving   = ref(false);
 const formError = ref("");
@@ -148,6 +178,38 @@ async function test(c: Connection): Promise<void> {
   } catch (err) {
     error.value = err instanceof ApiError ? (err.message ?? "Test failed.") : "Test failed.";
     await load();
+  } finally {
+    busyId.value = null;
+  }
+}
+
+/*
+ * Which registration reads the directory.
+ *
+ * Its own pointer, not the calendar's: directory lookups need `User.Read.All`,
+ * and the identity work after them needs the ability to change how people
+ * authenticate. Those do not belong on the registration that also reads every
+ * mailbox — one leaked secret should not be a compromise of all three.
+ */
+async function useForDirectory(c: Connection): Promise<void> {
+  busyId.value = c.id;
+  try {
+    await api("POST", `/api/v1/integrations/connections/${c.id}/use-for-directory`, { org: org.value });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "Could not change the directory connection.";
+  } finally {
+    busyId.value = null;
+  }
+}
+
+async function useForCalendar(c: Connection): Promise<void> {
+  busyId.value = c.id;
+  try {
+    await api("POST", `/api/v1/integrations/connections/${c.id}/use-for-calendar`, { org: org.value });
+    await load();
+  } catch (err) {
+    error.value = err instanceof ApiError ? err.message : "Could not change the calendar connection.";
   } finally {
     busyId.value = null;
   }
@@ -268,6 +330,8 @@ onMounted(load);
           <h3>
             {{ c.name }}
             <span v-if="!c.is_active" class="chip chip-off">Paused</span>
+            <span v-if="c.is_calendar_connection" class="chip chip-on">Calendar connection</span>
+            <span v-if="c.is_directory_connection" class="chip chip-on">Directory connection</span>
           </h3>
           <p class="ids">
             <span>Tenant <code>{{ c.tenant_id }}</code></span>
@@ -278,6 +342,13 @@ onMounted(load);
         <div class="card-actions">
           <button class="btn btn-sm" :disabled="busyId === c.id" @click="test(c)">
             {{ busyId === c.id ? "Checking…" : "Test credentials" }}
+          </button>
+          <button class="btn btn-sm" :disabled="busyId === c.id" @click="useForCalendar(c)">
+            {{ c.is_calendar_connection ? "Unset as calendar connection" : "Use for Teams meetings" }}
+          </button>
+          <button class="btn btn-sm" :disabled="busyId === c.id" @click="useForDirectory(c)"
+                  title="Needs User.Read.All granted with admin consent on this app registration">
+            {{ c.is_directory_connection ? "Unset as directory connection" : "Use for directory lookups" }}
           </button>
           <button class="btn btn-sm" @click="openEdit(c)">Edit</button>
           <button class="btn btn-sm btn-danger-ghost" @click="remove(c)">Remove</button>
@@ -426,26 +497,45 @@ onMounted(load);
     </article>
 
     <!-- ── Add / edit ─────────────────────────────────────────────────────── -->
-    <div v-if="showForm" class="overlay" @click.self="showForm = false">
+    <!-- Closes on a click that *began* on the backdrop, not merely one that
+         ended there. `@click.self` fired when a drag to select text finished
+         outside the dialog, and when the click dismissing the browser's
+         autofill popup landed on the overlay — losing everything typed so far,
+         which is what made this feel like it escaped after one field.
+         Escape closes it too, so there is a deliberate way out. -->
+    <div v-if="showForm" class="overlay"
+         @mousedown="backdropArmed = $event.target === $event.currentTarget"
+         @click="backdropArmed && $event.target === $event.currentTarget && (showForm = false)"
+         >
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Tenant connection">
         <h2>{{ editing ? "Edit tenant" : "Add a tenant" }}</h2>
 
         <div class="dialog-body">
           <label class="field"><span>Name</span>
-            <input v-model="form.name" class="control" placeholder="Konvergenz — Microsoft 365" />
+            <input v-model="form.name" class="control" autocomplete="off"
+                   placeholder="Konvergenz — Microsoft 365" />
             <span class="hint">How it appears on this page.</span>
           </label>
 
           <label class="field"><span>Directory (tenant) ID</span>
-            <input v-model="form.tenant_id" class="control" placeholder="00000000-0000-0000-0000-000000000000" />
+            <input v-model="form.tenant_id" class="control" autocomplete="off" spellcheck="false"
+                   placeholder="00000000-0000-0000-0000-000000000000" />
           </label>
 
           <label class="field"><span>Application (client) ID</span>
-            <input v-model="form.client_id" class="control" placeholder="00000000-0000-0000-0000-000000000000" />
+            <!-- `autocomplete="off"` alone is ignored here: a text input above
+                 a password input is exactly the shape Chrome fills as a login,
+                 which is how an operator's own address ended up in the
+                 Application ID. A name the heuristics do not recognise, plus
+                 `new-password` on the secret below, is what actually stops it. -->
+            <input v-model="form.client_id" class="control" name="app-registration-id"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="00000000-0000-0000-0000-000000000000" />
           </label>
 
           <label class="field"><span>Client secret</span>
             <input v-model="form.client_secret" class="control" type="password"
+                   name="app-registration-secret" autocomplete="new-password" spellcheck="false"
                    :placeholder="editing?.has_secret ? 'Leave blank to keep the current one' : 'Paste the secret value'" />
             <span class="hint">
               Stored encrypted and never shown again — not even here. Paste the

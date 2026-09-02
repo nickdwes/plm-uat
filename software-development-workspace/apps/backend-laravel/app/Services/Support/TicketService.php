@@ -76,6 +76,10 @@ class TicketService
                 'support_team_id'  => $data['support_team_id'] ?? null,
                 'parent_ticket_id' => $data['parent_ticket_id'] ?? null,
                 'source'           => $data['source'] ?? 'agent',
+                // The opening message is always the customer's, so the first
+                // move is ours to make.
+                'current_owner'    => Ticket::OWNER_SUPPORT,
+                'owner_set_at'     => now(),
                 'opened_at'        => now(),
                 'created_by'       => $actor?->id,
             ]);
@@ -120,6 +124,9 @@ class TicketService
              */
             app(AutomationEngine::class)->run($ticket->fresh(), Automation::ON_CREATED);
 
+            // Every ticket carries a trackable task, routed as the ticket is.
+            app(TicketTaskSync::class)->sync($ticket->fresh(['assignee', 'status', 'priority']));
+
             return $ticket->fresh(['status', 'priority', 'sla', 'team', 'assignee']);
         });
     }
@@ -153,8 +160,61 @@ class TicketService
                 $this->clock()->onFirstResponse($ticket->fresh(), $message->created_at);
             }
 
+            /*
+             * A public message is a handoff: an agent's reply puts the ball
+             * with the customer, the customer's reply puts it back with us.
+             * An internal note is neither side talking to the other, so it
+             * never moves ownership.
+             */
+            if ($message->visibility === TicketMessage::VISIBILITY_PUBLIC) {
+                $this->setOwner(
+                    $ticket,
+                    $fromAgent ? Ticket::OWNER_CLIENT : Ticket::OWNER_SUPPORT,
+                    null,
+                    $actor,
+                    automatic: true,
+                );
+            }
+
             return $message;
         });
+    }
+
+    /**
+     * Whose move it is, changed by hand or by which side just spoke.
+     *
+     * Kept as its own event type rather than folded into the SLA pause trail,
+     * because it has to exist for a ticket with no SLA clock at all — nothing
+     * about "who needs to act next" depends on a priority having been set.
+     */
+    public function setOwner(Ticket $ticket, string $owner, ?string $reason, ?User $actor, bool $automatic = false): Ticket
+    {
+        if (! in_array($owner, Ticket::OWNERS, true)) {
+            throw new RuntimeException("Unknown owner: {$owner}");
+        }
+
+        $was = $ticket->current_owner;
+
+        if ($was === $owner) {
+            return $ticket;
+        }
+
+        $now = now();
+        $ticket->forceFill(['current_owner' => $owner, 'owner_set_at' => $now])->save();
+
+        TicketEvent::create([
+            'support_ticket_id' => $ticket->id,
+            'event'             => TicketEvent::OWNER_CHANGED,
+            'field'             => 'current_owner',
+            'from_value'        => $was,
+            'to_value'          => $owner,
+            'reason'            => $reason,
+            'actor_id'          => $actor?->id,
+            'automatic'         => $automatic,
+            'occurred_at'       => $now,
+        ]);
+
+        return $ticket;
     }
 
     /**
@@ -203,6 +263,9 @@ class TicketService
 
         // The engine ignores this while it is applying its own actions.
         app(AutomationEngine::class)->run($fresh, Automation::ON_UPDATED);
+
+        // Resolve/close completes the ticket's task; reopening revives it.
+        app(TicketTaskSync::class)->sync($fresh->fresh(['assignee', 'status', 'priority']));
 
         return $fresh->fresh(['status']);
     }

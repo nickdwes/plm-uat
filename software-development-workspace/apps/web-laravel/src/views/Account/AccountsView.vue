@@ -25,6 +25,7 @@ interface Account {
   reference: string | null;
   name: string;
   initials: string;
+  logo_url: string | null;
   status: string;
   country: string | null;
   last_contact_at: string | null;
@@ -32,9 +33,63 @@ interface Account {
   type?: Named | null;
   sector?: Named | null;
   primary_contact?: { id: number; name: string; email: string | null; role: string | null } | null;
+
+  // List-only. What this customer is worth and what is happening on it.
+  open_deals?: number; open_pipeline?: number | null;
+  projects?: number; open_tickets?: number; active_contracts?: number;
+}
+
+interface BookTotals {
+  customers: number; active: number; never_contacted: number;
+  unowned: number; open_pipeline: number | null;
 }
 
 const router  = useRouter();
+const totals = ref<BookTotals | null>(null);
+
+/** Full figures in the table, so a column of numbers can be compared. */
+const money = (v: number) =>
+  v ? `KES ${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "0";
+
+/**
+ * The line under the customer's name.
+ *
+ * Sector, type and owner used to be three columns; each was empty on nearly
+ * every row, so they cost three column widths to say nothing. Here they cost
+ * nothing when absent and read naturally when present.
+ */
+function clientSub(a: Account): string {
+  return [a.sector?.name, a.type?.name, a.account_manager?.name].filter(Boolean).join(" · ");
+}
+
+/** Abbreviated for the strip; the table shows the full figure. */
+function short(v: number | null | undefined): string {
+  if (v === null || v === undefined) return "—";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000_000) return `KES ${(v / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000)     return `KES ${(v / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000)         return `KES ${(v / 1_000).toFixed(1)}K`;
+  return `KES ${v.toFixed(0)}`;
+}
+
+/**
+ * Open the customer.
+ *
+ * The whole row, because the only way in used to be a "View" button in the
+ * last column — which on a table this wide sits past the right edge of most
+ * screens, so the page looked like a list of things you could not open.
+ *
+ * The guard matters: a row-wide handler would otherwise swallow the logo
+ * button and anything else interactive added here later. `closest` covers
+ * elements this function has never heard of, which a list of `.stop`
+ * modifiers does not.
+ */
+function open(a: { id: number }, event: MouseEvent) {
+  const el = event.target as HTMLElement | null;
+  if (el?.closest("button, a, input, select, label")) return;
+
+  router.push({ name: "account", params: { id: a.id } });
+}
 const rows    = ref<Account[]>([]);
 const types   = ref<Named[]>([]);
 const loading = ref(true);
@@ -47,13 +102,15 @@ const showFilters  = ref(false);
 
 const showNew    = ref(false);
 const newAccount = ref({ name: "", account_type_id: null as number | null, country: "" });
+const newLogoFile = ref<File | null>(null);
+const newLogoPreview = ref<string | null>(null);
 
 const org = () => currentOrgSlug.value;
 
 async function load() {
   loading.value = true;
   try {
-    const res = await api<{ data: Account[] }>("GET", "/api/v1/accounts", {
+    const res = await api<{ data: Account[]; totals: BookTotals }>("GET", "/api/v1/accounts", {
       org: org(),
       params: {
         search: search.value || undefined,
@@ -63,6 +120,7 @@ async function load() {
       },
     });
     rows.value = res.data;
+    totals.value = res.totals ?? null;
   } catch (e) {
     notifyFailed("Could not load customers.", e instanceof ApiError ? (e.firstError ?? e.message) : undefined);
   } finally {
@@ -80,6 +138,68 @@ async function loadLookups() {
   }
 }
 
+// ── Logos ────────────────────────────────────────────────────────────────
+// A small mark beside the client's name. The placeholder doubles as the "add"
+// control — clicking any client's badge, logo or not, opens a file picker and
+// posts it straight to that account.
+const logoInput = ref<HTMLInputElement | null>(null);
+const logoTarget = ref<Account | null>(null);
+
+function beginLogo(a: Account) {
+  logoTarget.value = a;
+  logoInput.value?.click();
+}
+
+// Auto-fetch logos for clients that don't have one, from their contact-email
+// domain (server-side, via Google's favicon service).
+const fetchingLogos = ref(false);
+async function autoFetchLogos() {
+  if (fetchingLogos.value) return;
+  fetchingLogos.value = true;
+  try {
+    const res = await api<{ data: { fetched: number; no_domain: number; failed: number } }>("POST", `/api/v1/accounts/fetch-logos`, { org: org() });
+    const t = res.data;
+    await load();
+    if (t.fetched) {
+      const skipped = t.no_domain + t.failed;
+      notifySaved(`Fetched ${t.fetched} logo${t.fetched === 1 ? "" : "s"}${skipped ? ` · ${skipped} had no usable domain` : ""}.`);
+    } else {
+      notifyFailed("No logos could be fetched", "None of the clients without a logo have a corporate contact email to derive a website from.");
+    }
+  } catch (err) {
+    notifyFailed("Could not auto-fetch logos.", err instanceof ApiError ? (err.firstError ?? err.message) : undefined);
+  } finally {
+    fetchingLogos.value = false;
+  }
+}
+
+async function onLogoPicked(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  const a = logoTarget.value;
+  input.value = "";           // let the same file be re-picked later
+  if (!file || !a) return;
+
+  const fd = new FormData();
+  fd.append("logo", file);
+  try {
+    const res = await api<{ data: Account }>("POST", `/api/v1/accounts/${a.id}/logo`, { org: org(), formData: fd });
+    const i = rows.value.findIndex((r) => r.id === a.id);
+    if (i !== -1) rows.value[i] = { ...rows.value[i], logo_url: res.data.logo_url };
+    notifySaved("Logo updated.");
+  } catch (err) {
+    notifyFailed("Could not upload the logo.", err instanceof ApiError ? (err.firstError ?? err.message) : undefined);
+  }
+}
+
+// The create form's own logo — chosen before the account exists, so it is held
+// and uploaded once we have an id.
+function pickNewLogo(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0] ?? null;
+  newLogoFile.value = file;
+  newLogoPreview.value = file ? URL.createObjectURL(file) : null;
+}
+
 async function create() {
   if (!newAccount.value.name.trim()) return;
   saving.value = true;
@@ -88,8 +208,19 @@ async function create() {
       org: org(),
       body: { ...newAccount.value, country: newAccount.value.country || null },
     });
+    // If a logo was chosen on the form, attach it now that the id exists.
+    if (newLogoFile.value) {
+      try {
+        const fd = new FormData();
+        fd.append("logo", newLogoFile.value);
+        await api("POST", `/api/v1/accounts/${res.data.id}/logo`, { org: org(), formData: fd });
+      } catch { /* the account is made; a failed logo is not worth blocking on */ }
+    }
+
     showNew.value = false;
     newAccount.value = { name: "", account_type_id: null, country: "" };
+    newLogoFile.value = null;
+    newLogoPreview.value = null;
 
     // Raised before navigating: the toast lives on the shell and survives the
     // route change, which an inline banner here would not.
@@ -101,16 +232,6 @@ async function create() {
   } finally { saving.value = false; }
 }
 
-/** Relationship, coloured so the book reads at a glance. */
-function typeTone(name: string | undefined): string {
-  switch ((name ?? "").toLowerCase()) {
-    case "client":   return "green";
-    case "prospect": return "amber";
-    case "partner":  return "blue";
-    case "supplier": return "violet";
-    default:         return "grey";
-  }
-}
 
 const statusTone = (s: string) =>
   s === "active" ? "ok" : s === "inactive" ? "neutral" : "warn";
@@ -144,6 +265,31 @@ onMounted(() => { void load(); void loadLookups(); });
       </div>
     </header>
 
+    <!-- What the book adds up to. Across all of it, not the page in view, so
+         the sentence does not change when you turn to page two. -->
+    <div v-if="totals" class="ac-kpis">
+      <div class="ac-kpi">
+        <span class="ac-kpi-label">Customers</span>
+        <span class="ac-kpi-value">{{ totals.customers }}</span>
+        <span class="ac-kpi-sub">{{ totals.active }} active</span>
+      </div>
+      <div class="ac-kpi">
+        <span class="ac-kpi-label">Open pipeline</span>
+        <span class="ac-kpi-value">{{ short(totals.open_pipeline) }}</span>
+        <span class="ac-kpi-sub">{{ totals.open_pipeline === null ? "Not shown to you" : "across the book" }}</span>
+      </div>
+      <div class="ac-kpi">
+        <span class="ac-kpi-label">Never contacted</span>
+        <span :class="['ac-kpi-value', { warn: totals.never_contacted > 0 }]">{{ totals.never_contacted }}</span>
+        <span class="ac-kpi-sub">no activity logged</span>
+      </div>
+      <div class="ac-kpi">
+        <span class="ac-kpi-label">No owner</span>
+        <span :class="['ac-kpi-value', { warn: totals.unowned > 0 }]">{{ totals.unowned }}</span>
+        <span class="ac-kpi-sub">nobody accountable</span>
+      </div>
+    </div>
+
     <div class="ac-toolbar">
       <div class="ac-search-wrap">
         <svg class="ac-search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7">
@@ -158,6 +304,13 @@ onMounted(() => { void load(); void loadLookups(); });
           <path d="M3 5h14M6 10h8M8.5 15h3" />
         </svg>
         Filter
+      </button>
+
+      <button class="btn-ghost" :disabled="fetchingLogos" title="Fetch logos for clients that don't have one, from their contact-email domain" @click="autoFetchLogos">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10 3a7 7 0 1 0 6.3 4M17 3v4h-4" />
+        </svg>
+        {{ fetchingLogos ? "Fetching…" : "Auto-fetch logos" }}
       </button>
 
       <button class="btn-primary" @click="showNew = true">
@@ -201,34 +354,63 @@ onMounted(() => { void load(); void loadLookups(); });
       <table class="ac-table">
         <thead>
           <tr>
-            <th>Clients</th><th>Contact Person</th><th>Email</th>
-            <th>Type</th><th>Status</th><th>Last Contact</th><th></th>
+            <th>Client</th>
+            <th class="ac-num">Open pipeline</th>
+            <th class="ac-num">Deals</th>
+            <th class="ac-num">Projects</th>
+            <th class="ac-num">Open tickets</th>
+            <th>Status</th>
+            <th class="ac-col-sm">Last contact</th>
           </tr>
         </thead>
         <tbody>
           <tr v-if="rows.length === 0">
             <td colspan="7" class="ac-none">Nothing matches that search.</td>
           </tr>
-          <tr v-for="a in rows" :key="a.id">
-            <td class="ac-name">{{ a.name }}</td>
-            <td>{{ a.primary_contact?.name ?? "—" }}</td>
-            <td class="ac-email">{{ a.primary_contact?.email ?? "—" }}</td>
-            <td>
-              <span class="ac-type">
-                <i :class="['ac-dot', `dot-${typeTone(a.type?.name)}`]"></i>{{ a.type?.name ?? "—" }}
+          <tr v-for="a in rows" :key="a.id" class="ac-clickable" @click="open(a, $event)">
+            <td class="ac-name">
+              <span class="ac-client">
+                <!-- The badge is the logo when there is one, the initials when
+                     not — and either way it is the button that adds or changes
+                     it. -->
+                <button type="button" class="ac-logo" :class="{ empty: !a.logo_url }"
+                        :title="a.logo_url ? 'Change logo' : 'Add a logo'" @click.stop="beginLogo(a)">
+                  <img v-if="a.logo_url" :src="a.logo_url" alt="" />
+                  <span v-else class="ac-logo-initials">{{ a.initials }}</span>
+                  <span class="ac-logo-edit" aria-hidden="true">+</span>
+                </button>
+                <span class="ac-client-id">
+                  <button type="button" class="ac-client-name"
+                          @click.stop="router.push({ name: 'account', params: { id: a.id } })">
+                    {{ a.name }}
+                  </button>
+                  <!-- Sector, type and owner move here out of three columns
+                       that were empty on nearly every row. -->
+                  <span v-if="clientSub(a)" class="ac-client-sub">{{ clientSub(a) }}</span>
+                </span>
               </span>
             </td>
-            <td><span :class="['pill', `pill-${statusTone(a.status)}`]">{{ a.status }}</span></td>
-            <td class="ac-date">{{ lastContact(a.last_contact_at) }}</td>
-            <td>
-              <button class="link-btn" @click="router.push({ name: 'account', params: { id: a.id } })">
-                View
-              </button>
+            <!-- Zero is a fact worth showing; a dash is not. But a customer
+                 with nothing at all should not shout four zeroes, so those
+                 read quietly. -->
+            <td class="ac-num">
+              <span :class="{ 'ac-nil': !a.open_pipeline }">{{ a.open_pipeline === null ? "—" : money(a.open_pipeline ?? 0) }}</span>
             </td>
+            <td class="ac-num"><span :class="{ 'ac-nil': !a.open_deals }">{{ a.open_deals ?? 0 }}</span></td>
+            <td class="ac-num"><span :class="{ 'ac-nil': !a.projects }">{{ a.projects ?? 0 }}</span></td>
+            <td class="ac-num">
+              <span :class="{ 'ac-nil': !a.open_tickets, 'ac-hot': (a.open_tickets ?? 0) > 0 }">{{ a.open_tickets ?? 0 }}</span>
+            </td>
+            <td><span :class="['pill', `pill-${statusTone(a.status)}`]">{{ a.status }}</span></td>
+            <td class="ac-col-sm ac-date">{{ lastContact(a.last_contact_at) }}</td>
           </tr>
         </tbody>
       </table>
     </div>
+
+    <!-- One hidden picker, shared by every row's badge. -->
+    <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp"
+           class="ac-hidden-file" @change="onLogoPicked" />
 
     <!-- New customer -->
     <div v-if="showNew" class="ac-modal-backdrop" @click.self="showNew = false">
@@ -242,6 +424,15 @@ onMounted(() => { void load(); void loadLookups(); });
           Name is enough to start. Industry, owner and contacts are added on the
           record — a customer half-entered is more useful than one nobody created.
         </p>
+
+        <div class="ac-field"><span>Logo</span>
+          <label class="ac-logo-drop" :class="{ has: newLogoPreview }">
+            <img v-if="newLogoPreview" :src="newLogoPreview" alt="" class="ac-logo-drop-img" />
+            <span v-else class="ac-logo-drop-hint">+ Add a logo <em>(optional)</em></span>
+            <input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                   class="ac-hidden-file" @change="pickNewLogo" />
+          </label>
+        </div>
 
         <label class="ac-field"><span>Client Name</span>
           <input v-model="newAccount.name" class="control" placeholder="Kenya Commercial Bank" /></label>
@@ -266,7 +457,13 @@ onMounted(() => { void load(); void loadLookups(); });
 <style scoped>
 @reference "../../theme.css";
 
-.ac-wrap { padding: var(--space-6); max-width: 82rem; }
+.ac-wrap { padding: var(--space-6); width: 100%; max-width: 100%; }
+@media (max-width: 40rem) { .ac-wrap { padding: var(--space-4); } }
+
+/* Dynamic to the screen: secondary columns drop as it narrows, so the client,
+   its logo and its status always fit without a sideways scroll. */
+@media (max-width: 64rem) { .ac-col-md { display: none; } }
+@media (max-width: 44rem) { .ac-col-sm { display: none; } }
 
 .ac-header { margin-bottom: var(--space-5); }
 .ac-title { font-size: var(--text-xl-size); font-weight: 600; color: var(--color-text); margin: 0; }
@@ -312,19 +509,51 @@ onMounted(() => { void load(); void loadLookups(); });
 .ac-table td { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); color: var(--color-text); }
 .ac-table tr:last-child td { border-bottom: none; }
 .ac-name { font-weight: 500; }
-.ac-email { color: var(--color-text-muted); }
+
+/* Hover is the only thing telling you the row is a way in, so it has to be
+   visible rather than a two-percent tint. */
+.ac-clickable { @apply cursor-pointer; transition: background-color 120ms ease; }
+.ac-clickable:hover { background: var(--color-neutral-100); }
+
+/* ── Client logo badge (list + create) ─────────────────────────────────── */
+.ac-client { @apply inline-flex items-center; gap: var(--space-3); min-width: 0; }
+.ac-client-name {
+  @apply truncate cursor-pointer border-none bg-transparent p-0 text-left;
+  font-family: inherit; font-size: inherit; font-weight: inherit;
+  color: var(--color-brand-on-surface);
+}
+.ac-client-name:hover { text-decoration: underline; }
+.ac-logo {
+  @apply relative inline-flex items-center justify-center flex-none cursor-pointer overflow-hidden;
+  width: 2rem; height: 2rem; border-radius: var(--radius-md);
+  border: 1px solid var(--color-border); background: var(--color-surface); padding: 0;
+}
+.ac-logo img { @apply w-full h-full; object-fit: contain; }
+.ac-logo-initials { font-size: 0.6rem; font-weight: 700; color: var(--color-brand-on-surface); letter-spacing: .02em; }
+.ac-logo.empty { background: var(--color-brand-subtle); border-style: dashed; }
+/* The "+" hint sits over the badge and only shows on hover, so a set logo is
+   clean but every badge still says "you can change me". */
+.ac-logo-edit {
+  @apply absolute inset-0 flex items-center justify-center opacity-0;
+  background: rgb(0 0 0 / 0.45); color: #fff; font-size: 0.9rem; transition: opacity 120ms ease;
+}
+.ac-logo:hover .ac-logo-edit, .ac-logo:focus-visible .ac-logo-edit { opacity: 1; }
+
+.ac-hidden-file { display: none; }
+
+.ac-logo-drop {
+  @apply flex items-center justify-center cursor-pointer overflow-hidden;
+  height: 4.5rem; border: 1px dashed var(--color-border-strong); border-radius: var(--radius-md);
+  background: var(--color-surface-sunken); color: var(--color-text-muted); font-size: var(--text-sm-size);
+}
+.ac-logo-drop.has { border-style: solid; background: var(--color-surface); }
+.ac-logo-drop-img { @apply h-full; max-width: 100%; object-fit: contain; }
+.ac-logo-drop-hint em { font-style: normal; color: var(--color-text-light); font-size: var(--text-xs-size); }
 .ac-date { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ac-none { text-align: center; color: var(--color-text-light); padding: var(--space-6); }
 
 /* Relationship, as a coloured marker rather than another pill — Status is the
    pill, and two pills per row stop either from standing out. */
-.ac-type { @apply inline-flex items-center; gap: var(--space-2); white-space: nowrap; }
-.ac-dot { @apply inline-block; width: 6px; height: 6px; border-radius: 999px; }
-.dot-green  { background: var(--color-success-text); }
-.dot-amber  { background: var(--color-warning-text); }
-.dot-blue   { background: var(--color-brand-base); }
-.dot-violet { background: color-mix(in oklab, var(--color-brand-base) 60%, purple); }
-.dot-grey   { background: var(--color-text-light); }
 
 .ac-note { font-size: var(--text-sm-size); color: var(--color-text-muted); margin: 0; }
 .ac-field { @apply flex flex-col; gap: var(--space-1); }
@@ -360,4 +589,40 @@ onMounted(() => { void load(); void loadLookups(); });
 .btn-primary svg, .btn-ghost svg { width: 1rem; height: 1rem; }
 .btn-primary:disabled { @apply cursor-not-allowed opacity-50; }
 
+/* ── Book totals ──────────────────────────────────────────────────────────
+   Hairline-separated cells over the border colour, matching the customer
+   record's own KPI strip so the two pages read as one place. */
+.ac-kpis {
+  @apply grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px; margin-bottom: var(--space-4);
+  background: var(--color-border);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); overflow: hidden;
+}
+@media (max-width: 60rem) { .ac-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 32rem) { .ac-kpis { grid-template-columns: 1fr; } }
+
+.ac-kpi { @apply flex flex-col; gap: 2px; padding: var(--space-3) var(--space-4);
+  background: var(--color-surface-raised); }
+.ac-kpi-label {
+  font-size: var(--text-xs-size); font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--color-text-light);
+}
+.ac-kpi-value { font-size: var(--text-xl-size); font-weight: 600; letter-spacing: -0.5px; color: var(--color-text); }
+.ac-kpi-value.warn { color: var(--color-warning-text); }
+.ac-kpi-sub { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+
+/* ── Rows ─────────────────────────────────────────────────────────────────
+   Numbers are right-aligned and tabular so a column can be scanned rather
+   than read line by line. */
+.ac-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ac-table th.ac-num { text-align: right; }
+
+/* A customer with nothing should not shout four zeroes at the same weight as
+   a customer with a pipeline. */
+.ac-nil { color: var(--color-text-light); }
+.ac-hot { color: var(--color-warning-text); font-weight: 600; }
+
+.ac-client-id  { @apply flex flex-col; gap: 1px; min-width: 0; }
+.ac-client-sub { font-size: var(--text-xs-size); color: var(--color-text-muted); }
 </style>

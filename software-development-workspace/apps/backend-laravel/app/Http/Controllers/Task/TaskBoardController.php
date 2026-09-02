@@ -8,10 +8,15 @@ use App\Models\Project\ProjectComment;
 use App\Models\Task\CommentReaction;
 use App\Models\Task\Task;
 use App\Models\Task\TaskIssue;
+use App\Models\Task\TaskClosure;
+use App\Models\Task\TaskPause;
+use App\Models\Task\TaskMeeting;
+use App\Models\Task\TaskMember;
 use App\Models\Task\TaskRequest;
 use App\Models\Task\TaskRequiredDocument;
 use App\Support\Account\ReferenceSequence;
 use App\Support\Authorization\Permission;
+use App\Services\Task\TaskDelayRecorder;
 use App\Services\Task\TaskNotifier;
 use App\Support\Storage\DocumentVault;
 use Illuminate\Http\JsonResponse;
@@ -44,9 +49,10 @@ class TaskBoardController extends Controller
         'ownerAccount', 'ownerVendorPartner', 'ownerContact', 'activeHandover.coverer',
         'members.employee', 'subtasks.members.employee', 'subtasks.assignee',
         'dependencies', 'externalDependencies', 'requests.toEmployee', 'requests.requester',
-        'requiredDocuments', 'project', 'attachments',
+        'requiredDocuments', 'project', 'attachments', 'supportTeam', 'functionalUnit', 'department', 'businessUnit',
         'comments.employee', 'comments.replies.employee', 'comments.reactions',
         'comments.replies.reactions', 'issues.escalations.employee', 'issues.raiser',
+        'closure.closer', 'pauses', 'activePause', 'extensions.requester', 'escalations.recipient',
     ];
 
     /**
@@ -93,7 +99,7 @@ class TaskBoardController extends Controller
         // The owner links come with the list because the board badges them —
         // without eager loading that is a query per card.
         $q = Task::query()->with([
-            'assignee', 'project', 'members.employee',
+            'assignee', 'project', 'members.employee', 'supportTeam',
             'ownerAccount', 'ownerVendorPartner', 'ownerContact', 'activeHandover.coverer',
         ])->roots();
 
@@ -105,7 +111,12 @@ class TaskBoardController extends Controller
             }
         }
 
-        foreach (['project_id', 'opportunity_id', 'lead_id', 'research_id', 'account_id', 'assigned_to'] as $key) {
+        foreach ([
+            'project_id', 'opportunity_id', 'lead_id', 'research_id', 'account_id',
+            'assigned_to', 'support_team_id',
+            // The org hierarchy the task was directed down.
+            'functional_unit_id', 'department_id', 'business_unit_id',
+        ] as $key) {
             if ($id = $request->integer($key)) {
                 $q->where($key, $id);
             }
@@ -117,6 +128,8 @@ class TaskBoardController extends Controller
             'overdue' => $q->open()->whereDate('deadline', '<', now()->toDateString()),
             'open'    => $q->open(),
             'mine'    => $q->where('assigned_to', $request->user()->employeeId()),
+            // The queue for the teams I'm on — unassigned or not, it's ours.
+            'my_team' => $q->whereIn('support_team_id', $this->myTeamIds($request)),
             // Owed by a client or a supplier and not yet done — the list
             // somebody has to work through before chasing anyone.
             'awaiting_others' => $q->awaitingOthers(),
@@ -128,6 +141,8 @@ class TaskBoardController extends Controller
         }
 
         $tasks = $q->latest('id')->paginate((int) $request->input('per_page', 50));
+
+        $this->loadTicketRefs($tasks->items());
 
         return response()->json([
             'data' => collect($tasks->items())->map(fn (Task $t) => $this->row($t)),
@@ -212,7 +227,10 @@ class TaskBoardController extends Controller
     {
         $this->authorize('view', $task);
 
-        return response()->json(['data' => $this->row($task->load(self::DETAIL))]);
+        $task->load(self::DETAIL);
+        $this->loadTicketRefs([$task]);
+
+        return response()->json(['data' => $this->row($task)]);
     }
 
     public function update(Request $request, Task $task): JsonResponse
@@ -235,6 +253,21 @@ class TaskBoardController extends Controller
         if ($next === Task::DONE && $task->requires_approval && $task->approved_at === null) {
             $next = 'awaiting_approval';
             $data['status'] = $next;
+        }
+
+        /*
+         * Nothing is finished until somebody says what came of it.
+         *
+         * Refused here rather than only in the panel, because a control the
+         * client enforces is not a control — the same status change arrives
+         * from the project route, a script, or anything holding a token.
+         */
+        if (Task::isFinishing($next, $task->requires_approval && $task->approved_at === null)
+            && $next !== $task->status
+            && $task->needsClosureSummary()) {
+            throw ValidationException::withMessages([
+                'closure' => ['Say what came of this task before finishing it.'],
+            ]);
         }
 
         // Completing stamps the time and the person; reopening clears both, so
@@ -619,6 +652,220 @@ class TaskBoardController extends Controller
         return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
     }
 
+    /**
+     * Finish a task, and say what came of it.
+     *
+     * One call rather than two, because a summary saved against a task that is
+     * then left open — or a task closed on a summary that failed to save — is
+     * the state this is meant to prevent. A task that needs signing off still
+     * goes to the approver; the summary is what the approver reads.
+     */
+    public function close(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        abort_if($task->closure()->exists(), 422, 'This task has already been closed off.');
+        abort_if($task->parent_task_id !== null, 422, 'A sub-task is closed by ticking it off, not by a summary.');
+
+        $data = $request->validate([
+            'work_completed'  => ['required', 'string', 'max:5000'],
+            'deliverables'    => ['required', 'string', 'max:5000'],
+            'challenges'      => ['required', 'string', 'max:5000'],
+            'outcomes'        => ['required', 'string', 'max:5000'],
+            'lessons_learned' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $sendForApproval = $task->requires_approval && $task->approved_at === null;
+
+        DB::transaction(function () use ($task, $data, $request, $sendForApproval) {
+            TaskClosure::create($data + [
+                'organization_id' => $task->organization_id,
+                'task_id'         => $task->id,
+                'closed_by'       => $request->user()->id,
+                'closed_at'       => now(),
+            ]);
+
+            $task->update($sendForApproval
+                ? ['status' => 'awaiting_approval']
+                : [
+                    'status'       => Task::DONE,
+                    'completed_at' => $task->completed_at ?? now(),
+                    'completed_by' => $task->completed_by ?? $request->user()->employeeId(),
+                ]);
+        });
+
+        // The approver is the one person who needs telling; a task that simply
+        // finished has nobody waiting on the news.
+        if ($sendForApproval) {
+            $this->notifier->awaitingApproval($task->fresh());
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * Move the deadline, on the record.
+     *
+     * Not a `PUT` with a new date: the reason, the impact and whose delay it is
+     * are the point, and a bare date change leaves none of them behind.
+     */
+    public function extend(Request $request, Task $task, TaskDelayRecorder $delays): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'new_deadline'      => ['required', 'date'],
+            'reason'            => ['required', 'string', 'max:2000'],
+            'impact'            => ['required', 'string', 'max:2000'],
+            'dependency'        => ['nullable', 'string', 'max:2000'],
+            'responsible_party' => ['nullable', Rule::in(Task::RESPONSIBILITIES)],
+        ]);
+        $data['new_deadline'] = \Illuminate\Support\Carbon::parse($data['new_deadline'])->toDateString();
+
+        try {
+            $delays->extend($task, $data, $request->user());
+        } catch (\RuntimeException $e) {
+            throw ValidationException::withMessages(['new_deadline' => [$e->getMessage()]]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /** Stop the clock, saying who it is stopped on and when it is due back. */
+    public function pause(Request $request, Task $task, TaskDelayRecorder $delays): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'reason'             => ['required', Rule::in(TaskPause::allReasons())],
+            'note'               => ['nullable', 'string', 'max:2000'],
+            'expected_resume_on' => ['nullable', 'date', 'after_or_equal:today'],
+            'responsible_party'  => ['nullable', Rule::in(Task::RESPONSIBILITIES)],
+        ]);
+
+        try {
+            $delays->pause($task, $data, $request->user());
+        } catch (\RuntimeException $e) {
+            throw ValidationException::withMessages(['reason' => [$e->getMessage()]]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    public function resume(Request $request, Task $task, TaskDelayRecorder $delays): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $note = $request->validate(['note' => ['nullable', 'string', 'max:2000']])['note'] ?? null;
+
+        try {
+            $delays->resume($task, $note, $request->user());
+        } catch (\RuntimeException $e) {
+            throw ValidationException::withMessages(['note' => [$e->getMessage()]]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * Put somebody on the task.
+     *
+     * One person is named on the task itself and is the accountable one; anyone
+     * after that is a member doing the same work. So the first person picked
+     * fills the empty seat and the rest join them, which is what the avatar
+     * stack has always shown and what nothing on the board could actually do —
+     * co-assignees could only be added from inside a project, and three
+     * quarters of tasks have no project.
+     */
+    public function addAssignee(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        $data = $request->validate([
+            'employee_id' => ['required', 'integer',
+                Rule::exists('employees', 'id')->where('primary_organization_id', $task->organization_id)],
+        ]);
+
+        if ($task->assigned_to === null) {
+            $task->update(['assigned_to' => $data['employee_id']]);
+        } elseif ($task->assigned_to !== $data['employee_id']) {
+            TaskMember::firstOrCreate([
+                'task_id'     => $task->id,
+                'employee_id' => $data['employee_id'],
+                'capacity'    => 'assignee',
+            ], ['organization_id' => $task->organization_id]);
+        }
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /** Take somebody off it again. */
+    public function removeAssignee(Request $request, Task $task, int $employee): JsonResponse
+    {
+        $this->authorize('update', $task);
+
+        if ($task->assigned_to === $employee) {
+            $task->update(['assigned_to' => null]);
+        }
+
+        TaskMember::where('task_id', $task->id)
+            ->where('employee_id', $employee)
+            ->where('capacity', 'assignee')
+            ->delete();
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
+    /**
+     * Say what you are to this task — doing it, helping, watching, or nothing.
+     *
+     * Exclusive by construction: setting one clears whatever the caller was
+     * before, because "assisting and also tracking" is not a state anyone means
+     * and the unique key on (task, employee, capacity) would happily store it.
+     *
+     * Declaring yourself as *doing* it is self-assignment, so it needs the
+     * right to change the task. Assisting and tracking need only the right to
+     * see it — putting your hand up to help, or asking to be kept informed, is
+     * not an edit anybody needs protecting from.
+     */
+    public function setInvolvement(Request $request, Task $task): JsonResponse
+    {
+        $this->authorize('view', $task);
+
+        $data = $request->validate([
+            'involvement' => ['present', 'nullable', Rule::in(array_keys(TaskMember::INVOLVEMENT))],
+        ]);
+
+        $employeeId = $request->user()?->employeeId();
+        abort_if($employeeId === null, 422, 'Only somebody with an employee record can join a task.');
+
+        if ($data['involvement'] === 'doing' && ! $request->user()->can('update', $task)) {
+            abort(403, 'Taking a task on means changing it, which you cannot do here.');
+        }
+
+        DB::transaction(function () use ($task, $employeeId, $data) {
+            TaskMember::where('task_id', $task->id)->where('employee_id', $employeeId)->delete();
+
+            if ($data['involvement'] !== null) {
+                TaskMember::create([
+                    'organization_id' => $task->organization_id,
+                    'task_id'         => $task->id,
+                    'employee_id'     => $employeeId,
+                    'capacity'        => TaskMember::INVOLVEMENT[$data['involvement']],
+                ]);
+            }
+
+            // The accountable person is named on the task, not in the member
+            // table, so stepping back from doing it has to release that too —
+            // otherwise the task still reads as theirs.
+            if ($task->assigned_to === $employeeId && $data['involvement'] !== 'doing') {
+                $task->update(['assigned_to' => null]);
+            }
+        });
+
+        return response()->json(['data' => $this->row($task->fresh(self::DETAIL))]);
+    }
+
     /** Pin a comment to the top, or unpin it. */
     public function pinComment(Request $request, Task $task, ProjectComment $comment): JsonResponse
     {
@@ -854,6 +1101,8 @@ class TaskBoardController extends Controller
              * "everything still waiting on Safaricom" answerable at all.
              */
             'owner_party' => ['sometimes', Rule::in(Task::PARTIES)],
+            // Who is holding it up today, as opposed to who owes it at all.
+            'responsibility' => ['nullable', Rule::in(Task::RESPONSIBILITIES)],
             'owner_account_id' => ['nullable', 'integer', $scoped('accounts')],
             'owner_vendor_partner_id' => ['nullable', 'integer', $scoped('vendor_partners')],
             'owner_contact_id' => ['nullable', 'integer',
@@ -864,6 +1113,13 @@ class TaskBoardController extends Controller
 
             'assigned_to' => ['nullable', 'integer',
                 Rule::exists('employees', 'id')->where('primary_organization_id', $orgId)],
+
+            // Directed down the org hierarchy — a functional unit, a
+            // department, and/or a practice — when work is handed to a part of
+            // the organisation before a name is on it.
+            'functional_unit_id' => ['nullable', 'integer', $scoped('org_functional_units')],
+            'department_id'      => ['nullable', 'integer', $scoped('departments')],
+            'business_unit_id'   => ['nullable', 'integer', $scoped('org_business_units')],
 
             // Every link optional — most tasks belong to nothing but the
             // person doing them.
@@ -915,6 +1171,59 @@ class TaskBoardController extends Controller
         return $data + ($party === 'customer'
             ? ['owner_vendor_partner_id' => null]
             : ['owner_account_id' => null, 'owner_contact_id' => null]);
+    }
+
+    /** The support teams the current user belongs to. */
+    private function myTeamIds(Request $request): array
+    {
+        return \App\Models\Support\TeamMember::where('user_id', $request->user()->id)
+            ->pluck('support_team_id')->all();
+    }
+
+    /** generated_from_id => ticket reference, resolved once per request. */
+    private array $ticketRefs = [];
+
+    /**
+     * Batch-resolve the ticket references for a set of tasks — one query, not
+     * one per card. (Laravel's morphTo eager-load misbehaves against the string
+     * generated_from_id column, so this does the join explicitly.)
+     *
+     * @param  iterable<Task>  $tasks
+     */
+    private function loadTicketRefs(iterable $tasks): void
+    {
+        $ids = collect($tasks)
+            ->filter(fn (Task $t) => $t->generated_from_type === \App\Models\Support\Ticket::class)
+            ->pluck('generated_from_id')->filter()->unique()->values();
+
+        if ($ids->isEmpty()) {
+            return;
+        }
+
+        $this->ticketRefs = \App\Models\Support\Ticket::whereIn('id', $ids->all())
+            ->pluck('reference', 'id')
+            ->mapWithKeys(fn ($ref, $id) => [(string) $id => $ref])->all();
+    }
+
+    /**
+     * Where a generated task came from, resolved to something linkable. Today
+     * that's a service-desk ticket; other origins fall through to their type.
+     */
+    private function origin(Task $t): ?array
+    {
+        if (! $t->generated_from_type) {
+            return null;
+        }
+
+        if ($t->generated_from_type === \App\Models\Support\Ticket::class) {
+            return [
+                'type'      => 'ticket',
+                'id'        => (int) $t->generated_from_id,
+                'reference' => $this->ticketRefs[(string) $t->generated_from_id] ?? null,
+            ];
+        }
+
+        return ['type' => class_basename($t->generated_from_type), 'id' => $t->generated_from_id, 'reference' => null];
     }
 
     private function row(Task $t): array
@@ -972,6 +1281,96 @@ class TaskBoardController extends Controller
                 ? ['id' => $t->completer->id, 'name' => $t->completer->full_name] : null,
 
             'assignee' => $t->assignee ? ['id' => $t->assignee->id, 'name' => $t->assignee->full_name] : null,
+
+            // Who the task is waiting on today. Null until somebody says, which
+            // is honest — an unanswered question should not default to "us".
+            'responsibility' => $t->responsibility,
+
+            /*
+             * Whether the clock is stopped, and how much of the elapsed time was
+             * spent waiting on somebody else. Without the second number every
+             * day a client sat on a signature is charged to us.
+             */
+            'is_paused'   => $t->relationLoaded('activePause') ? $t->activePause !== null : null,
+            'paused_days' => $t->relationLoaded('pauses') ? $t->paused_days : null,
+            'pause' => $t->relationLoaded('activePause') && $t->activePause ? [
+                'id'                 => $t->activePause->id,
+                'category'           => $t->activePause->category,
+                'reason'             => $t->activePause->reason,
+                'note'               => $t->activePause->note,
+                'expected_resume_on' => $t->activePause->expected_resume_on?->toDateString(),
+                'responsible_party'  => $t->activePause->responsible_party,
+                'paused_at'          => $t->activePause->paused_at?->toIso8601String(),
+                'days'               => round($t->activePause->minutes() / 1440, 1),
+                // Past the date it was promised back and still waiting — the
+                // condition an escalation keys off.
+                'is_overdue'         => $t->activePause->isOverdue(),
+            ] : null,
+            'pause_history' => $t->relationLoaded('pauses')
+                ? $t->pauses->map(fn ($p) => [
+                    'id' => $p->id, 'category' => $p->category, 'reason' => $p->reason,
+                    'responsible_party' => $p->responsible_party,
+                    'paused_at' => $p->paused_at?->toIso8601String(),
+                    'resumed_at' => $p->resumed_at?->toIso8601String(),
+                    'days' => round($p->minutes() / 1440, 1),
+                    'note' => $p->note, 'resume_note' => $p->resume_note,
+                ])->values()
+                : [],
+
+            /*
+             * Days late, and who has been told about it.
+             *
+             * `is_overdue` says whether; this says how far, which is what
+             * decides whether a person reads it now or after lunch.
+             */
+            'days_overdue' => $t->days_overdue,
+            'escalations' => $t->relationLoaded('escalations')
+                ? $t->escalations->map(fn ($e) => [
+                    'id' => $e->id,
+                    'trigger' => $e->trigger,
+                    'trigger_label' => \App\Models\Task\TaskEscalation::TRIGGERS[$e->trigger] ?? $e->trigger,
+                    'level' => $e->level,
+                    'level_label' => \App\Models\Task\TaskEscalation::LEVELS[$e->level] ?? $e->level,
+                    // Null where the rung was reached but nobody holds the
+                    // role — worth showing, because that is a gap.
+                    'to' => $e->recipient?->full_name,
+                    'detail' => $e->detail,
+                    'at' => $e->escalated_at?->toIso8601String(),
+                ])->values()
+                : [],
+
+            // How many times this has slipped, which a single deadline column
+            // could never say.
+            'extension_count' => $t->relationLoaded('extensions') ? $t->extensions->count() : null,
+            'extensions' => $t->relationLoaded('extensions')
+                ? $t->extensions->map(fn ($e) => [
+                    'id' => $e->id,
+                    'previous_deadline' => $e->previous_deadline?->toDateString(),
+                    'new_deadline'      => $e->new_deadline?->toDateString(),
+                    'days_moved'        => $e->daysMoved(),
+                    'reason' => $e->reason, 'impact' => $e->impact,
+                    'dependency' => $e->dependency,
+                    'responsible_party' => $e->responsible_party,
+                    'requested_by' => $e->requester?->name,
+                    'at' => $e->created_at?->toIso8601String(),
+                ])->values()
+                : [],
+
+            // Directed down the org hierarchy — Function > Department >
+            // Practice — alongside or instead of one person.
+            'function' => $t->relationLoaded('functionalUnit') && $t->functionalUnit
+                ? ['id' => $t->functionalUnit->id, 'name' => $t->functionalUnit->name] : null,
+            'department' => $t->relationLoaded('department') && $t->department
+                ? ['id' => $t->department->id, 'name' => $t->department->name] : null,
+            'business_unit' => $t->relationLoaded('businessUnit') && $t->businessUnit
+                ? ['id' => $t->businessUnit->id, 'name' => $t->businessUnit->name] : null,
+
+            // The team it's routed to — a shared queue when nobody is named.
+            'team' => $t->relationLoaded('supportTeam') && $t->supportTeam
+                ? ['id' => $t->supportTeam->id, 'name' => $t->supportTeam->name] : null,
+
+            // Where it came from, when a system raised it — a ticket links back.
+            'origin' => $this->origin($t),
 
             /*
              * Cover, where somebody is holding it while its owner is away.
@@ -1086,7 +1485,110 @@ class TaskBoardController extends Controller
             'open_issue_count' => $t->relationLoaded('issues')
                 ? $t->issues->where('status', 'open')->count()
                 : 0,
+
+            /*
+             * Only the task being looked at, never the sub-tasks nested inside
+             * it. `subtasks` is loaded on the detail row and on nothing else,
+             * which makes it the discriminator — without this guard the meeting
+             * count below would fire one query per sub-task.
+             */
+            ...($t->relationLoaded('subtasks') ? $this->readerView($t) : []),
+
+            // What came of it, once somebody has said. Sub-tasks never carry
+            // one, so the flag is false for them and the panel does not ask.
+            // Null on list rows, where the relation is not loaded and asking
+            // would be a query per card.
+            'needs_closure' => $t->relationLoaded('closure')
+                ? ($t->parent_task_id === null && $t->closure === null)
+                : null,
+            'closure' => $t->relationLoaded('closure') && $t->closure ? [
+                'work_completed'  => $t->closure->work_completed,
+                'deliverables'    => $t->closure->deliverables,
+                'challenges'      => $t->closure->challenges,
+                'outcomes'        => $t->closure->outcomes,
+                'lessons_learned' => $t->closure->lessons_learned,
+                'closed_at'       => $t->closure->closed_at?->toIso8601String(),
+                'closed_by'       => $t->closure->closer?->name,
+            ] : null,
         ];
+    }
+
+    /**
+     * The two things that depend on who is reading, rather than on the task.
+     *
+     * `my_involvement` answers a question the client could not previously ask:
+     * every field was the same for everyone, so the panel had no way to say
+     * "you are assisting with this". `section_counts` exists because the
+     * section list has to know on first paint which sections are empty — and
+     * counting them client-side means shipping every array to count it, which
+     * is what the tab badges do today.
+     *
+     * The two capability flags beside them are the same idea as `can_approve`:
+     * the rule lives here, so the panel can grey a control out rather than
+     * offering something the server will refuse. Involvement is a row against
+     * an employee, so somebody signed in without an employee record — an
+     * administrator, an integration — cannot hold one at all.
+     *
+     * @return array{my_involvement: ?string, can_set_involvement: bool, can_take_task: bool, section_counts: array<string,int>}
+     */
+    private function readerView(Task $t): array
+    {
+        $user = request()->user();
+        $employeeId = $user?->employeeId();
+
+        return [
+            'my_involvement'      => $this->involvementOf($t, $employeeId),
+            'can_set_involvement' => $employeeId !== null,
+            'can_take_task'       => $employeeId !== null && (bool) $user?->can('update', $t),
+            'section_counts' => [
+                'subtasks'     => $t->relationLoaded('subtasks') ? $t->subtasks->count() : 0,
+                'dependencies' => ($t->relationLoaded('dependencies') ? $t->dependencies->count() : 0)
+                    + ($t->relationLoaded('externalDependencies') ? $t->externalDependencies->count() : 0),
+                // What the Assisting tab badges today: people helping, plus
+                // asks still waiting on an answer.
+                'assisting' => ($t->relationLoaded('members') ? $t->members->where('capacity', 'assisting')->count() : 0)
+                    + ($t->relationLoaded('requests') ? $t->requests->where('status', 'pending')->count() : 0),
+                'comments'  => $t->relationLoaded('comments') ? $t->comments->count() : 0,
+                // Files and required documents are two sections now, so two
+                // counts — a resources tally that included attachments would
+                // call the section non-empty when nothing is required at all.
+                'resources'   => $t->relationLoaded('requiredDocuments') ? $t->requiredDocuments->count() : 0,
+                'attachments' => $t->relationLoaded('attachments') ? $t->attachments->count() : 0,
+                // The one that cannot be counted from the payload — meetings
+                // are fetched separately, so the count comes from the table.
+                'meetings' => TaskMeeting::where('task_id', $t->id)->count(),
+                'issues'   => $t->relationLoaded('issues') ? $t->issues->count() : 0,
+            ],
+        ];
+    }
+
+    /**
+     * What this employee is to this task: doing it, helping, or watching.
+     *
+     * Being the assignee counts as doing it without any membership row — the
+     * accountable person is named on the task itself, and a great many tasks
+     * have never had a member row written at all.
+     */
+    private function involvementOf(Task $t, ?int $employeeId): ?string
+    {
+        if ($employeeId === null) {
+            return null;
+        }
+
+        if ($t->assigned_to === $employeeId) {
+            return 'doing';
+        }
+
+        $capacity = $t->relationLoaded('members')
+            ? $t->members->firstWhere('employee_id', $employeeId)?->capacity
+            : TaskMember::where('task_id', $t->id)->where('employee_id', $employeeId)->value('capacity');
+
+        return match ($capacity) {
+            'assignee' => 'doing',
+            'assisting' => 'assisting',
+            'tracking'  => 'tracking',
+            default     => null,
+        };
     }
 
     private function commentPayload(ProjectComment $c): array

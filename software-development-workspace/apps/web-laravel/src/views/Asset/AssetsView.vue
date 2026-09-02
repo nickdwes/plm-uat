@@ -12,6 +12,7 @@ import { useRouter } from "vue-router";
 import { api, ApiError } from "../../lib/api";
 import EmployeePicker from "../../components/EmployeePicker.vue";
 import { currentOrgSlug } from "../../stores/auth";
+import { can } from "../../stores/permissions";
 import type { Asset, AssetListMeta } from "../../lib/types";
 
 const router = useRouter();
@@ -62,6 +63,9 @@ interface AssetCategory {
   /* assignee | custodian | none — whether this kind of thing is carried by a
      person, looked after by one, or consumed as seats. */
   custody_model?: string;
+  /* Standard/class-level field keys this category switches off — a room has no
+     brand, serial or warranty. */
+  suppressed_fields?: string[] | null;
 }
 
 const categories = ref<AssetCategory[]>([]);
@@ -72,6 +76,12 @@ const categoriesFor = computed(() =>
 /** Whichever category was chosen, if it is still on the list. */
 const chosenCategory = computed(() =>
   categoriesFor.value.find(c => c.name === form.value.category) ?? null);
+
+/** Whether a standard field (vendor, brand, model, serial…) is switched off for
+ *  the chosen category. Keeps a place-like asset — a room — free of hardware
+ *  fields that mean nothing for it. */
+const isFieldOff = (key: string) =>
+  (chosenCategory.value?.suppressed_fields ?? []).includes(key);
 
 /**
  * "Other" is the one that asks a follow-up.
@@ -199,6 +209,61 @@ const STATUSES   = ["available", "assigned", "maintenance", "retired"];
 const CATEGORIES = ["laptop", "desktop", "monitor", "phone", "tablet", "software", "peripheral", "other"];
 
 function org() { return currentOrgSlug.value; }
+
+// ── Microsoft 365 licences ───────────────────────────────────────────────────
+//
+// Reads the tenant, creates the licence products, and puts a name to every
+// seat by matching Microsoft's licensed users to the employee register.
+
+const canManageAssets = computed(() => can("assets.update"));
+const syncing     = ref(false);
+const syncPreview = ref<{
+  committed: boolean; products: number; agreements: number;
+  matched: number; allocated: number; released: number;
+  unmatched_seats: number; ambiguous: number;
+} | null>(null);
+
+async function syncLicences(preview: boolean): Promise<void> {
+  syncing.value = true; error.value = "";
+  try {
+    const res = await api<{
+      preview: boolean;
+      result: {
+        licences: { products?: unknown[]; agreements?: unknown[] };
+        owners: {
+          accounts: { matched: number; ambiguous: number };
+          seats: { allocated: number; released: number; unmatched_seats: number };
+        };
+      };
+    }>("POST", "/api/v1/assets/sync-licences", { org: org(), body: { preview } });
+
+    const { licences, owners } = res.result;
+
+    syncPreview.value = {
+      committed: !res.preview,
+      products:   (licences.products ?? []).length,
+      agreements: (licences.agreements ?? []).length,
+      matched:    owners.accounts.matched,
+      ambiguous:  owners.accounts.ambiguous,
+      allocated:  owners.seats.allocated,
+      released:   owners.seats.released,
+      unmatched_seats: owners.seats.unmatched_seats,
+    };
+
+    if (!res.preview) {
+      // The register has changed underneath the page.
+      summary.value = await api<Summary>("GET", "/api/v1/assets/summary", { org: org() });
+      await load();
+    }
+  } catch (e) {
+    // The API refuses with the reason — no connection, or one that is paused —
+    // and that sentence tells somebody what to do about it.
+    error.value = e instanceof Error ? e.message : "Could not sync licences.";
+    syncPreview.value = null;
+  } finally {
+    syncing.value = false;
+  }
+}
 
 async function load() {
   if (!org()) return;
@@ -761,10 +826,47 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
         <h1>Assets</h1>
         <p class="lead">Equipment register — what the organisation owns, and who holds it.</p>
       </div>
-      <button class="btn-primary" @click="openCreate">Add asset</button>
+      <div style="display:flex;gap:var(--space-2);align-items:center">
+        <!-- Here, not only on the integrations screen: this is the page
+             somebody is looking at when they ask why the software register is
+             empty. -->
+        <button v-if="canManageAssets" class="btn-secondary" :disabled="syncing"
+                @click="syncLicences(true)">
+          {{ syncing ? "Reading Microsoft 365…" : "Sync Microsoft 365 licences" }}
+        </button>
+        <button class="btn-primary" @click="openCreate">Add asset</button>
+      </div>
     </header>
 
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
+
+    <!-- What the sync would do, before it writes anything into a register
+         people report from. -->
+    <div v-if="syncPreview" class="card" style="padding:var(--space-4);margin-bottom:var(--space-4);
+                border-left:3px solid var(--color-info)">
+      <strong>{{ syncPreview.committed ? "Microsoft 365 licences synced" : "This is what the sync would do" }}</strong>
+      <ul style="margin:var(--space-2) 0 0;padding-left:var(--space-4);font-size:var(--font-size-sm)">
+        <li>{{ syncPreview.products }} licence product(s), {{ syncPreview.agreements }} subscription agreement(s)</li>
+        <li>{{ syncPreview.matched }} directory account(s) matched to an employee</li>
+        <li>{{ syncPreview.allocated }} seat(s) allocated, {{ syncPreview.released }} released</li>
+        <li v-if="syncPreview.unmatched_seats">
+          <strong>{{ syncPreview.unmatched_seats }} seat(s) held by somebody not on the employee register</strong>
+          — those stay unallocated, so the gap against Microsoft's own count stays visible.
+        </li>
+        <li v-if="syncPreview.ambiguous">
+          {{ syncPreview.ambiguous }} account(s) whose address is on more than one employee — left alone.
+        </li>
+      </ul>
+      <div style="display:flex;gap:var(--space-2);margin-top:var(--space-3)">
+        <button v-if="!syncPreview.committed" class="btn-primary" :disabled="syncing"
+                @click="syncLicences(false)">
+          {{ syncing ? "Syncing…" : "Apply" }}
+        </button>
+        <button class="btn-secondary" @click="syncPreview = null">
+          {{ syncPreview.committed ? "Dismiss" : "Cancel" }}
+        </button>
+      </div>
+    </div>
 
     <!-- ── Tabs ─────────────────────────────────────────────────────────── -->
     <nav class="tabs" role="tablist">
@@ -1390,17 +1492,17 @@ onMounted(() => { void load(); void openTab("overview"); void loadCategories(); 
         </div>
 
         <!-- Kept out of the way: it means the same thing for every kind. -->
-        <label class="field"><span>Vendor</span>
+        <label v-if="!isFieldOff('vendor')" class="field"><span>Vendor</span>
           <input v-model="form.vendor" class="control" placeholder="Who it was bought from" />
         </label>
 
         <!-- ── Physical only ──────────────────────────────────────────────── -->
         <template v-if="form.asset_class === 'physical'">
-          <div class="row">
-            <label class="field"><span>Brand</span><input v-model="form.brand" class="control" /></label>
-            <label class="field"><span>Model</span><input v-model="form.model" class="control" /></label>
+          <div v-if="!isFieldOff('brand') || !isFieldOff('model')" class="row">
+            <label v-if="!isFieldOff('brand')" class="field"><span>Brand</span><input v-model="form.brand" class="control" /></label>
+            <label v-if="!isFieldOff('model')" class="field"><span>Model</span><input v-model="form.model" class="control" /></label>
           </div>
-          <label class="field"><span>Serial number</span>
+          <label v-if="!isFieldOff('serial_number')" class="field"><span>Serial number</span>
             <input v-model="form.serial_number" class="control" />
           </label>
         </template>

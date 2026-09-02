@@ -9,16 +9,21 @@ use Illuminate\Support\Facades\Storage;
 
 class EmployeeDocument extends Model
 {
-    use SoftDeletes;
+    use SoftDeletes, \App\Models\Concerns\RecordsAuditTrail;
 
     protected $fillable = [
         'employee_id',
         'uploaded_by',
         'category',
+        'is_confidential',
         'original_name',
         'storage_path',
         'mime_type',
         'size_bytes',
+    ];
+
+    protected $casts = [
+        'is_confidential' => 'boolean',
     ];
 
     // ── Relationships ─────────────────────────────────────────────────────────

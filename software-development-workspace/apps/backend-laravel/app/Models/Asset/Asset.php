@@ -15,7 +15,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Asset extends Model
 {
-    use BelongsToOrganization, HasFactory, SoftDeletes;
+    use BelongsToOrganization, HasFactory, SoftDeletes, \App\Models\Concerns\RecordsAuditTrail;
 
     public const STATUS_AVAILABLE   = 'available';
     public const STATUS_ASSIGNED    = 'assigned';

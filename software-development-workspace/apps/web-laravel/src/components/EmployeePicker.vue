@@ -21,17 +21,26 @@ interface Match {
   work_email: string | null;
 }
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: number | null;
   placeholder?: string;
   disabled?: boolean;
+  /* When set, the search only returns people in this department. */
+  departmentId?: number | null;
 }>(), {
   placeholder: "Search by name, number or email…",
   disabled: false,
+  departmentId: null,
 });
 
 const emit = defineEmits<{
   (e: "update:modelValue", value: number | null): void;
+  /*
+   * The whole record, for callers that need more than the id — an invitee list
+   * needs the name and the work address, and re-fetching a person you have just
+   * picked to learn their email is a request nobody should have to make.
+   */
+  (e: "chosen", match: Match | null): void;
 }>();
 
 const term     = ref("");
@@ -59,7 +68,7 @@ async function run(q: string) {
   try {
     const res = await api<{ data: Match[] }>("GET", "/api/v1/employees/search", {
       org: currentOrgSlug.value,
-      params: { q },
+      params: props.departmentId ? { q, department_id: props.departmentId } : { q },
     });
     results.value = res.data ?? [];
     searched.value = true;
@@ -89,11 +98,36 @@ function choose(m: Match) {
   open.value = false;
   searched.value = false;
   emit("update:modelValue", m.id);
+  emit("chosen", m);
 }
 
 function clear() {
   chosen.value = null;
   emit("update:modelValue", null);
+  emit("chosen", null);
+}
+
+/**
+ * Opening the field lists people straight away.
+ *
+ * A picker that shows nothing until you have typed two characters is a text box
+ * wearing a picker's clothes: it asks you to already know the name, which is
+ * the thing you opened it to find out. So focus lists the first page — the
+ * courtesy the department-scoped case already had, now given to every caller.
+ *
+ * Cached on `results`, which the `term` watcher empties whenever the box is
+ * cleared, so re-focusing without typing reuses the list rather than asking
+ * again.
+ */
+async function browse() {
+  if (chosen.value) return;
+  if (term.value.trim().length >= 2) { open.value = results.value.length > 0; return; }
+
+  open.value = true;
+
+  if (results.value.length === 0) {
+    await run("");
+  }
 }
 
 onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
@@ -111,7 +145,7 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
       role="combobox"
       :aria-expanded="open"
       aria-autocomplete="list"
-      @focus="open = results.length > 0"
+      @focus="browse"
       @keydown.escape="open = false"
     />
 
@@ -125,7 +159,11 @@ onBeforeUnmount(() => { if (timer) clearTimeout(timer); });
 
     <ul v-if="open && (results.length || (searched && !loading))" class="results" role="listbox">
       <li v-if="loading" class="muted pad">Searching…</li>
-      <li v-else-if="!results.length" class="muted pad">No active employee matches that.</li>
+      <!-- "matches that" is only true when something was typed; on an opened
+           field with an empty box there is no "that" to match. -->
+      <li v-else-if="!results.length" class="muted pad">
+        {{ term.trim() ? "No active employee matches that." : "No active employees to pick from." }}
+      </li>
       <li
         v-for="m in results" :key="m.id"
         role="option" tabindex="0"

@@ -2,7 +2,9 @@
 import { ref, onMounted, watch, computed } from "vue";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug, authStore, updateOrgBranding, getToken } from "../stores/auth";
-import type { ComplianceDocumentRecord, ComplianceDocumentListData, ComplianceSummary, OrgStructureData, OrgFunctionalUnit, OrgDepartment, OrgBusinessUnit, OrgPractice } from "../lib/types";
+import EmployeePicker from "../components/EmployeePicker.vue";
+import type { ComplianceDocumentRecord, ComplianceDocumentListData, ComplianceSummary, OrgStructureData, OrgFunctionalUnit, OrgDepartment, OrgBusinessUnit, OrgPractice, LeadershipRow } from "../lib/types";
+import { can } from "../stores/permissions";
 
 interface Designation {
   id: number;
@@ -18,7 +20,7 @@ interface JobGrade      { id: number; name: string; level: number; min_salary: n
 interface JobCategory   { id: number; name: string; description: string | null }
 interface OrgProfile    { id: number; name: string; slug: string; legal_name: string | null; industry: string | null; country: string; currency: string; primary_email: string | null; primary_phone: string | null; address: string | null; is_active: boolean; logo_url?: string | null; primary_color?: string | null }
 
-const tab         = ref<"profile" | "departments" | "designations" | "grades" | "categories" | "asset-categories">("profile");
+const tab         = ref<"profile" | "departments" | "heads" | "designations" | "grades" | "categories" | "asset-categories">("profile");
 const profileTab  = ref<"overview" | "compliance">("overview");
 const designations  = ref<Designation[]>([]);
 const jobGrades     = ref<JobGrade[]>([]);
@@ -354,12 +356,12 @@ function toggleBU(id: number)   { expandedBUs.value.has(id)   ? expandedBUs.valu
 
 // ── Functional Unit forms/edit ─────────────────────────────────────────────
 const showUnitForm    = ref(false);
-const unitForm        = ref({ name: "", code: "", description: "" });
+const unitForm        = ref({ name: "", code: "", description: "", lead_employee_id: null as number | null });
 const editingUnit     = ref<OrgFunctionalUnit | null>(null);
 const unitSaving      = ref(false);
 
-function openNewUnit()  { editingUnit.value = null; unitForm.value = { name: "", code: "", description: "" }; showUnitForm.value = true; }
-function openEditUnit(u: OrgFunctionalUnit) { editingUnit.value = u; unitForm.value = { name: u.name, code: u.code ?? "", description: u.description ?? "" }; showUnitForm.value = true; }
+function openNewUnit()  { editingUnit.value = null; unitForm.value = { name: "", code: "", description: "", lead_employee_id: null }; showUnitForm.value = true; }
+function openEditUnit(u: OrgFunctionalUnit) { editingUnit.value = u; unitForm.value = { name: u.name, code: u.code ?? "", description: u.description ?? "", lead_employee_id: u.lead_employee_id ?? null }; showUnitForm.value = true; }
 function closeUnitForm() { showUnitForm.value = false; }
 
 async function saveUnit(): Promise<void> {
@@ -495,6 +497,77 @@ async function deletePractice(id: number): Promise<void> {
   if (!confirm("Delete this practice?")) return;
   await api("DELETE", `/api/v1/org/practices/${id}`, { org: org() });
   await loadStructure();
+}
+
+// ── Heads ────────────────────────────────────────────────────────────────────
+//
+// Who runs what, at every level of the structure. Approvals and escalations
+// climb this, so a level with nobody named is a level a late task reaches and
+// stops at.
+
+const leadership        = ref<LeadershipRow[]>([]);
+const leadershipLoading = ref(false);
+const leadershipUnfilled = ref(0);
+const editingHead       = ref<string | null>(null);
+const headDraft         = ref<number | null>(null);
+const headSaving        = ref(false);
+
+const canManageStructure = computed(() => can("departments.manage"));
+
+const LEVEL_LABELS: Record<string, string> = {
+  function: "Function", department: "Department",
+  business_unit: "Business Unit", practice: "Practice",
+};
+
+function levelLabel(level: string): string {
+  return LEVEL_LABELS[level] ?? level;
+}
+
+/** The endpoint each level's head is written through. */
+const LEVEL_ENDPOINTS: Record<string, string> = {
+  function: "functional-units", department: "departments",
+  business_unit: "business-units", practice: "practices",
+};
+
+async function loadLeadership(): Promise<void> {
+  leadershipLoading.value = true;
+  try {
+    const res = await api<{ data: LeadershipRow[]; meta: { unfilled: number } }>(
+      "GET", "/api/v1/org/leadership", { org: org() });
+    leadership.value = res.data;
+    leadershipUnfilled.value = res.meta.unfilled;
+  } catch { leadership.value = []; }
+  finally { leadershipLoading.value = false; }
+}
+
+function beginHead(row: LeadershipRow): void {
+  editingHead.value = row.level + "-" + row.id;
+  headDraft.value = row.lead?.id ?? null;
+}
+
+async function writeHead(row: LeadershipRow, employeeId: number | null): Promise<void> {
+  headSaving.value = true;
+  try {
+    await api("PUT", `/api/v1/org/${LEVEL_ENDPOINTS[row.level]}/${row.id}`, {
+      org: org(), body: { lead_employee_id: employeeId },
+    });
+    editingHead.value = null;
+    await loadLeadership();
+    // The structure tab shows the same people; leaving it stale would have
+    // the two tabs disagree about who runs a department.
+    await loadStructure();
+  } catch (e) {
+    alert(e instanceof Error ? e.message : "Could not save the head.");
+  } finally { headSaving.value = false; }
+}
+
+async function saveHead(row: LeadershipRow): Promise<void> {
+  await writeHead(row, headDraft.value);
+}
+
+async function clearHead(row: LeadershipRow): Promise<void> {
+  if (!confirm(`Remove ${row.lead?.name} as head of ${row.name}?`)) return;
+  await writeHead(row, null);
 }
 
 async function loadStructure(): Promise<void> {
@@ -944,6 +1017,7 @@ async function saveReminder(): Promise<void> {
     <div class="tabs" style="margin-bottom:20px">
       <button :class="['tab', { active: tab === 'profile' }]"       @click="tab = 'profile'">Profile</button>
       <button :class="['tab', { active: tab === 'departments' }]"   @click="tab = 'departments'">Departments</button>
+      <button :class="['tab', { active: tab === 'heads' }]"         @click="tab = 'heads'; loadLeadership()">Heads</button>
       <button :class="['tab', { active: tab === 'designations' }]"  @click="tab = 'designations'">Designations</button>
       <button :class="['tab', { active: tab === 'grades' }]"        @click="tab = 'grades'">Job Grades</button>
       <button :class="['tab', { active: tab === 'categories' }]"    @click="tab = 'categories'">Job Categories</button>
@@ -1288,6 +1362,79 @@ async function saveReminder(): Promise<void> {
     </template>
 
     <!-- ── DEPARTMENTS (Hierarchy Tree) ─────────────────────────────────────── -->
+    <!-- ── Heads ────────────────────────────────────────────────────────
+         Who runs what, at every level, in one list. The structure is spread
+         across four tables and four drawers, so "who are our department
+         heads" used to mean opening thirteen of them. -->
+    <template v-if="tab === 'heads'">
+      <div class="card" style="padding:16px;margin-bottom:16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <strong>Who runs what</strong>
+            <p style="font-size:var(--font-size-sm);color:var(--color-text-muted);margin:4px 0 0;max-width:64ch">
+              Approvals and escalations climb this. A level with nobody named
+              is a level a late task or a travel request reaches and stops at —
+              which is why most escalations here currently reach nobody.
+            </p>
+          </div>
+          <div v-if="leadership.length" style="text-align:right;white-space:nowrap">
+            <div style="font-size:var(--font-size-xl-size);font-weight:600"
+                 :style="leadershipUnfilled ? 'color:var(--color-error)' : 'color:var(--color-success)'">
+              {{ leadership.length - leadershipUnfilled }} / {{ leadership.length }}
+            </div>
+            <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">have a head</div>
+          </div>
+        </div>
+      </div>
+
+      <p v-if="leadershipLoading" class="muted">Loading…</p>
+
+      <div v-else class="card table-wrap">
+        <table class="tbl">
+          <thead>
+            <tr><th>Level</th><th>Name</th><th>Sits under</th><th>Head</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in leadership" :key="row.level + '-' + row.id">
+              <td><span class="badge badge-gray">{{ levelLabel(row.level) }}</span></td>
+              <td>
+                <strong>{{ row.name }}</strong>
+                <span v-if="row.code" style="color:var(--color-text-muted)"> · {{ row.code }}</span>
+              </td>
+              <td style="color:var(--color-text-muted)">{{ row.parent ?? '—' }}</td>
+              <td>
+                <template v-if="editingHead === row.level + '-' + row.id">
+                  <EmployeePicker v-model="headDraft" placeholder="Search by name, number or email…" />
+                </template>
+                <template v-else-if="row.lead">
+                  {{ row.lead.name }}
+                  <span v-if="row.lead.employee_number" style="color:var(--color-text-muted);font-size:var(--font-size-xs)">
+                    {{ row.lead.employee_number }}
+                  </span>
+                </template>
+                <span v-else style="color:var(--color-error)">Nobody</span>
+              </td>
+              <td style="text-align:right;white-space:nowrap">
+                <template v-if="editingHead === row.level + '-' + row.id">
+                  <button class="btn btn-primary btn-sm" :disabled="headSaving" @click="saveHead(row)">
+                    {{ headSaving ? 'Saving…' : 'Save' }}
+                  </button>
+                  <button class="btn btn-ghost btn-sm" @click="editingHead = null">Cancel</button>
+                </template>
+                <template v-else>
+                  <button v-if="canManageStructure" class="btn btn-ghost btn-sm" @click="beginHead(row)">
+                    {{ row.lead ? 'Change' : 'Assign' }}
+                  </button>
+                  <button v-if="canManageStructure && row.lead" class="btn btn-ghost btn-sm"
+                          style="color:var(--color-error)" @click="clearHead(row)">Clear</button>
+                </template>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+
     <template v-if="tab === 'departments'">
       <!-- Toolbar -->
       <div class="hs-toolbar">
@@ -1433,6 +1580,12 @@ async function saveReminder(): Promise<void> {
               <input v-model="unitForm.name" type="text" class="comp-field-input" placeholder="e.g. Finance" />
               <label class="comp-field-label">Code</label>
               <input v-model="unitForm.code" type="text" class="comp-field-input" placeholder="e.g. FIN" maxlength="20" />
+              <label class="comp-field-label">Function Head</label>
+              <EmployeePicker v-model="unitForm.lead_employee_id" placeholder="Search by name, number or email…" />
+              <small class="comp-field-hint">
+                The level above departments — where an escalation goes when a
+                department head cannot resolve it.
+              </small>
               <label class="comp-field-label">Description</label>
               <textarea v-model="unitForm.description" class="comp-field-input" rows="2"></textarea>
               <div class="comp-drawer-actions">
@@ -1464,9 +1617,11 @@ async function saveReminder(): Promise<void> {
                 <option :value="null">— Unassigned —</option>
                 <option v-for="u in functionalUnits" :key="u.id" :value="u.id">{{ u.name }}</option>
               </select>
-              <label class="comp-field-label">Department / Practice Lead</label>
-              <input v-model.number="deptForm.lead_employee_id" type="number" class="comp-field-input" placeholder="Employee ID (optional)" />
-              <small class="comp-field-hint">Enter the Employee ID of the lead. Employee search coming soon.</small>
+              <label class="comp-field-label">Department Head</label>
+              <EmployeePicker v-model="deptForm.lead_employee_id" placeholder="Search by name, number or email…" />
+              <small class="comp-field-hint">
+                Who escalations and approvals reach for this department.
+              </small>
               <label class="comp-field-label">Description</label>
               <textarea v-model="deptForm.description" class="comp-field-input" rows="2"></textarea>
               <div class="comp-drawer-actions">
@@ -1491,8 +1646,8 @@ async function saveReminder(): Promise<void> {
               <input v-model="buForm.name" type="text" class="comp-field-input" placeholder="e.g. Retail Banking" />
               <label class="comp-field-label">Code</label>
               <input v-model="buForm.code" type="text" class="comp-field-input" maxlength="20" />
-              <label class="comp-field-label">Business Unit Lead</label>
-              <input v-model.number="buForm.lead_employee_id" type="number" class="comp-field-input" placeholder="Employee ID (optional)" />
+              <label class="comp-field-label">Business Unit Head</label>
+              <EmployeePicker v-model="buForm.lead_employee_id" placeholder="Search by name, number or email…" />
               <label class="comp-field-label">Description</label>
               <textarea v-model="buForm.description" class="comp-field-input" rows="2"></textarea>
               <div class="comp-drawer-actions">
@@ -1518,7 +1673,7 @@ async function saveReminder(): Promise<void> {
               <label class="comp-field-label">Code</label>
               <input v-model="practiceForm.code" type="text" class="comp-field-input" maxlength="20" />
               <label class="comp-field-label">Practice Lead</label>
-              <input v-model.number="practiceForm.lead_employee_id" type="number" class="comp-field-input" placeholder="Employee ID (optional)" />
+              <EmployeePicker v-model="practiceForm.lead_employee_id" placeholder="Search by name, number or email…" />
               <label class="comp-field-label">Description</label>
               <textarea v-model="practiceForm.description" class="comp-field-input" rows="2"></textarea>
               <div class="comp-drawer-actions">
@@ -1587,68 +1742,70 @@ async function saveReminder(): Promise<void> {
             <button class="ov-modal-close" type="button" @click="editDesigId = null">✕</button>
           </div>
 
-          <p v-if="saveError" class="status" style="color:var(--red)">{{ saveError }}</p>
+          <div class="ov-modal-body">
+            <p v-if="saveError" class="status ov-form-error">{{ saveError }}</p>
 
-          <div class="ov-desig-form">
-            <label class="ov-df">
-              <span>Job title</span>
-              <input v-model="editDesig.title" type="text" class="input" placeholder="Network Engineer" />
-            </label>
+            <div class="ov-desig-form">
+              <label class="ov-df">
+                <span>Job title</span>
+                <input v-model="editDesig.title" type="text" class="input" placeholder="Network Engineer" />
+              </label>
 
-            <label class="ov-df">
-              <span>Summary</span>
-              <input v-model="editDesig.description" type="text" class="input" maxlength="500"
-                     placeholder="One line — this is what the org screens print" />
-            </label>
+              <label class="ov-df">
+                <span>Summary</span>
+                <input v-model="editDesig.description" type="text" class="input" maxlength="500"
+                       placeholder="One line — this is what the org screens print" />
+              </label>
 
-            <label class="ov-df">
-              <span>Job description</span>
-              <textarea v-model="editDesig.job_description" class="input" rows="8"
-                        placeholder="What the role owns, who it answers to, what a good year looks like."></textarea>
-            </label>
+              <label class="ov-df">
+                <span>Job description</span>
+                <textarea v-model="editDesig.job_description" class="input" rows="8"
+                          placeholder="What the role owns, who it answers to, what a good year looks like."></textarea>
+              </label>
 
-            <div class="ov-df">
-              <span>Desired skills</span>
-              <div class="ov-tag-input">
-                <input
-                  v-model="newSkill" type="text" class="input"
-                  placeholder="Add a skill and press Enter"
-                  @keydown.enter.prevent="addTag('desired_skills')"
-                />
-                <button class="btn btn-ghost btn-sm" type="button" @click="addTag('desired_skills')">Add</button>
+              <div class="ov-df ov-df-group">
+                <span>Desired skills</span>
+                <div class="ov-tag-input">
+                  <input
+                    v-model="newSkill" type="text" class="input"
+                    placeholder="Add a skill and press Enter"
+                    @keydown.enter.prevent="addTag('desired_skills')"
+                  />
+                  <button class="btn btn-ghost btn-sm" type="button" @click="addTag('desired_skills')">Add</button>
+                </div>
+                <ul v-if="editDesig.desired_skills.length" class="ov-tags">
+                  <li v-for="(s, i) in editDesig.desired_skills" :key="s">
+                    {{ s }}
+                    <button type="button" aria-label="Remove" @click="removeTag('desired_skills', i)">×</button>
+                  </li>
+                </ul>
+                <p class="ov-hint">
+                  A vacancy raised for this role can inherit these, and candidate suitability scores against them.
+                </p>
               </div>
-              <ul v-if="editDesig.desired_skills.length" class="ov-tags">
-                <li v-for="(s, i) in editDesig.desired_skills" :key="s">
-                  {{ s }}
-                  <button type="button" aria-label="Remove" @click="removeTag('desired_skills', i)">×</button>
-                </li>
-              </ul>
-              <p class="ov-hint">
-                A vacancy raised for this role can inherit these, and candidate suitability scores against them.
-              </p>
-            </div>
 
-            <div class="ov-df">
-              <span>Certifications required</span>
-              <div class="ov-tag-input">
-                <input
-                  v-model="newCert" type="text" class="input"
-                  placeholder="Add a certification and press Enter"
-                  @keydown.enter.prevent="addTag('certifications')"
-                />
-                <button class="btn btn-ghost btn-sm" type="button" @click="addTag('certifications')">Add</button>
+              <div class="ov-df ov-df-group">
+                <span>Certifications required</span>
+                <div class="ov-tag-input">
+                  <input
+                    v-model="newCert" type="text" class="input"
+                    placeholder="Add a certification and press Enter"
+                    @keydown.enter.prevent="addTag('certifications')"
+                  />
+                  <button class="btn btn-ghost btn-sm" type="button" @click="addTag('certifications')">Add</button>
+                </div>
+                <ul v-if="editDesig.certifications.length" class="ov-tags">
+                  <li v-for="(c, i) in editDesig.certifications" :key="c">
+                    {{ c }}
+                    <button type="button" aria-label="Remove" @click="removeTag('certifications', i)">×</button>
+                  </li>
+                </ul>
+                <!-- Kept apart from skills on purpose. -->
+                <p class="ov-hint">
+                  A certification is a document that either exists or does not — unlike a skill, it is not a
+                  matter of degree and is not scored like one.
+                </p>
               </div>
-              <ul v-if="editDesig.certifications.length" class="ov-tags">
-                <li v-for="(c, i) in editDesig.certifications" :key="c">
-                  {{ c }}
-                  <button type="button" aria-label="Remove" @click="removeTag('certifications', i)">×</button>
-                </li>
-              </ul>
-              <!-- Kept apart from skills on purpose. -->
-              <p class="ov-hint">
-                A certification is a document that either exists or does not — unlike a skill, it is not a
-                matter of degree and is not scored like one.
-              </p>
             </div>
           </div>
 
@@ -1957,7 +2114,8 @@ async function saveReminder(): Promise<void> {
 .ov-modal-header  { display: flex; justify-content: space-between; align-items: flex-start; padding: 20px 24px 16px; border-bottom: 1px solid var(--color-border); }
 .ov-modal-header h3 { margin: 0; font-size: 16px; }
 .ov-modal-sub     { font-size: 13px; color: var(--color-text-muted); margin: 4px 0 0; }
-.ov-modal-close   { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-muted); padding: 4px; line-height: 1; }
+.ov-modal-close   { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--color-text-muted); padding: 5px; line-height: 1; border-radius: 999px; transition: background .12s, color .12s; }
+.ov-modal-close:hover { background: var(--color-surface-sunken); color: var(--color-text); }
 .ov-modal-body    { padding: 20px 24px; }
 .ov-modal-footer  { display: flex; justify-content: flex-end; gap: 10px; padding: 16px 24px; border-top: 1px solid var(--color-border); }
 .ov-form-grid     { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
@@ -2172,21 +2330,32 @@ async function saveReminder(): Promise<void> {
 /* ── Designations: the role, not just the label ─────────────────────────── */
 .ov-modal-wide { max-width: 46rem; }
 
-.ov-desig-form { display: flex; flex-direction: column; gap: 18px; }
-.ov-df { display: flex; flex-direction: column; gap: 6px; }
+.ov-desig-form { display: flex; flex-direction: column; gap: 20px; }
+.ov-df { display: flex; flex-direction: column; gap: 7px; }
 .ov-df > span { font-size: 12px; font-weight: 600; color: var(--color-text); }
-.ov-df textarea { font-family: inherit; resize: vertical; line-height: 1.5; }
+.ov-df textarea { font-family: inherit; resize: vertical; line-height: 1.5; min-height: 8rem; }
+
+.ov-form-error { margin-bottom: 16px; }
+
+/* Tag-entry sections get their own tinted box so they read as a distinct
+   kind of field from the plain text ones above them. */
+.ov-df-group { background: var(--color-surface-sunken); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: 14px 16px; }
 
 .ov-tag-input { display: flex; gap: 8px; align-items: center; }
-.ov-tag-input .input { flex: 1; }
+.ov-tag-input .input { flex: 1; background: #fff; }
 
-.ov-tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 6px 0 0; padding: 0; }
+.ov-tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 10px 0 0; padding: 0; }
 .ov-tags li {
-  display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 500; padding: 3px 4px 3px 10px; border-radius: 999px;
   background: var(--color-brand-light); color: var(--color-brand-base);
 }
-.ov-tags button { border: none; background: none; cursor: pointer; color: inherit; padding: 0; font-size: 14px; line-height: 1; }
+.ov-tags button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border: none; border-radius: 50%; background: rgba(0,0,0,.08);
+  cursor: pointer; color: inherit; padding: 0; font-size: 12px; line-height: 1; transition: background .12s;
+}
+.ov-tags button:hover { background: rgba(0,0,0,.18); }
 
 .ov-hint { font-size: 11px; color: var(--color-text-muted); margin: 4px 0 0; }
 
@@ -2198,5 +2367,9 @@ async function saveReminder(): Promise<void> {
 /* Distinct from a zero: nothing has been recorded, which is a job still to do. */
 .ov-none { font-size: 12px; color: var(--color-text-light); }
 
-.ov-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.ov-modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 14px 24px; border-top: 1px solid var(--color-border);
+  background: #fff; position: sticky; bottom: 0;
+}
 </style>

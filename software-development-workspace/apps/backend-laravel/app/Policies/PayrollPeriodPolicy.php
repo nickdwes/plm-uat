@@ -28,15 +28,19 @@ class PayrollPeriodPolicy extends BasePolicy
     }
 
     /**
-     * Viewing a period.
+     * Viewing payroll administration data.
      *
-     * Employees reach this to read their own payslip, so holding
-     * `payslip.view_own` is sufficient — the slip endpoint narrows to the
-     * caller's own record separately.
+     * This used to admit `payslip.view_own` on the theory that "the slip
+     * endpoint narrows to the caller's own record separately" — it did not:
+     * getSlip() narrows by organisation only, so every base employee could
+     * read any colleague's slip, the payment files and the whole P9/P10 by
+     * id. Self-service payslips flow through /employees/{id}/payslips, which
+     * carries its own narrowing and step-up; everything guarded HERE is the
+     * payroll admin surface and needs the real permission.
      */
     public function view(User $user): bool
     {
-        return $this->canAny($user, Permission::PAYROLL_VIEW, Permission::PAYSLIP_VIEW_OWN);
+        return $this->can($user, Permission::PAYROLL_VIEW);
     }
 
     public function create(User $user): bool

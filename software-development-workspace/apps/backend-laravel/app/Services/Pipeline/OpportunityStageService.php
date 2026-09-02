@@ -117,12 +117,20 @@ class OpportunityStageService
      * are the fit assessment. Refusing when it has not been done at all is
      * worth it — a deal qualified against nothing is the claim this stage
      * exists to prevent.
+     *
+     * The refusal names the questions still open. It used to say only "assess
+     * it first", which is true and useless: the whole live book failed this
+     * gate at once and the message gave nobody a next move. A control that
+     * blocks work should say what unblocks it.
      */
     public function qualify(Opportunity $opportunity): Opportunity
     {
         if (LeadQualification::score($opportunity) === null) {
+            $missing = LeadQualification::unanswered($opportunity);
+
             throw ValidationException::withMessages([
-                'qualification' => 'Assess the opportunity before marking it qualified.',
+                'qualification' => 'Answer the qualification questions before marking this qualified — '
+                    .'still open: '.implode(', ', $missing).'.',
             ]);
         }
 

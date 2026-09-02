@@ -112,6 +112,20 @@ class TaskApprovalTest extends TestCase
      * Stamped the first time the task leaves todo, because that is the moment
      * it happened — not whenever somebody later types a start date.
      */
+    /**
+     * Finishing a task now means saying what came of it, so these tests go
+     * through the same door a person does rather than flipping the status.
+     */
+    private function finish(Task $task)
+    {
+        return $this->postJson($this->url('/' . $task->id . '/closure'), [
+            'work_completed' => 'Rolled out and handed over.',
+            'deliverables'   => 'Config pack, as-built notes.',
+            'challenges'     => 'A day lost to a bad SFP.',
+            'outcomes'       => 'Site live.',
+        ]);
+    }
+
     public function test_picking_a_task_up_records_who_started_it(): void
     {
         $me   = $this->coordinator();
@@ -132,9 +146,7 @@ class TaskApprovalTest extends TestCase
         $owner = $this->employee('Owner');
         $task  = $this->task(['assigned_to' => $owner->id]);
 
-        $this->putJson($this->url('/' . $task->id), [
-            'title' => $task->title, 'status' => 'completed',
-        ])->assertOk();
+        $this->finish($task)->assertOk();
 
         $this->assertSame($owner->id, $task->fresh()->assigned_to);
         $this->assertSame($me->id, $task->fresh()->completed_by, 'Whoever finished it, not whoever owns it.');
@@ -146,7 +158,7 @@ class TaskApprovalTest extends TestCase
         $this->coordinator();
         $task = $this->task();
 
-        $this->putJson($this->url('/' . $task->id), ['title' => $task->title, 'status' => 'completed'])->assertOk();
+        $this->finish($task)->assertOk();
         $this->putJson($this->url('/' . $task->id), ['title' => $task->title, 'status' => 'in_progress'])->assertOk();
 
         $this->assertNull($task->fresh()->completed_by);
@@ -169,9 +181,7 @@ class TaskApprovalTest extends TestCase
 
         $task = $this->task(['requires_approval' => true, 'approver_id' => $approver->id]);
 
-        $this->putJson($this->url('/' . $task->id), [
-            'title' => $task->title, 'status' => 'completed',
-        ])->assertOk()->assertJsonPath('data.status', 'awaiting_approval');
+        $this->finish($task)->assertOk()->assertJsonPath('data.status', 'awaiting_approval');
 
         $this->assertNull($task->fresh()->completed_at);
     }
@@ -334,9 +344,7 @@ class TaskApprovalTest extends TestCase
 
         $task = $this->task(['requires_approval' => true, 'approver_id' => $approver->id]);
 
-        $this->putJson($this->url('/' . $task->id), [
-            'title' => $task->title, 'status' => 'completed',
-        ])->assertOk();
+        $this->finish($task)->assertOk();
 
         $this->assertDatabaseHas('notifications', [
             'user_id' => $approver->user_id, 'type' => 'task.awaiting_approval',

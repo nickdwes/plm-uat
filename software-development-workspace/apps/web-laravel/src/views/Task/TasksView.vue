@@ -24,6 +24,7 @@ import EmployeePicker from "../../components/EmployeePicker.vue";
 import AccountPicker from "../../components/AccountPicker.vue";
 import VendorPartnerPicker from "../../components/VendorPartnerPicker.vue";
 import { excerpt, hasText } from "../../lib/richText";
+import { useOrgHierarchy } from "../../composables/useOrgHierarchy";
 
 interface Person { id: number | null; name: string | null }
 interface TaskRow {
@@ -36,6 +37,8 @@ interface TaskRow {
   assignee: Person | null;
   assignees: Person[];
   project: { id: number; name: string } | null;
+  team: { id: number; name: string } | null;
+  origin: { type: string; id: number | string; reference: string | null } | null;
   owner: { party: string; is_ours: boolean; name: string | null; contact_name: string | null };
   source: string; is_generated: boolean;
   open_issue_count: number;
@@ -75,12 +78,30 @@ const summary = ref<Summary>({
 const incoming = ref<Ask[]>([]);
 const outgoing = ref<Ask[]>([]);
 
-const view   = ref<"kanban" | "list">("kanban");
+type View = "kanban" | "list" | "analytics";
+const view   = ref<View>("kanban");
 const status = ref("todo");
 const showFilters = ref(false);
 const category = ref("");
 const onlyOverdue = ref(false);
 const ownerParty = ref("");
+
+// Filter by where the work was directed — Function > Department > Business unit,
+// each narrowing the next.
+const fnUnit  = ref<number | null>(null);
+const dept    = ref<number | null>(null);
+const bizUnit = ref<number | null>(null);
+const { functionalUnits, departmentOptions, businessUnitOptions, load: loadHierarchy } = useOrgHierarchy(fnUnit, dept, bizUnit);
+
+// One reload after the cascade settles — picking a business unit fills its
+// department and function in the same tick, so a per-select handler would fire
+// on stale values. A macrotask lets those adjustments land first.
+let hierTimer: ReturnType<typeof setTimeout> | null = null;
+watch([fnUnit, dept, bizUnit], () => {
+  page.value = 1;
+  if (hierTimer) clearTimeout(hierTimer);
+  hierTimer = setTimeout(load, 0);
+});
 
 /**
  * Everything outstanding that somebody outside owes.
@@ -90,6 +111,7 @@ const ownerParty = ref("");
  * a column.
  */
 const awaitingOthers = ref(false);
+const myTeam = ref(false);
 
 const org = () => currentOrgSlug.value;
 
@@ -112,7 +134,10 @@ async function load() {
         search: search.value || undefined,
         category: category.value || undefined,
         owner_party: ownerParty.value || undefined,
-        state: awaitingOthers.value ? "awaiting_others" : (onlyOverdue.value ? "overdue" : undefined),
+        functional_unit_id: fnUnit.value || undefined,
+        department_id: dept.value || undefined,
+        business_unit_id: bizUnit.value || undefined,
+        state: myTeam.value ? "my_team" : (awaitingOthers.value ? "awaiting_others" : (onlyOverdue.value ? "overdue" : undefined)),
         // Cuts across statuses, so pinning one would hide most of it.
         status: view.value === "list" && ! awaitingOthers.value ? status.value : undefined,
         page: view.value === "list" ? page.value : undefined,
@@ -313,11 +338,69 @@ function setStatus(key: string) {
   load();
 }
 
-function setView(v: "kanban" | "list") {
+function setView(v: View) {
   view.value = v;
+  if (v === "analytics") { void loadAnalytics(); return; }
   page.value = 1;
   load();
 }
+
+// ── Analytics ───────────────────────────────────────────────────────────────
+/*
+ * The board answers "how many are late". This answers the question that
+ * follows — late because of whom — which nothing could answer until the
+ * responsibility field, the pause ledger and the extension record existed.
+ */
+interface Analytics {
+  health: { total: number; open: number; closed: number; paused: number; extended: number; overdue: number; overdue_on_us: number };
+  dependency: {
+    by_responsibility: { party: string; open: number; overdue: number; avg_days_overdue: number | null; paused_days: number }[];
+    unattributed: number;
+    open_pauses: { category: string; label: string; count: number; days: number }[];
+  };
+  accountability: {
+    bottlenecks: { reason: string; category: string; count: number; days: number }[];
+    extensions: {
+      total: number; tasks_affected: number; avg_days_moved: number | null;
+      by_month: { month: string; count: number }[];
+      most_moved: { id: number; reference: string | null; title: string; moves: number; deadline: string | null }[];
+    };
+    punctuality: { finished: number; on_time: number; late: number; rate: number | null; rate_net_of_waiting: number | null };
+  };
+  escalations: {
+    total: number; tasks: number; unreachable: number;
+    by_trigger: { trigger: string; label: string; count: number }[];
+    by_level: { level: string; label: string; count: number; unreachable: number }[];
+  };
+}
+
+const analytics = ref<Analytics | null>(null);
+const analyticsLoading = ref(false);
+
+async function loadAnalytics() {
+  analyticsLoading.value = true;
+  try {
+    analytics.value = (await api<{ data: Analytics }>("GET", "/api/v1/tasks/analytics", { org: org() })).data;
+  } catch (e) { fail(e, "Could not load the figures."); }
+  finally { analyticsLoading.value = false; }
+}
+
+const RESPONSIBILITY_LABEL: Record<string, string> = {
+  self: "Us", internal_team: "Internal team", customer: "Customer", vendor: "Vendor",
+  subcontractor: "Subcontractor", management: "Management", procurement: "Procurement", finance: "Finance",
+};
+const partyLabel = (p: string) => RESPONSIBILITY_LABEL[p] ?? p;
+const readable = (v: string) => v.replace(/_/g, " ").replace(/^./, (m) => m.toUpperCase());
+const monthLabel = (m: string) =>
+  new Date(m + "-01").toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+
+/** The tallest bar sets the scale, so a chart of one month still reads. */
+const peakMonth = computed(() =>
+  Math.max(1, ...(analytics.value?.accountability.extensions.by_month ?? []).map((m) => m.count)));
+const peakPause = computed(() =>
+  Math.max(1, ...(analytics.value?.dependency.open_pauses ?? []).map((p) => p.days)));
+const peakBottleneck = computed(() =>
+  Math.max(1, ...(analytics.value?.accountability.bottlenecks ?? []).map((b) => b.days)));
 
 function go(p: number) {
   if (p < 1 || p > lastPage.value) return;
@@ -333,7 +416,7 @@ const pages = computed(() => {
   return out;
 });
 
-onMounted(refresh);
+onMounted(() => { refresh(); loadHierarchy(); });
 </script>
 
 <template>
@@ -418,6 +501,12 @@ onMounted(refresh);
         </svg>
         List view
       </button>
+      <button :class="['tk-tab', { active: view === 'analytics' }]" @click="setView('analytics')">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+          <path d="M3 16h14M6 16V9M10 16V5M14 16v-4" />
+        </svg>
+        Analytics
+      </button>
     </div>
 
     <!-- Status chips belong to the list; on the board the columns are the
@@ -436,6 +525,157 @@ onMounted(refresh);
       </button>
     </div>
 
+    <!-- ── Analytics ────────────────────────────────────────────────────────
+         The board says how many are late. This says late because of whom. -->
+    <template v-if="view === 'analytics'">
+      <p v-if="analyticsLoading" class="tk-empty">Working it out…</p>
+      <template v-else-if="analytics">
+        <div class="tk-an-kpis">
+          <div class="tk-an-kpi"><span class="tk-an-n">{{ analytics.health.open }}</span><span class="tk-an-l">open</span></div>
+          <div class="tk-an-kpi"><span class="tk-an-n">{{ analytics.health.closed }}</span><span class="tk-an-l">closed</span></div>
+          <div class="tk-an-kpi" :class="{ warn: analytics.health.paused }">
+            <span class="tk-an-n">{{ analytics.health.paused }}</span><span class="tk-an-l">paused</span></div>
+          <div class="tk-an-kpi" :class="{ warn: analytics.health.extended }">
+            <span class="tk-an-n">{{ analytics.health.extended }}</span><span class="tk-an-l">extended</span></div>
+          <div class="tk-an-kpi" :class="{ bad: analytics.health.overdue }">
+            <span class="tk-an-n">{{ analytics.health.overdue }}</span><span class="tk-an-l">overdue</span></div>
+          <!-- Late, and not because anybody else is holding it. -->
+          <div class="tk-an-kpi" :class="{ bad: analytics.health.overdue_on_us }">
+            <span class="tk-an-n">{{ analytics.health.overdue_on_us }}</span><span class="tk-an-l">overdue on us</span></div>
+        </div>
+
+        <div class="tk-an-grid">
+          <!-- Who the open work is sitting with. -->
+          <section class="card tk-an-card">
+            <h3 class="tk-an-head">Who it is waiting on</h3>
+            <p v-if="!analytics.dependency.by_responsibility.length" class="tk-empty">
+              Nobody has said what any of it is waiting on yet.
+            </p>
+            <table v-else class="tk-an-table">
+              <thead><tr><th>Party</th><th>Open</th><th>Overdue</th><th>Avg days late</th><th>Days paused</th></tr></thead>
+              <tbody>
+                <tr v-for="r in analytics.dependency.by_responsibility" :key="r.party">
+                  <td>{{ partyLabel(r.party) }}</td>
+                  <td>{{ r.open }}</td>
+                  <td :class="{ bad: r.overdue }">{{ r.overdue }}</td>
+                  <td>{{ r.avg_days_overdue ?? "—" }}</td>
+                  <td>{{ r.paused_days || "—" }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p v-if="analytics.dependency.unattributed" class="tk-an-note">
+              {{ analytics.dependency.unattributed }} open task<template v-if="analytics.dependency.unattributed !== 1">s</template>
+              with nobody named — an unanswered question, not "us".
+            </p>
+          </section>
+
+          <!-- What is actually stopped, as opposed to what people have said. -->
+          <section class="card tk-an-card">
+            <h3 class="tk-an-head">Stopped, waiting</h3>
+            <p v-if="!analytics.dependency.open_pauses.length" class="tk-empty">Nothing is paused.</p>
+            <ul v-else class="tk-an-bars">
+              <li v-for="p in analytics.dependency.open_pauses" :key="p.category">
+                <span class="tk-an-bar-label">{{ p.label }}</span>
+                <span class="tk-an-bar"><span class="tk-an-fill" :style="{ width: (p.days / peakPause * 100) + '%' }"></span></span>
+                <span class="tk-an-bar-n">{{ p.count }} · {{ p.days }}d</span>
+              </li>
+            </ul>
+          </section>
+
+          <!-- Where the time actually goes, which is not always where people think. -->
+          <section class="card tk-an-card">
+            <h3 class="tk-an-head">Bottlenecks</h3>
+            <p v-if="!analytics.accountability.bottlenecks.length" class="tk-empty">Nothing has been paused yet.</p>
+            <ul v-else class="tk-an-bars">
+              <li v-for="b in analytics.accountability.bottlenecks" :key="b.reason">
+                <span class="tk-an-bar-label">{{ readable(b.reason) }}</span>
+                <span class="tk-an-bar"><span class="tk-an-fill warn" :style="{ width: (b.days / peakBottleneck * 100) + '%' }"></span></span>
+                <span class="tk-an-bar-n">{{ b.days }}d</span>
+              </li>
+            </ul>
+          </section>
+
+          <!-- Did it land on time — and would it have, without the waiting? -->
+          <section class="card tk-an-card">
+            <h3 class="tk-an-head">Delivered on time</h3>
+            <p v-if="analytics.accountability.punctuality.rate === null" class="tk-empty">
+              Nothing finished against a deadline yet.
+            </p>
+            <template v-else>
+              <div class="tk-an-pair">
+                <div><span class="tk-an-n">{{ analytics.accountability.punctuality.rate }}%</span>
+                  <span class="tk-an-l">as measured</span></div>
+                <div><span class="tk-an-n ok">{{ analytics.accountability.punctuality.rate_net_of_waiting }}%</span>
+                  <span class="tk-an-l">net of waiting on others</span></div>
+              </div>
+              <p class="tk-an-note">
+                {{ analytics.accountability.punctuality.on_time }} of
+                {{ analytics.accountability.punctuality.finished }} landed by their final deadline. The second
+                figure takes out days the task spent parked on somebody else — the difference between slow
+                and blocked. There is no SLA on tasks, so this is not one.
+              </p>
+            </template>
+          </section>
+
+          <!-- How often plans stop holding. -->
+          <section class="card tk-an-card">
+            <h3 class="tk-an-head">Deadlines moved</h3>
+            <p v-if="!analytics.accountability.extensions.total" class="tk-empty">No deadline has moved.</p>
+            <template v-else>
+              <div class="tk-an-pair">
+                <div><span class="tk-an-n">{{ analytics.accountability.extensions.total }}</span><span class="tk-an-l">moves</span></div>
+                <div><span class="tk-an-n">{{ analytics.accountability.extensions.tasks_affected }}</span><span class="tk-an-l">tasks</span></div>
+                <div><span class="tk-an-n">{{ analytics.accountability.extensions.avg_days_moved ?? "—" }}</span><span class="tk-an-l">avg days</span></div>
+              </div>
+              <div v-if="analytics.accountability.extensions.by_month.length" class="tk-an-months">
+                <span v-for="m in analytics.accountability.extensions.by_month" :key="m.month" class="tk-an-month">
+                  <span class="tk-an-col"><span class="tk-an-col-fill"
+                        :style="{ height: (m.count / peakMonth * 100) + '%' }"></span></span>
+                  <span class="tk-an-col-l">{{ monthLabel(m.month) }}</span>
+                </span>
+              </div>
+              <ul v-if="analytics.accountability.extensions.most_moved.length" class="tk-an-list">
+                <li v-for="t in analytics.accountability.extensions.most_moved" :key="t.id">
+                  <button class="link-btn" @click="open(t.id)">{{ t.reference ?? "—" }} {{ t.title }}</button>
+                  <span class="pill pill-warn">{{ t.moves }} moves</span>
+                </li>
+              </ul>
+            </template>
+          </section>
+
+          <!-- Who has been told, and how often nobody could be. -->
+          <section class="card tk-an-card">
+            <h3 class="tk-an-head">Escalations</h3>
+            <p v-if="!analytics.escalations.total" class="tk-empty">Nothing has climbed anybody's desk.</p>
+            <template v-else>
+              <div class="tk-an-pair">
+                <div><span class="tk-an-n">{{ analytics.escalations.total }}</span><span class="tk-an-l">raised</span></div>
+                <div><span class="tk-an-n">{{ analytics.escalations.tasks }}</span><span class="tk-an-l">tasks</span></div>
+                <div><span class="tk-an-n" :class="{ bad: analytics.escalations.unreachable }">
+                  {{ analytics.escalations.unreachable }}</span><span class="tk-an-l">reached nobody</span></div>
+              </div>
+              <table class="tk-an-table">
+                <thead><tr><th>Rung</th><th>Raised</th><th>Reached nobody</th></tr></thead>
+                <tbody>
+                  <tr v-for="l in analytics.escalations.by_level" :key="l.level">
+                    <td>{{ l.label }}</td>
+                    <td>{{ l.count }}</td>
+                    <td :class="{ bad: l.unreachable }">{{ l.unreachable || "—" }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p v-if="analytics.escalations.unreachable" class="tk-an-note">
+                A rung that reached nobody is a hole in the org chart, not a non-event — the role exists
+                and nobody holds it.
+              </p>
+            </template>
+          </section>
+        </div>
+      </template>
+      <p v-else class="tk-empty">Nothing to report yet.</p>
+    </template>
+
+    <template v-else>
     <div class="tk-toolbar">
       <input v-model="search" class="control tk-search" type="search" placeholder="Search"
              @keyup.enter="page = 1; load()" />
@@ -460,9 +700,28 @@ onMounted(refresh);
           <option value="customer">A customer</option>
           <option value="vendor">A vendor or OEM</option>
         </select></label>
+      <label class="tk-field"><span>Function</span>
+        <select v-model="fnUnit" class="control">
+          <option :value="null">Any function</option>
+          <option v-for="u in functionalUnits" :key="u.id" :value="u.id">{{ u.name }}</option>
+        </select></label>
+      <label class="tk-field"><span>Department</span>
+        <select v-model="dept" class="control">
+          <option :value="null">Any department</option>
+          <option v-for="d in departmentOptions" :key="d.id" :value="d.id">{{ d.name }}</option>
+        </select></label>
+      <label class="tk-field"><span>Business unit</span>
+        <select v-model="bizUnit" class="control">
+          <option :value="null">Any business unit</option>
+          <option v-for="b in businessUnitOptions" :key="b.id" :value="b.id">{{ b.name }}</option>
+        </select></label>
       <label class="tk-check">
         <input v-model="onlyOverdue" type="checkbox" @change="page = 1; load()" />
         <span>Only what is past its deadline</span>
+      </label>
+      <label class="tk-check">
+        <input v-model="myTeam" type="checkbox" @change="page = 1; load()" />
+        <span>My team's queue</span>
       </label>
     </div>
 
@@ -494,6 +753,11 @@ onMounted(refresh);
             <span v-if="t.is_generated" class="tk-auto" :title="`Raised automatically (${t.source})`">auto</span>
           </h3>
           <p v-if="hasText(t.description)" class="tk-card-body">{{ excerpt(t.description) }}</p>
+
+          <div v-if="t.origin?.type === 'ticket' || t.team" class="tk-tags">
+            <span v-if="t.origin?.type === 'ticket'" class="tk-tag ticket">🎫 {{ t.origin.reference ?? "#" + t.origin.id }}</span>
+            <span v-if="t.team" class="tk-tag team">👥 {{ t.team.name }}</span>
+          </div>
 
           <!-- An open issue is not the same thing as the column the card is
                in: a task can be In Progress and still be stuck. -->
@@ -545,6 +809,8 @@ onMounted(refresh);
               <td class="tk-name">
                 {{ t.title }}
                 <span v-if="t.is_generated" class="tk-auto" :title="`Raised automatically (${t.source})`">auto</span>
+                <span v-if="t.origin?.type === 'ticket'" class="tk-tag ticket">🎫 {{ t.origin.reference ?? "#" + t.origin.id }}</span>
+                <span v-if="t.team" class="tk-tag team">👥 {{ t.team.name }}</span>
               </td>
               <td>
                 <span v-if="t.owner.is_ours" class="tk-muted">Us</span>
@@ -581,6 +847,7 @@ onMounted(refresh);
         </nav>
       </div>
     </div>
+    </template>
 
     <!-- ── Requests ─────────────────────────────────────────────────────── -->
     <div v-if="showInbox" class="tk-sheet-backdrop" @click.self="showInbox = false">
@@ -833,6 +1100,56 @@ onMounted(refresh);
 .tk-stat-value.late { color: var(--color-danger-text); }
 
 /* ── View switch ────────────────────────────────────────────────────────── */
+/* ── Analytics ─────────────────────────────────────────────────────────────
+   Charts in plain CSS. Three bar charts do not justify a charting library, and
+   the ones here are read for shape rather than measured off. */
+.tk-an-kpis { @apply grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-3); margin-bottom: var(--space-4); }
+.tk-an-kpi {
+  @apply flex flex-col; gap: 2px; padding: var(--space-4);
+  border: 1px solid var(--color-border); border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+}
+.tk-an-kpi.warn { border-left: 3px solid var(--color-amber); }
+.tk-an-kpi.bad  { border-left: 3px solid var(--color-error); }
+.tk-an-n { font-size: var(--text-xl-size); font-weight: 600; color: var(--color-text); font-variant-numeric: tabular-nums; }
+.tk-an-n.ok  { color: var(--color-success); }
+.tk-an-n.bad { color: var(--color-error); }
+.tk-an-l { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+
+.tk-an-grid { @apply grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr)); gap: var(--space-4); align-items: start; }
+.tk-an-card { padding: var(--space-5); }
+.tk-an-head { font-size: var(--text-sm-size); font-weight: 600; color: var(--color-text); margin: 0 0 var(--space-3); }
+.tk-an-note { margin: var(--space-3) 0 0; font-size: var(--text-xs-size); color: var(--color-text-muted); max-width: 52ch; }
+.tk-an-pair { @apply flex flex-wrap; gap: var(--space-6); margin-bottom: var(--space-3); }
+.tk-an-pair > div { @apply flex flex-col; gap: 2px; }
+
+.tk-an-table { @apply w-full; border-collapse: collapse; font-size: var(--text-sm-size); }
+.tk-an-table th {
+  text-align: left; padding: var(--space-2) var(--space-2) var(--space-2) 0;
+  font-size: var(--text-xs-size); font-weight: 600; color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-border); white-space: nowrap;
+}
+.tk-an-table td { padding: var(--space-2) var(--space-2) var(--space-2) 0; border-bottom: 1px solid var(--color-border); font-variant-numeric: tabular-nums; }
+.tk-an-table tr:last-child td { border-bottom: none; }
+.tk-an-table td.bad { color: var(--color-error); font-weight: 600; }
+
+.tk-an-bars { @apply flex flex-col; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.tk-an-bars li { @apply grid items-center; grid-template-columns: 9rem 1fr auto; gap: var(--space-3); }
+.tk-an-bar-label { font-size: var(--text-xs-size); color: var(--color-text-muted); }
+.tk-an-bar { height: 8px; border-radius: var(--radius-full); background: var(--color-neutral-200); overflow: hidden; }
+.tk-an-fill { @apply block; height: 100%; border-radius: var(--radius-full); background: var(--color-brand-base); }
+.tk-an-fill.warn { background: var(--color-amber); }
+.tk-an-bar-n { font-size: var(--text-xs-size); color: var(--color-text-light); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.tk-an-months { @apply flex items-end; gap: var(--space-2); height: 5rem; margin-bottom: var(--space-3); }
+.tk-an-month { @apply flex flex-1 flex-col items-center; gap: 4px; height: 100%; }
+.tk-an-col { @apply flex w-full flex-1 items-end; }
+.tk-an-col-fill { @apply block w-full; min-height: 3px; border-radius: var(--radius-sm) var(--radius-sm) 0 0; background: var(--color-brand-base); }
+.tk-an-col-l { font-size: 0.62rem; color: var(--color-text-light); white-space: nowrap; }
+
+.tk-an-list { @apply flex flex-col; gap: var(--space-2); list-style: none; margin: var(--space-2) 0 0; padding: 0; }
+.tk-an-list li { @apply flex flex-wrap items-center justify-between; gap: var(--space-2); font-size: var(--text-sm-size); }
+
 .tk-tabs { @apply flex; gap: var(--space-5); border-bottom: 1px solid var(--color-border); margin-bottom: var(--space-4); }
 .tk-tab {
   @apply inline-flex cursor-pointer items-center border-none bg-transparent;
@@ -902,6 +1219,15 @@ onMounted(refresh);
   background: var(--color-brand-subtle); color: var(--color-brand-on-surface);
   font-size: 0.6rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
 }
+.tk-tags { @apply flex flex-wrap; gap: 6px; margin: 6px 0 0; }
+/* The card chips are pills; the base `.tk-tag` below them is a square tag used
+   in the request and schedule sheets. Both were declared as `.tk-tag`, so the
+   later one won and the pills came out square. The variants carry their own
+   shape now, and the ticket colour comes from the brand rather than a literal. */
+.tk-tag.ticket, .tk-tag.team { border-radius: var(--radius-full); padding: 1px var(--space-2); }
+.tk-tag.ticket { background: var(--color-brand-light); color: var(--color-brand-dark); }
+.tk-tag.team { background: var(--color-surface-sunken); color: var(--color-text-muted); }
+.tk-name .tk-tag { margin-left: var(--space-2); }
 
 .tk-sched {
   @apply flex flex-col; gap: var(--space-1);

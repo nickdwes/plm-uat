@@ -6,9 +6,11 @@
  * layout — with the addition that model does not have: every assignment names
  * a tenant, so one identity holds different rights in different organizations.
  */
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
+import { useRouter } from "vue-router";
 import { api, ApiError } from "../lib/api";
 import { currentOrgSlug } from "../stores/auth";
+import { can } from "../stores/permissions";
 
 // ── Types (mirror the API resources) ─────────────────────────────────────────
 
@@ -51,6 +53,19 @@ interface RoleDetail extends RoleSummary {
 interface Options {
   organizations: { id: number; name: string; slug: string }[];
   scopes: { value: string; label: string }[];
+  permissions?: string[];
+}
+
+interface DenyRow {
+  id: number;
+  user: { id: number; name: string; email: string } | null;
+  permission: string;
+  organization: { id: number; name: string } | null;
+  expires_at: string | null;
+  expired: boolean;
+  reason: string;
+  created_by: string | null;
+  created_at: string | null;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -59,6 +74,8 @@ const roles     = ref<RoleSummary[]>([]);
 const selected  = ref<RoleDetail | null>(null);
 const options   = ref<Options>({ organizations: [], scopes: [] });
 const tab       = ref<"general" | "assigned" | "permissions">("permissions");
+
+const router = useRouter();
 
 const loading      = ref(false);
 const loadingRole  = ref(false);
@@ -117,6 +134,8 @@ async function selectRole(role: RoleSummary) {
 
 function openGrant() {
   grantError.value = "";
+  grantPicker.reset();
+  void loadDirectory();
   grantForm.value = {
     user_id: "",
     organization_id: options.value.organizations[0]?.id ?? "",
@@ -185,6 +204,276 @@ const pastHolders = computed(
 
 function scopeLabel(s: string) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
+const canManage = computed(() => can("roles.manage"));
+
+// ── The person picker ────────────────────────────────────────────────────────
+//
+// Assignments and denies target the LOGIN identity (a user id), which is not
+// the employee id — the raw number input this replaces made people go look
+// one up. The directory this screen already reads feeds a searchable list
+// instead; picking a row is what fills the id.
+
+interface DirectoryUser { id: number; name: string; email: string; status: string }
+
+const directory       = ref<DirectoryUser[]>([]);
+const directoryLoaded = ref(false);
+
+async function loadDirectory() {
+  if (directoryLoaded.value) return;
+  try {
+    const res = await api<{ data: DirectoryUser[] }>("GET", "/api/v1/authorization/users", { org: org() });
+    directory.value = res.data ?? [];
+    directoryLoaded.value = true;
+  } catch { /* the dialogs degrade to keeping the field empty */ }
+}
+
+function makePicker(assign: (id: number | "") => void) {
+  const query = ref("");
+  const matches = computed(() => {
+    const q = query.value.trim().toLowerCase();
+    if (!q) return [];
+    return directory.value
+      .filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+      .slice(0, 8);
+  });
+  const pick = (u: DirectoryUser) => { assign(u.id); query.value = `${u.name} — ${u.email}`; };
+  const onInput = () => assign(""); // typing again un-picks
+  const reset = () => { query.value = ""; assign(""); };
+  return { query, matches, pick, onInput, reset };
+}
+
+const grantPicker = makePicker(id => { grantForm.value.user_id = id; });
+
+// ── The role editor ──────────────────────────────────────────────────────────
+//
+// One dialog, two modes. The matrix edits two sets that mirror the role row:
+// granted strings (which may be `resource.*` wildcards) and exclusions. A
+// checkbox shows the EFFECTIVE state — granted-or-covered minus excluded —
+// because that is what the engine answers; unchecking a box that a wildcard
+// covers writes an exclusion, which is the only honest representation of
+// "everything except this".
+
+const showEditor   = ref(false);
+const editorMode   = ref<"create" | "edit">("create");
+const editorRoleId = ref<number | null>(null);
+const editorSaving = ref(false);
+const editorError  = ref("");
+const editorForm   = ref({ display_name: "", description: "", scope: "organization" });
+const editorPerms  = ref<Set<string>>(new Set());
+const editorExcl   = ref<Set<string>>(new Set());
+
+/**
+ * The catalogue grouped by prefix — the same rule wildcards match by, so a
+ * resource row's "all" toggle and its `resource.*` string always agree.
+ */
+const catalogue = computed(() => {
+  const by: Record<string, string[]> = {};
+  for (const p of options.value.permissions ?? []) {
+    const r = p.split(".")[0];
+    (by[r] ??= []).push(p);
+  }
+  return Object.entries(by).map(([resource, perms]) => ({ resource, perms }));
+});
+
+function actionOf(p: string) { return p.split(".").slice(1).join("."); }
+
+function effectiveIn(p: string): boolean {
+  if (editorExcl.value.has(p)) return false;
+  return editorPerms.value.has(p) || editorPerms.value.has(`${p.split(".")[0]}.*`);
+}
+
+function togglePerm(p: string) {
+  if (effectiveIn(p)) {
+    if (editorPerms.value.has(p)) editorPerms.value.delete(p);
+    else editorExcl.value.add(p); // covered by a wildcard — exclude it
+  } else {
+    if (editorExcl.value.has(p)) editorExcl.value.delete(p);
+    else editorPerms.value.add(p);
+  }
+}
+
+function allOn(perms: string[]): boolean {
+  return perms.every(effectiveIn);
+}
+
+function toggleAll(resource: string, perms: string[]) {
+  const wildcard = `${resource}.*`;
+  const clear = () => {
+    editorPerms.value.delete(wildcard);
+    for (const p of perms) { editorPerms.value.delete(p); editorExcl.value.delete(p); }
+  };
+  if (allOn(perms)) clear();
+  else { clear(); editorPerms.value.add(wildcard); }
+}
+
+function openCreate() {
+  editorMode.value = "create"; editorRoleId.value = null;
+  editorForm.value = { display_name: "", description: "", scope: "organization" };
+  editorPerms.value = new Set(); editorExcl.value = new Set();
+  editorError.value = ""; showEditor.value = true;
+}
+
+function openEdit() {
+  if (!selected.value) return;
+  editorMode.value = "edit"; editorRoleId.value = selected.value.id;
+  editorForm.value = {
+    display_name: selected.value.display_name,
+    description: selected.value.description ?? "",
+    scope: selected.value.scope,
+  };
+  editorPerms.value = new Set(selected.value.permissions);
+  editorExcl.value = new Set(selected.value.excluded_permissions);
+  editorError.value = ""; showEditor.value = true;
+}
+
+async function saveEditor() {
+  editorSaving.value = true; editorError.value = "";
+  const body = {
+    display_name: editorForm.value.display_name,
+    description: editorForm.value.description || null,
+    scope: editorForm.value.scope,
+    assignable_scopes: editorMode.value === "edit" ? (selected.value?.assignable_scopes ?? null) : null,
+    permissions: [...editorPerms.value],
+    excluded_permissions: [...editorExcl.value],
+  };
+  try {
+    let id = editorRoleId.value;
+    if (editorMode.value === "create") {
+      const res = await api<{ data: { id: number } }>("POST", "/api/v1/authorization/roles", { org: org(), body });
+      id = res.data.id;
+    } else {
+      await api("PUT", `/api/v1/authorization/roles/${id}`, { org: org(), body });
+    }
+    showEditor.value = false;
+    await loadRoles();
+    const row = roles.value.find(r => r.id === id);
+    if (row) await selectRole(row);
+  } catch (e) {
+    editorError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not save the role.";
+  } finally {
+    editorSaving.value = false;
+  }
+}
+
+async function cloneRole() {
+  if (!selected.value) return;
+  const name = window.prompt(
+    `Clone "${selected.value.display_name}" as:`,
+    `${selected.value.display_name} (copy)`,
+  );
+  if (!name) return;
+  try {
+    const res = await api<{ data: { id: number } }>(
+      "POST", `/api/v1/authorization/roles/${selected.value.id}/clone`,
+      { org: org(), body: { display_name: name } },
+    );
+    await loadRoles();
+    const copy = roles.value.find(r => r.id === res.data.id);
+    if (copy) { await selectRole(copy); openEdit(); }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Could not clone the role.";
+  }
+}
+
+async function deleteRole() {
+  if (!selected.value) return;
+  if (!window.confirm(`Delete the role "${selected.value.display_name}"? This cannot be undone.`)) return;
+  try {
+    await api("DELETE", `/api/v1/authorization/roles/${selected.value.id}`, { org: org() });
+    selected.value = null;
+    await loadRoles();
+  } catch (e) {
+    // 422 carries the useful message ("3 people still hold this role…").
+    error.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not delete the role.";
+  }
+}
+
+// ── Denies ───────────────────────────────────────────────────────────────────
+
+const topTab        = ref<"roles" | "denies">("roles");
+const denies        = ref<DenyRow[]>([]);
+const loadingDenies = ref(false);
+const deniesLoaded  = ref(false);
+
+const showDeny  = ref(false);
+const denying   = ref(false);
+const denyError = ref("");
+const denyForm  = ref({
+  user_id: "" as string | number,
+  permission: "",
+  organization_id: "" as string | number,
+  expires_at: "",
+  reason: "",
+  confirm_wildcard: false,
+});
+
+const denyIsWildcard = computed(() => denyForm.value.permission.includes("*"));
+
+const denyPicker = makePicker(id => { denyForm.value.user_id = id; });
+
+/** Strings the deny dialog offers: every concrete permission, every resource wildcard, and the full veto. */
+const denyChoices = computed(() => [
+  ...(options.value.permissions ?? []),
+  ...catalogue.value.map(g => `${g.resource}.*`),
+  "*",
+]);
+
+async function loadDenies() {
+  loadingDenies.value = true;
+  try {
+    const res = await api<{ data: DenyRow[] }>("GET", "/api/v1/authorization/denies", { org: org() });
+    denies.value = res.data ?? [];
+    deniesLoaded.value = true;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Failed to load denies.";
+  } finally {
+    loadingDenies.value = false;
+  }
+}
+
+watch(topTab, (t) => { if (t === "denies" && !deniesLoaded.value) void loadDenies(); });
+
+function openDeny() {
+  denyError.value = "";
+  denyPicker.reset();
+  void loadDirectory();
+  denyForm.value = { user_id: "", permission: "", organization_id: "", expires_at: "", reason: "", confirm_wildcard: false };
+  showDeny.value = true;
+}
+
+async function submitDeny() {
+  denying.value = true; denyError.value = "";
+  try {
+    await api("POST", "/api/v1/authorization/denies", {
+      org: org(),
+      body: {
+        user_id: Number(denyForm.value.user_id),
+        permission: denyForm.value.permission.trim(),
+        organization_id: denyForm.value.organization_id === "" ? null : Number(denyForm.value.organization_id),
+        expires_at: denyForm.value.expires_at || null,
+        reason: denyForm.value.reason,
+        confirm_wildcard: denyForm.value.confirm_wildcard,
+      },
+    });
+    showDeny.value = false;
+    await loadDenies();
+  } catch (e) {
+    denyError.value = e instanceof ApiError ? (e.firstError ?? e.message) : "Could not place the deny.";
+  } finally {
+    denying.value = false;
+  }
+}
+
+async function liftDeny(d: DenyRow) {
+  if (!window.confirm(`Lift the deny of "${d.permission}" on ${d.user?.name ?? "this user"}?`)) return;
+  try {
+    await api("DELETE", `/api/v1/authorization/denies/${d.id}`, { org: org() });
+    await loadDenies();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "Could not lift the deny.";
+  }
+}
+
 onMounted(async () => { await Promise.all([loadRoles(), loadOptions()]); });
 </script>
 
@@ -198,12 +487,65 @@ onMounted(async () => { await Promise.all([loadRoles(), loadOptions()]); });
       </p>
     </header>
 
+    <!-- Three registers: what a login may do, what it is forbidden despite
+         its roles, and who it belongs to. -->
+    <nav class="ra-tabs">
+      <button :class="['ra-tab', { active: topTab === 'roles' }]" @click="topTab = 'roles'">Roles</button>
+      <button :class="['ra-tab', { active: topTab === 'denies' }]" @click="topTab = 'denies'">Denies</button>
+      <button class="ra-tab" @click="router.push({ name: 'user-directory' })">Users</button>
+    </nav>
+
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
 
-    <div class="ra-split">
+    <!-- ── Denies ─────────────────────────────────────────────────────── -->
+    <section v-if="topTab === 'denies'" class="panel">
+      <div class="panel-head detail-head">
+        <div>
+          <h2>Deny assignments</h2>
+          <p class="muted">
+            A deny beats every grant, whatever roles the person holds. Each one
+            records who placed it and why.
+          </p>
+        </div>
+        <button v-if="canManage" class="btn-primary" @click="openDeny">Place a deny</button>
+      </div>
+
+      <p v-if="loadingDenies" class="muted pad">Loading…</p>
+      <p v-else-if="!denies.length" class="muted pad">No denies are in force.</p>
+
+      <table v-else class="tbl">
+        <thead>
+          <tr><th>Identity</th><th>Permission</th><th>Organisation</th><th>Expires</th><th>Reason</th><th>Placed by</th><th></th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="d in denies" :key="d.id" :class="{ 'is-past': d.expired }">
+            <td>
+              <div class="role-name">{{ d.user?.name ?? "—" }}</div>
+              <div class="role-desc">{{ d.user?.email }}</div>
+            </td>
+            <td><code>{{ d.permission }}</code></td>
+            <td>{{ d.organization?.name ?? "All organisations" }}</td>
+            <td>
+              <span v-if="d.expired" class="pill">Expired</span>
+              <span v-else>{{ d.expires_at ?? "Never" }}</span>
+            </td>
+            <td>{{ d.reason }}</td>
+            <td>{{ d.created_by ?? "—" }}</td>
+            <td class="num">
+              <button v-if="canManage && !d.expired" class="btn-link" @click="liftDeny(d)">Lift</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div v-else class="ra-split">
       <!-- ── Roles ─────────────────────────────────────────────────────── -->
       <section class="panel roles">
-        <div class="panel-head"><h2>Roles</h2></div>
+        <div class="panel-head detail-head">
+          <h2>Roles</h2>
+          <button v-if="canManage" class="btn-secondary" @click="openCreate">New role</button>
+        </div>
 
         <p v-if="loading" class="muted pad">Loading…</p>
 
@@ -240,7 +582,16 @@ onMounted(async () => { await Promise.all([loadRoles(), loadOptions()]); });
             <h2>{{ selected.display_name }}</h2>
             <p class="muted">{{ selected.description || selected.name }}</p>
           </div>
-          <button class="btn-primary" @click="openGrant">Assign</button>
+          <div class="head-actions">
+            <!-- Built-ins are templates: the write path is clone-then-edit. -->
+            <button v-if="canManage" class="btn-secondary" @click="cloneRole">Clone</button>
+            <button v-if="canManage && !selected.is_system" class="btn-secondary" @click="openEdit">Edit</button>
+            <button
+              v-if="canManage && !selected.is_system && !activeHolders.length"
+              class="btn-danger" @click="deleteRole"
+            >Delete</button>
+            <button class="btn-primary" @click="openGrant">Assign</button>
+          </div>
         </div>
 
         <nav class="tabs" role="tablist">
@@ -335,20 +686,172 @@ onMounted(async () => { await Promise.all([loadRoles(), loadOptions()]); });
       </section>
     </div>
 
+    <!-- ── Role editor ─────────────────────────────────────────────────── -->
+    <div v-if="showEditor" class="overlay" @click.self="showEditor = false">
+      <div class="dialog dialog-wide" role="dialog" aria-modal="true" aria-label="Role editor">
+        <h2>{{ editorMode === "create" ? "New role" : `Edit ${editorForm.display_name}` }}</h2>
+
+        <div class="editor-fields">
+          <label class="field">
+            <span>Name</span>
+            <input v-model="editorForm.display_name" type="text" class="control" placeholder="e.g. Records Clerk" />
+          </label>
+          <label class="field">
+            <span>Default scope</span>
+            <select v-model="editorForm.scope" class="control">
+              <option v-for="s in options.scopes" :key="s.value" :value="s.value">{{ s.label }}</option>
+            </select>
+          </label>
+        </div>
+        <label class="field">
+          <span>Description <span class="muted">(optional)</span></span>
+          <input v-model="editorForm.description" type="text" class="control" placeholder="What this role is for" />
+        </label>
+
+        <p class="muted">
+          A ticked box is what a holder can actually do. Ticking a whole resource
+          grants its wildcard, so permissions added to the catalogue later are
+          included; unticking one action under it records an exclusion.
+        </p>
+
+        <div class="matrix">
+          <fieldset v-for="g in catalogue" :key="g.resource" class="mx-group">
+            <legend class="mx-head">
+              <label class="mx-all">
+                <input
+                  type="checkbox"
+                  :checked="allOn(g.perms)"
+                  @change="toggleAll(g.resource, g.perms)"
+                />
+                <strong>{{ g.resource }}</strong>
+              </label>
+              <code v-if="editorPerms.has(`${g.resource}.*`)" class="mx-wild">{{ g.resource }}.*</code>
+            </legend>
+            <div class="mx-perms">
+              <label v-for="p in g.perms" :key="p" class="mx-perm">
+                <input type="checkbox" :checked="effectiveIn(p)" @change="togglePerm(p)" />
+                <span>{{ actionOf(p) }}</span>
+                <span v-if="editorExcl.has(p)" class="pill pill-warn">Excluded</span>
+              </label>
+            </div>
+          </fieldset>
+        </div>
+
+        <p v-if="editorError" class="alert" role="alert">{{ editorError }}</p>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showEditor = false">Cancel</button>
+          <button
+            class="btn-primary"
+            :disabled="editorSaving || !editorForm.display_name.trim()"
+            @click="saveEditor"
+          >
+            {{ editorSaving ? "Saving…" : (editorMode === "create" ? "Create role" : "Save changes") }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Deny dialog ─────────────────────────────────────────────────── -->
+    <div v-if="showDeny" class="overlay" @click.self="showDeny = false">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="Place a deny">
+        <h2>Place a deny</h2>
+
+        <label class="field">
+          <span>Person</span>
+          <div class="picker">
+            <input
+              v-model="denyPicker.query.value" type="text" class="control"
+              placeholder="Search by name or email…"
+              @input="denyPicker.onInput()"
+            />
+            <ul v-if="denyPicker.matches.value.length && !denyForm.user_id" class="picker-list">
+              <li v-for="u in denyPicker.matches.value" :key="u.id">
+                <button type="button" class="picker-row" @click="denyPicker.pick(u)">
+                  <span class="picker-name">{{ u.name }}</span>
+                  <span class="picker-mail">{{ u.email }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>Permission</span>
+          <input v-model="denyForm.permission" type="text" class="control" list="deny-permissions" placeholder="e.g. payroll.view, payroll.*, or *" />
+          <datalist id="deny-permissions">
+            <option v-for="p in denyChoices" :key="p" :value="p" />
+          </datalist>
+        </label>
+
+        <label class="field">
+          <span>Organisation</span>
+          <select v-model="denyForm.organization_id" class="control">
+            <option value="">All organisations</option>
+            <option v-for="o in options.organizations" :key="o.id" :value="o.id">{{ o.name }}</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Expires <span class="muted">(optional)</span></span>
+          <input v-model="denyForm.expires_at" type="date" class="control" />
+        </label>
+
+        <label class="field">
+          <span>Reason</span>
+          <input v-model="denyForm.reason" type="text" class="control" placeholder="Required — recorded against the deny" />
+        </label>
+
+        <label v-if="denyIsWildcard" class="confirm">
+          <input v-model="denyForm.confirm_wildcard" type="checkbox" />
+          <span>
+            This is a wildcard — it closes <em>every</em> permission it matches.
+            <template v-if="denyForm.permission.trim() === '*'">A bare <code>*</code> is a soft account-disable.</template>
+          </span>
+        </label>
+
+        <p v-if="denyError" class="alert" role="alert">{{ denyError }}</p>
+
+        <div class="dialog-actions">
+          <button class="btn-secondary" @click="showDeny = false">Cancel</button>
+          <button
+            class="btn-primary"
+            :disabled="denying || !denyForm.user_id || !denyForm.permission.trim() || !denyForm.reason.trim() || (denyIsWildcard && !denyForm.confirm_wildcard)"
+            @click="submitDeny"
+          >
+            {{ denying ? "Placing…" : "Place deny" }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- ── Grant dialog ────────────────────────────────────────────────── -->
     <div v-if="showGrant" class="overlay" @click.self="showGrant = false">
       <div class="dialog" role="dialog" aria-modal="true" aria-label="Assign role">
         <h2>Assign {{ selected?.display_name }}</h2>
 
         <!--
-          A user id, not an employee id. Role assignments target the login
-          identity; EmployeePicker resolves employee records, and until the two
-          are unified they are separate ids. Using the picker here would assign
-          the role to whichever user happened to share that number.
+          Targets the login identity (a user id), not an employee record —
+          the directory search resolves the right id so nobody has to.
         -->
         <label class="field">
-          <span>Identity (user ID)</span>
-          <input v-model="grantForm.user_id" type="number" class="control" placeholder="e.g. 12" />
+          <span>Person</span>
+          <div class="picker">
+            <input
+              v-model="grantPicker.query.value" type="text" class="control"
+              placeholder="Search by name or email…"
+              @input="grantPicker.onInput()"
+            />
+            <ul v-if="grantPicker.matches.value.length && !grantForm.user_id" class="picker-list">
+              <li v-for="u in grantPicker.matches.value" :key="u.id">
+                <button type="button" class="picker-row" @click="grantPicker.pick(u)">
+                  <span class="picker-name">{{ u.name }}</span>
+                  <span class="picker-mail">{{ u.email }}</span>
+                  <span v-if="u.status !== 'active' && u.status !== 'pending'" class="pill">{{ u.status }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
         </label>
 
         <label class="field">
@@ -635,6 +1138,95 @@ code {
 
 .dialog-actions { @apply flex justify-end; gap: var(--space-2); margin-top: var(--space-4); }
 
+/* ── Person picker ───────────────────────────────────────────────────────── */
+.picker { position: relative; }
+
+.picker-list {
+  @apply absolute left-0 right-0 z-10 list-none overflow-y-auto;
+  top: calc(100% + 4px); max-height: 16rem;
+  margin: 0; padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+}
+
+.picker-row {
+  @apply flex w-full cursor-pointer items-center border-none bg-transparent text-left;
+  gap: var(--space-2);
+  font-family: inherit;
+  font-size: var(--text-sm-size);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+}
+.picker-row:hover, .picker-row:focus-visible { background: var(--color-surface-sunken); }
+
+.picker-name { @apply font-medium; white-space: nowrap; }
+.picker-mail {
+  @apply overflow-hidden text-ellipsis whitespace-nowrap;
+  font-size: var(--text-xs-size);
+  color: var(--color-text-light);
+}
+
+/* ── Role editor matrix ──────────────────────────────────────────────────── */
+.dialog-wide { max-width: 46rem; max-height: 88vh; overflow-y: auto; }
+
+.editor-fields { @apply grid; grid-template-columns: 1fr max-content; gap: var(--space-3); }
+
+.head-actions { @apply flex flex-wrap justify-end; gap: var(--space-2); }
+
+.btn-danger {
+  @apply cursor-pointer font-medium;
+  font-family: inherit;
+  font-size: var(--text-sm-size);
+  padding: 8px var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-error);
+  background: var(--color-surface);
+  color: var(--color-error);
+}
+
+.matrix { margin-top: var(--space-3); }
+
+.mx-group {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.mx-head { @apply flex items-center; gap: var(--space-2); padding: 0 var(--space-1); }
+.mx-all  { @apply flex cursor-pointer items-center; gap: var(--space-2); font-size: var(--text-sm-size); color: var(--color-text); }
+.mx-wild { font-size: var(--text-xs-size); }
+
+.mx-perms {
+  @apply grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.mx-perm {
+  @apply flex cursor-pointer items-center;
+  gap: var(--space-2);
+  font-size: var(--text-sm-size);
+  color: var(--color-text);
+  padding: 2px 0;
+}
+
+.confirm {
+  @apply flex cursor-pointer items-start;
+  gap: var(--space-2);
+  font-size: var(--text-xs-size);
+  color: var(--color-text);
+  background: var(--color-warning-light);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.confirm input { margin-top: 2px; }
+
 .note {
   font-size: var(--text-xs-size);
   color: var(--color-text-muted);
@@ -653,4 +1245,14 @@ code {
   padding: var(--space-3);
   margin: 0 0 var(--space-3);
 }
+.ra-tabs { @apply flex; gap: var(--space-1); margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-border); }
+.ra-tab {
+  @apply cursor-pointer border-none bg-transparent;
+  padding: var(--space-2) var(--space-3); margin-bottom: -1px;
+  font-family: inherit; font-size: var(--text-sm-size); color: var(--color-text-muted);
+  border-bottom: 2px solid transparent;
+}
+.ra-tab:hover { color: var(--color-text); }
+.ra-tab.active { color: var(--color-text); font-weight: 600; border-bottom-color: var(--color-brand-base); }
 </style>

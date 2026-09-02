@@ -81,6 +81,16 @@
   --color-info:          var(--color-info);
   --color-info-light:    var(--color-info-light);
 
+  /* The `-text` / `-subtle` pair, bridged so a utility class reaches them too.
+     Left off, `bg-danger-subtle` would silently produce nothing — which is the
+     bug these tokens were added to fix, reintroduced one tier up. */
+  --color-success-text:   var(--color-success-text);
+  --color-warning-text:   var(--color-warning-text);
+  --color-danger-text:    var(--color-danger-text);
+  --color-success-subtle: var(--color-success-subtle);
+  --color-warning-subtle: var(--color-warning-subtle);
+  --color-danger-subtle:  var(--color-danger-subtle);
+
   /* ── Accent ──────────────────────────────────────────────────────────── */
   --color-teal:   var(--color-teal);
   --color-indigo: var(--color-indigo);

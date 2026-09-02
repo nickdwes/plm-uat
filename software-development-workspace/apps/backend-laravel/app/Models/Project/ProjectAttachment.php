@@ -16,13 +16,13 @@ class ProjectAttachment extends Model
     protected $table = 'project_attachments';
 
     protected $fillable = [
-        'organization_id', 'project_id', 'task_id', 'document_type',
+        'organization_id', 'project_id', 'task_id', 'milestone_id', 'material_order_id', 'risk_id', 'document_type',
         'label', 'original_name', 'storage_path', 'mime_type', 'size_bytes', 'uploaded_by',
     ];
 
     protected $casts = ['size_bytes' => 'integer'];
 
-    public const DOCUMENT_TYPES = ['client', 'internal', 'financial', 'technical'];
+    public const DOCUMENT_TYPES = ['client', 'internal', 'financial', 'technical', 'proof', 'scope', 'charter', 'pip', 'order', 'evidence'];
 
     public function task(): BelongsTo
     {

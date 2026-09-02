@@ -1,5 +1,8 @@
 import { createRouter, createWebHashHistory, type RouteRecordRaw } from "vue-router";
 import { isAuthenticated } from "../stores/auth";
+import { can, fetchPermissions, permissionsLoaded } from "../stores/permissions";
+import { routeAllowed } from "../lib/navPermissions";
+import ForbiddenView from "../views/ForbiddenView.vue";
 
 import LoginView           from "../views/LoginView.vue";
 import ForgotPasswordView  from "../views/ForgotPasswordView.vue";
@@ -20,6 +23,7 @@ import PayrollConfigView   from "../views/PayrollConfigView.vue";
 import SendPayslipsView    from "../views/Payroll/SendPayslipsView.vue";
 import SendP9View          from "../views/Payroll/SendP9View.vue";
 import SupportView         from "../views/SupportView.vue";
+import TicketDetailView    from "../views/Support/TicketDetailView.vue";
 import OrgChartView        from "../views/OrgChartView.vue";
 import PortalView          from "../views/PortalView.vue";
 import OrgView             from "../views/OrgView.vue";
@@ -30,6 +34,8 @@ import BenefitPlansView    from "../views/BenefitPlansView.vue";
 import PublicHolidaysView  from "../views/PublicHolidaysView.vue";
 import OkrCyclesView       from "../views/OkrCyclesView.vue";
 import RoleAssignmentsView from "../views/RoleAssignmentsView.vue";
+import UserDirectoryView from "../views/UserDirectoryView.vue";
+import AuditLogView from "../views/AuditLogView.vue";
 
 // Assets
 import TravelSettingsView from "../views/Travel/TravelSettingsView.vue";
@@ -40,6 +46,7 @@ import DeliveriesView from "../views/Travel/DeliveriesView.vue";
 import DeliveryDetailView from "../views/Travel/DeliveryDetailView.vue";
 import DeliveryWizard from "../views/Travel/DeliveryWizard.vue";
 import AssetsView          from "../views/Asset/AssetsView.vue";
+import ProcurementView     from "../views/Procurement/ProcurementView.vue";
 import AssetDetailView     from "../views/Asset/AssetDetailView.vue";
 
 // Recruitment
@@ -69,13 +76,11 @@ import SsoCallbackView from "../views/SsoCallbackView.vue";
 
 // Training
 import TrainingDashboardView  from "../views/Training/TrainingDashboardView.vue";
-import TrainingCatalogView    from "../views/Training/TrainingCatalogView.vue";
 import TrainingItemDetailView from "../views/Training/TrainingItemDetailView.vue";
+import TrainingReportView from "../views/Training/TrainingReportView.vue";
 import MyTrainingView         from "../views/Training/MyTrainingView.vue";
-import CompetencyFrameworkView    from "../views/Training/CompetencyFrameworkView.vue";
 import RoleProfileEditorView      from "../views/Training/RoleProfileEditorView.vue";
 import TrainingRecordDetailView   from "../views/Training/TrainingRecordDetailView.vue";
-import EnrollmentManagerView      from "../views/Training/EnrollmentManagerView.vue";
 import ManagerTrainingApprovalsView from "../views/Training/ManagerTrainingApprovalsView.vue";
 import VendorComplianceView          from "../views/Training/VendorComplianceView.vue";
 
@@ -93,6 +98,8 @@ import ResearchDetailView             from "../views/Pipeline/ResearchDetailView
 // Projects
 import ProjectsView                   from "../views/Project/ProjectsView.vue";
 import ProjectDetailView              from "../views/Project/ProjectDetailView.vue";
+import ProjectsDashboardView           from "../views/Project/ProjectsDashboardView.vue";
+import PmTaskDefinitionsView           from "../views/Project/PmTaskDefinitionsView.vue";
 import TasksView                       from "../views/Task/TasksView.vue";
 import AttendanceView                  from "../views/Attendance/AttendanceView.vue";
 import AttendanceReportView            from "../views/Attendance/AttendanceReportView.vue";
@@ -175,6 +182,14 @@ const routes: RouteRecordRaw[] = [
   { path: "/org/public-holidays",  name: "public-holidays",  component: PublicHolidaysView },
   { path: "/org/payroll-config",   name: "payroll-config",   component: PayrollConfigView },
   { path: "/org/role-assignments", name: "role-assignments", component: RoleAssignmentsView },
+
+  /*
+   * Beside role assignments rather than under Employees: this is about logins
+   * and what they are joined to, which is the same administration as deciding
+   * what a login may do.
+   */
+  { path: "/org/users", name: "user-directory", component: UserDirectoryView },
+  { path: "/org/audit-log",        name: "audit-log",        component: AuditLogView },
   // ── Operations ───────────────────────────────────────────────────────────
   { path: "/travel",          name: "travel-requests",   component: TravelRequestsView },
   { path: "/travel/new",      name: "travel-request-new", component: TravelRequestWizard },
@@ -184,8 +199,10 @@ const routes: RouteRecordRaw[] = [
   { path: "/deliveries/:id",  name: "delivery",          component: DeliveryDetailView, props: true },
   { path: "/travel/settings", name: "travel-settings",   component: TravelSettingsView },
   { path: "/support",         name: "support",       component: SupportView },
+  { path: "/support/tickets/:id", name: "ticket-detail", component: TicketDetailView, props: true },
   { path: "/org-chart",       name: "org-chart",     component: OrgChartView },
   { path: "/assets",          name: "assets",        component: AssetsView },
+  { path: "/procurement",     name: "procurement",   component: ProcurementView },
   { path: "/assets/:id",      name: "asset-detail",  component: AssetDetailView, props: true },
   { path: "/performance",          name: "performance",      component: PerformanceView },
   { path: "/goals",                name: "goals",            component: GoalsView },
@@ -235,15 +252,18 @@ const routes: RouteRecordRaw[] = [
   { path: "/score/:token",                   name: "interview-scoring",  component: InterviewScoringFormView, props: true, meta: { public: true } },
   // ── Training & Competency ──────────────────────────────────────────────────
   { path: "/training",                name: "training",                component: TrainingDashboardView },
-  { path: "/training/catalog",        name: "training-catalog",       component: TrainingCatalogView },
+  // Catalog, Competencies and Assign Training now live inline on the unified
+  // /training page (tabs + drawers) rather than as separate screens.
+  { path: "/training/catalog",        name: "training-catalog",       redirect: to => ({ name: "training", query: to.query }) },
   { path: "/training/catalog/:id",    name: "training-item-detail",   component: TrainingItemDetailView, props: true },
   { path: "/training/my",             name: "my-training",            component: MyTrainingView },
-  { path: "/training/competencies",       name: "competencies",           component: CompetencyFrameworkView },
+  { path: "/training/competencies",       name: "competencies",           redirect: { name: "training", query: { tab: "competencies" } } },
   { path: "/training/role-profiles",      name: "role-profiles",          component: RoleProfileEditorView },
   { path: "/training/records/:id",         name: "training-record-detail",  component: TrainingRecordDetailView, props: true },
-  { path: "/training/enroll",             name: "training-enroll",         component: EnrollmentManagerView },
+  { path: "/training/enroll",             name: "training-enroll",         redirect: { name: "training" } },
   { path: "/training/approvals",          name: "training-approvals",       component: ManagerTrainingApprovalsView },
   { path: "/training/vendor-compliance",  name: "vendor-compliance",        component: VendorComplianceView },
+  { path: "/training/report",             name: "training-report",          component: TrainingReportView },
   // ── Accounts (customer master) ────────────────────────────────────────────
   { path: "/accounts",      name: "accounts",       component: AccountsView },
   { path: "/accounts/:id",  name: "account",        component: AccountDetailView, props: true },
@@ -257,6 +277,8 @@ const routes: RouteRecordRaw[] = [
   { path: "/research",          name: "research",        component: ResearchView },
   { path: "/research/:id",      name: "research-detail", component: ResearchDetailView, props: true },
   { path: "/projects",          name: "projects",        component: ProjectsView },
+  { path: "/projects/dashboard", name: "projects-dashboard", component: ProjectsDashboardView },
+  { path: "/projects/pm-definitions", name: "projects-pm-definitions", component: PmTaskDefinitionsView },
   { path: "/projects/:id",      name: "project",         component: ProjectDetailView, props: true },
 
   // ── Tasks ─────────────────────────────────────────────────────────────────
@@ -281,14 +303,36 @@ const routes: RouteRecordRaw[] = [
   { path: "/vendors/:id",   name: "vendor-profile", component: VendorProfileView, props: true },
 ];
 
+routes.push({ path: "/forbidden", name: "forbidden", component: ForbiddenView });
+
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
 });
 
-router.beforeEach((to) => {
+/*
+ * Two questions, in order: is anybody signed in, and does their role open this
+ * route. The second reads the same map the sidebar uses — one rule, two
+ * consumers — and the strings in it are the permissions the API checks, so a
+ * route the guard refuses is a route whose endpoints would 403 anyway.
+ *
+ * This is UX. The server remains the authority; a stale answer here shows a
+ * 403 page, never an open door.
+ */
+router.beforeEach(async (to) => {
   if (to.meta.public) return true;
   if (!isAuthenticated.value) return { name: "login" };
+
+  if (!permissionsLoaded.value) {
+    // Deep link straight into a fresh tab: the store seeds from login, but a
+    // restored session has to ask once. Deduplicated inside the store.
+    await fetchPermissions();
+  }
+
+  if (!routeAllowed(to.name as string, can)) {
+    return { name: "forbidden" };
+  }
+
   return true;
 });
 
